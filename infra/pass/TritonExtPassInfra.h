@@ -22,8 +22,7 @@ typedef void (*TritonExtRegisterPassFunc)();
 typedef void (*TritonExtAddPassFunc)(mlir::PassManager *);
 
 TRITON_PLUGIN_API
-TritonExtLoadPass(const char *passName,
-    TritonExtRegisterPassFunc registerFunc,
-    TritonExtAddPassFunc addFunc);
+TritonExtLoadPass(const char *passName, TritonExtRegisterPassFunc registerFunc,
+                  TritonExtAddPassFunc addFunc);
 
 #endif // TRITON_EXT_PASS_INFRA_H

@@ -134,6 +134,11 @@ LogicalResult LoopBisect::bisect() {
     LDBG("Non-constant step");
     return failure();
   }
+  auto stepVal = step.getSExtValue();
+  if (stepVal <= 0) {
+    LDBG("Step is not positive: " << stepVal);
+    return failure();
+  }
 
   // Collect comparators
   auto iter = forOp.getInductionVar();
@@ -155,13 +160,14 @@ LogicalResult LoopBisect::bisect() {
     // make all unsigned?? assume I is lo..hi, increasing
     Value midp = ccmp.getComparand();
     if (ccmp.isEqual()) {
-      // return i >= c ? c - 1 : c + 1
-      auto incr = arith::ConstantIntOp::create(b, loc, ccmp.isGreater() ? -1 : 1, 32);
+      // return i >= c ? c - step : c + step
+      auto incr =
+          arith::ConstantIntOp::create(b, loc, ccmp.isGreater() ? -stepVal : stepVal, 32);
       midp = arith::AddIOp::create(b, loc, midp, incr);
     }
 
     /// Handle midp not a multiple of step
-    if (*step != 1) {
+    if (stepVal != 1) {
       // mid_diff = midp - lo
       // mid_rem = mid_diff % step
       // mid_upd = step - mid_rem
@@ -176,8 +182,8 @@ LogicalResult LoopBisect::bisect() {
     }
 
     /// TODO(sjw): update upstream peelForLoop
-    /// bisect loop (lo .. midp)
-    /// bisect loop (midp .. hi)
+    /// bisect loop [lo .. midp)
+    /// bisect loop [midp .. hi)
     IRMapping mapping;
     b.setInsertionPointAfter(forOp);
     scf::ForOp newForOp = cast<scf::ForOp>(b.clone(*forOp, mapping));
