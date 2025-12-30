@@ -134,7 +134,7 @@ LogicalResult LoopBisect::bisect() {
     LDBG("Non-constant step");
     return failure();
   }
-  auto stepVal = step.getSExtValue();
+  int64_t stepVal = step->getSExtValue();
   if (stepVal <= 0) {
     LDBG("Step is not positive: " << stepVal);
     return failure();
