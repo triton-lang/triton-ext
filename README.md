@@ -1,4 +1,4 @@
-# triton-ext
+# Triton Extensions
 
 A collection of out-of-tree extensions for the Triton compiler, including passes, dialects, backends, and language extensions.
 
@@ -14,12 +14,6 @@ triton-ext/
 │   └── CMakeLists.txt
 ├── dialect/              # Dialect extensions directory
 │   └── CMakeLists.txt
-├── infra/                # Extension infrastructure
-│   └── pass/             # Pass extension API infrastructure
-│       ├── CMakeLists.txt
-│       ├── TritonExtPassInfra.h
-│       ├── TritonExtPassInfra.cpp
-│       └── TritonExtPass.cpp
 ├── language/             # Language extensions directory
 │   └── CMakeLists.txt
 ├── pass/                 # Pass extensions directory
@@ -27,8 +21,16 @@ triton-ext/
 │   │   ├── CMakeLists.txt
 │   │   ├── LoopSplit.cpp
 │   │   ├── Passes.td
-│   │   └── triton_ext.conf
+│   │   └── test          # Lit tests 
+│   │       └── loop-split.mlir
 │   └── CMakeLists.txt
+│
+├── infra/                # Extension infrastructure
+│   └── pass/             # Pass extension API infrastructure
+│       ├── CMakeLists.txt
+│       ├── TritonExtPassInfra.h
+│       ├── TritonExtPassInfra.cpp
+│       └── TritonExtPass.cpp
 ├── CMakeLists.txt        # Root CMake configuration
 └── README.md
 ```
@@ -37,13 +39,13 @@ triton-ext/
 
 - **`backend/`**: Contains backend extension implementations.
 
-- **`infra/`**: Contains extension infrastructure code. The `infra/pass/` subdirectory provides the pass extension API infrastructure (`TritonExtPassInfra.h`, `TritonExtPassInfra.cpp`, `TritonExtPass.cpp`) that pass extensions use.
-
 - **`pass/`**: Contains MLIR pass extensions. Each pass extension is implemented as a shared library that can be loaded dynamically. Pass extensions include a `triton_ext.conf` file that specifies the extension name and status.
 
 - **`dialect/`**: Intended for custom MLIR dialect extensions (currently scaffolding only).
 
 - **`language/`**: Intended for language extension implementations (currently scaffolding only).
+
+- **`infra/`**: Contains extension infrastructure code. The `infra/pass/` subdirectory provides the pass extension API infrastructure (`TritonExtPassInfra.h`, `TritonExtPassInfra.cpp`, `TritonExtPass.cpp`) that pass extensions use.
 
 ## Build Process
 

@@ -1,0 +1,35 @@
+# CODEOWNERS file for triton-plugins
+# This file defines code owners who will be requested for review on pull requests
+# Format: <file pattern> <owner> [<owner> ...]
+# Patterns are matched top-down, and the last matching pattern takes precedence
+# 
+# Owners can be specified as:
+# - GitHub username: @username
+# - Email address: user@example.com
+# - Team: @org/team-name
+
+# Root level files
+* simon@kernelize.ai robeck@meta.com
+
+# Infrastructure
+/infra/ simon@kernelize.ai
+
+# Pass extensions
+/pass/ simon@kernelize.ai
+
+# Backend extensions
+/backend/ simon@kernelize.ai
+
+# Dialect extensions
+/dialect/ simon@kernelize.ai
+
+# Language extensions
+/language/ simon@kernelize.ai
+
+# Build system
+/cmake/ simon@kernelize.ai
+/CMakeLists.txt simon@kernelize.ai
+
+# Documentation
+/README.md simon@kernelize.ai
+
