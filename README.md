@@ -1,10 +1,12 @@
 # Triton Extensions
 
-A collection of out-of-tree extensions for the Triton compiler, including passes, dialects, backends, and language extensions.
+A collection of out-of-tree extensions for the Triton compiler, including passes, dialects, backends, and language extensions. 
 
 ## Overview
 
-This repository provides a framework for developing and building Triton compiler extensions that can extend functionality without modifying the core Triton codebase. Extensions are built as shared libraries that can be dynamically loaded by Triton at runtime.
+This repository provides a framework for developing and building Triton compiler extensions that can extend functionality without modifying the core Triton codebase. Extensions are built as shared libraries that can be dynamically loaded by Triton at runtime. 
+
+Extensions are built on top of the upstream Triton infrastructure documented here: https://github.com/triton-lang/triton/blob/main/lib/Plugins/README.md
 
 ## Project Structure
 
