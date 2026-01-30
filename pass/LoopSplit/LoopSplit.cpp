@@ -14,9 +14,6 @@
 // split.
 //===----------------------------------------------------------------------===//
 
-#define GEN_PASS_CLASSES
-#include "Passes.h.inc"
-
 #define DEBUG_TYPE "triton-loop-split"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
@@ -204,7 +201,12 @@ LogicalResult LoopBisect::bisect() {
   return success();
 }
 
-struct LoopBisectPass : public TritonLoopSplitBase<LoopBisectPass> {
+// To make available the auto-generated base classes in the `impl`
+// namespace, we drop in the generated headers from `Passes.td`.
+#define GEN_PASS_DEF_TRITONLOOPSPLIT
+#include "Passes.h.inc"
+
+struct LoopBisectPass : public impl::TritonLoopSplitBase<LoopBisectPass> {
   LoopBisectPass() = default;
 
   void runOnOperation() override {
