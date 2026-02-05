@@ -26,10 +26,10 @@ function(triton_ext_check_triton_hash result_var)
     if(EXISTS ${hash_file_path})
         file(READ ${hash_file_path} _expected_hash)
         string(STRIP ${_expected_hash} _expected_hash)
-        
+
         # Get current triton git hash
         get_triton_git_hash(${triton_source_dir} _current_hash)
-        
+
         if(_current_hash STREQUAL "")
             message(WARNING "Could not retrieve Triton git hash from ${triton_source_dir}. Hash verification skipped.")
             set(${result_var} TRUE PARENT_SCOPE)
@@ -53,7 +53,7 @@ function(triton_ext_should_build_extension triton_ext_dir result_var)
     set(config_file "${triton_ext_dir}/triton-ext.conf")
     # Default to FALSE
     set(${result_var} FALSE PARENT_SCOPE)
-    
+
     # Try to read from config file first
     if(EXISTS ${config_file})
         file(READ ${config_file} _config_content)
@@ -84,7 +84,6 @@ function(triton_ext_should_build_extension triton_ext_dir result_var)
             endif()
         endif()
     endif()
-    
 endfunction()
 
 # Macro to set up a Triton extension project
@@ -96,37 +95,37 @@ macro(triton_ext_pass_setup ext_class)
     set(_ext_name "")
     set(_status "experimental")
     set(_hash "")
-    
+
     if(EXISTS ${TRITON_EXT_CONFIG_FILE})
         file(READ ${TRITON_EXT_CONFIG_FILE} _config_content)
         string(STRIP "${_config_content}" _config_content)
-        
+
         if(_config_content)
             # Config file is in CMake list format (semicolon-separated): name;status;hash
             set(_config_list ${_config_content})
             list(LENGTH _config_list _num_parts)
-            
+
             if(_num_parts GREATER_EQUAL 1)
                 list(GET _config_list 0 _ext_name)
                 string(STRIP "${_ext_name}" _ext_name)
             endif()
-            
+
             if(_num_parts GREATER_EQUAL 2)
                 list(GET _config_list 1 _status)
                 string(STRIP "${_status}" _status)
             endif()
-            
+
             if(_num_parts GREATER_EQUAL 3)
                 list(GET _config_list 2 _hash)
                 string(STRIP "${_hash}" _hash)
             endif()
         endif()
     endif()
-    
+
     if(NOT _ext_name)
         message(FATAL_ERROR "triton_ext.conf file not found or empty in ${CMAKE_CURRENT_SOURCE_DIR}")
     endif()
-    
+
     project(${_ext_name})
     set(TRITON_EXT_NAME ${PROJECT_NAME})
     set(TRITON_EXT_CLASS ${ext_class})
@@ -147,7 +146,7 @@ function(safe_add_subdirectory source_dir)
         get_filename_component(dir_name ${source_dir} NAME)
         set(binary_dir "${CMAKE_CURRENT_BINARY_DIR}/${dir_name}")
     endif()
-    
+
     # Check if source directory exists
     if(NOT IS_DIRECTORY "${source_dir}")
         if(ARGC GREATER 2)
@@ -157,7 +156,7 @@ function(safe_add_subdirectory source_dir)
         endif()
         return()
     endif()
-    
+
     # Check if CMakeLists.txt exists in source directory
     if(NOT EXISTS "${source_dir}/CMakeLists.txt")
         if(ARGC GREATER 2)
@@ -167,11 +166,11 @@ function(safe_add_subdirectory source_dir)
         endif()
         return()
     endif()
-    
+
     # Test if the subdirectory can be configured without errors
     get_filename_component(dir_name ${source_dir} NAME)
     set(test_binary_dir "${CMAKE_CURRENT_BINARY_DIR}/_safe_test_${dir_name}")
-    
+
     # Collect all cache variables to pass to the test configuration
     get_cmake_property(cache_vars CACHE_VARIABLES)
     set(cache_args "")
@@ -180,30 +179,30 @@ function(safe_add_subdirectory source_dir)
         if(var MATCHES "^__")
             continue()
         endif()
-        
+
         # Get the variable type and value
         get_property(var_type CACHE ${var} PROPERTY TYPE)
         if(NOT var_type)
             continue()
         endif()
-        
+
         get_property(var_value CACHE ${var} PROPERTY VALUE)
         if("${var_value}" STREQUAL "")
             # Skip empty values
             continue()
         endif()
-        
+
         # Filter out variables with illegal characters that could break command parsing
         # Check for square brackets [] or parentheses () using string FIND
         string(FIND "${var_value}" "[" has_open_bracket)
         string(FIND "${var_value}" "]" has_close_bracket)
         string(FIND "${var_value}" "(" has_open_paren)
         string(FIND "${var_value}" ")" has_close_paren)
-        if(NOT has_open_bracket EQUAL -1 OR NOT has_close_bracket EQUAL -1 OR 
+        if(NOT has_open_bracket EQUAL -1 OR NOT has_close_bracket EQUAL -1 OR
            NOT has_open_paren EQUAL -1 OR NOT has_close_paren EQUAL -1)
             continue()
         endif()
-        
+
         # Build the -D argument
         # For boolean values, use ON/OFF
         if(var_type STREQUAL "BOOL")
@@ -218,10 +217,10 @@ function(safe_add_subdirectory source_dir)
             string(APPEND cache_args " -D${var}=${var_value}")
         endif()
     endforeach()
-    
+
     # Build the cmake command with all cache variables
     set(cmake_test_cmd "${CMAKE_COMMAND} ${cache_args} ${source_dir} -B ${test_binary_dir}")
-    
+
     # Try to configure the subdirectory in a test build to check for errors
     execute_process(
         COMMAND ${cmake_test_cmd}
@@ -232,10 +231,10 @@ function(safe_add_subdirectory source_dir)
     )
 
     message(STATUS ${cmake_test_cmd})
-    
+
     # Clean up test directory
     file(REMOVE_RECURSE "${test_binary_dir}")
-    
+
     # If configuration test passed, add the subdirectory
     if(config_result EQUAL 0)
         add_subdirectory("${source_dir}" "${binary_dir}")
