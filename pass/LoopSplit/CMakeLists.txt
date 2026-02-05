@@ -1,14 +1,15 @@
 triton_ext_pass_setup(LoopBisectPass)
 
-# Add Pass tablegen
-set(EXT_Include "TritonExt${TRITON_EXT_CLASS}IncGen")
+# Add pass TableGen.
+set(EXT_INCLUDE "TritonExt${TRITON_EXT_CLASS}IncGen")
 set(LLVM_TARGET_DEFINITIONS Passes.td)
 mlir_tablegen(Passes.h.inc -gen-pass-decls -name Extension)
-add_public_tablegen_target(${EXT_Include})
+add_public_tablegen_target(${EXT_INCLUDE})
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 # Add compile definitions for TritonExtPass generated code
 add_compile_definitions(
-    TRITON_EXT_NAME=${PROJECT_NAME} 
+    TRITON_EXT_NAME=${PROJECT_NAME}
     TRITON_EXT_CLASS=${TRITON_EXT_CLASS}
 )
 
@@ -18,14 +19,8 @@ add_mlir_library(${PROJECT_NAME}
 
     SHARED
 
-    ADDITIONAL_HEADER_DIRS
-    ${TRITON_EXT_BINARY_DIR}/lib
-
     DEPENDS
-    TritonTableGen
-    TritonCanonicalizeIncGen
-    TritonExtPassInfra
-    ${EXT_Include}
+    ${EXT_INCLUDE}
 
     LINK_LIBS PUBLIC
     TritonExtPassInfra
@@ -38,4 +33,4 @@ add_mlir_library(${PROJECT_NAME}
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY
-    "${TRITON_EXT_LIBRARY_DIR}")
+    "${TRITON_EXT_BINARY_DIR}")
