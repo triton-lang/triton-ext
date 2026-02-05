@@ -143,8 +143,7 @@ LogicalResult LoopBisect::bisect() {
     getCmp(use);
   }
 
-  // TODO: for multiple points, determine if they can be sorted, then split each
-  // - for now just pick the first one
+  // Split loop on the first comparison
   if (cmpMap.size() >= 1) {
     auto [cmp, ccmp] = *cmpMap.begin();
 
@@ -154,10 +153,9 @@ LogicalResult LoopBisect::bisect() {
     auto loc = cmp->getLoc();
     OpBuilder b(forOp);
 
-    // make all unsigned?? assume I is lo..hi, increasing
     Value midp = ccmp.getComparand();
     if (ccmp.isEqual()) {
-      // return i >= c ? c - step : c + step
+      // midp += cmp.isGreater() ? -step : step
       auto incr =
           arith::ConstantIntOp::create(b, loc, ccmp.isGreater() ? -stepVal : stepVal, 32);
       midp = arith::AddIOp::create(b, loc, midp, incr);
@@ -166,12 +164,9 @@ LogicalResult LoopBisect::bisect() {
     /// Handle midp not a multiple of step
     if (stepVal != 1) {
       // mid_diff = midp - lo
-      // mid_rem = mid_diff % step
-      // mid_upd = step - mid_rem
-      // mid_diff += mid_upd
+      // mid_diff += step - mid_diff % step
       // midp = lo + mid_diff
       Value mid_diff = arith::SubIOp::create(b, loc, midp, lo);
-      Value zero = arith::ConstantIntOp::create(b, loc, 0, 32);
       Value rem = arith::RemUIOp::create(b, loc, mid_diff, forOp.getStep());
       Value upd = arith::SubIOp::create(b, loc, forOp.getStep(), rem);
       mid_diff = arith::AddIOp::create(b, loc, mid_diff, upd);
