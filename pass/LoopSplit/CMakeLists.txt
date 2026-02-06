@@ -1,26 +1,26 @@
 triton_ext_pass_setup(LoopBisectPass)
 
 # Add pass TableGen.
-set(EXT_INCLUDE "TritonExt${TRITON_EXT_CLASS}IncGen")
+set(PASS_TABLEGEN_OUTPUT "TritonExt${TRITON_EXT_CLASS}IncGen")
 set(LLVM_TARGET_DEFINITIONS Passes.td)
 mlir_tablegen(Passes.h.inc -gen-pass-decls -name Extension)
-add_public_tablegen_target(${EXT_INCLUDE})
+add_public_tablegen_target(${PASS_TABLEGEN_OUTPUT})
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
-# Add compile definitions for TritonExtPass generated code
+# Add compile definitions for generated code.
 add_compile_definitions(
     TRITON_EXT_NAME=${PROJECT_NAME}
     TRITON_EXT_CLASS=${TRITON_EXT_CLASS}
 )
 
-# Build the pass extension library (SHARED)
+# Build the pass extension library (SHARED).
 add_mlir_library(${PROJECT_NAME}
     LoopSplit.cpp
 
     SHARED
 
     DEPENDS
-    ${EXT_INCLUDE}
+    ${PASS_TABLEGEN_OUTPUT}
 
     LINK_LIBS PUBLIC
     TritonExtPassInfra
