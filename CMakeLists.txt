@@ -22,9 +22,9 @@ include_directories("${TRITON_DIR}/include")
 include_directories("${TRITON_BUILD_DIR}/include")
 
 # Locate LLVM.
-set(LLVM_DIR "$ENV{LLVM_DIR}" CACHE PATH "Path to LLVM installation" FORCE)
-message(STATUS "Found LLVM installation at: ${LLVM_DIR}")
-find_package(MLIR REQUIRED CONFIG PATHS "${LLVM_DIR}/lib/cmake/mlir")
+set(LLVM_INSTALL_DIR "$ENV{LLVM_DIR}" CACHE PATH "Path to LLVM installation" FORCE)
+message(STATUS "Found LLVM installation at: ${LLVM_INSTALL_DIR}")
+find_package(MLIR REQUIRED CONFIG PATHS "${LLVM_INSTALL_DIR}/lib/cmake/mlir")
 # Include LLVM headers.
 include_directories(${MLIR_INCLUDE_DIRS})
 include_directories(${LLVM_INCLUDE_DIRS})
