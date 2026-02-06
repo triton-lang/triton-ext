@@ -15,4 +15,4 @@ add_mlir_library(${PROJECT_NAME}
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY
-    "${TRITON_EXT_BINARY_DIR}")
+    "${TRITON_EXT_LIBRARY_DIR}")

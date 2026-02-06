@@ -5,9 +5,8 @@ include(cmake/utils.cmake)
 
 set(TRITON_EXT_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(TRITON_EXT_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
-set(TRITON_EXT_LIBRARY_DIR "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/../extensions")
+set(TRITON_EXT_LIBRARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/lib")
 set(TRITON_EXT_INFRA_DIR "${TRITON_EXT_SOURCE_DIR}/infra")
-message(STATUS "Triton extension source directory: ${TRITON_EXT_BINARY_DIR}")
 
 # Locate Triton: we need TRITON_DIR for headers and libraries and TRITON_BUILD_DIR for TableGen-generated files.
 set(TRITON_DIR "$ENV{TRITON_DIR}" CACHE PATH "Path to Triton installation" FORCE)
