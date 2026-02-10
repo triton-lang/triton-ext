@@ -71,9 +71,9 @@ function(triton_ext_should_build_extension triton_ext_dir result_var)
                 string(STRIP "${_ext_name}" _ext_name)
             endif()
             # Check if _ext_name is in TRITON_EXT_NAMES
-            list(LENGTH "${TRITON_EXT_NAMES}" _size)
+            list(LENGTH TRITON_EXT_NAMES _size)
             if(NOT _size EQUAL 0)
-                list(FIND "${TRITON_EXT_NAMES}" "${_ext_name}" _index)
+                list(FIND TRITON_EXT_NAMES "${_ext_name}" _index)
                 if(NOT _index EQUAL -1)
                     # If _ext_name is in TRITON_EXT_NAMES, set result to TRUE
                     set(${result_var} TRUE PARENT_SCOPE)
