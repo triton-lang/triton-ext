@@ -1,7 +1,7 @@
 name: CI
-description: |
-  Continuous integration workflow for triton-ext.
-  - Build triton-ext dependencies in workspace directories: LLVM (`llvm-<hash>-<os>-<arch>`) and Triton (`triton`)
+# A continuous integration workflow for triton-ext. This workflow builds triton-ext's dependencies in workspace
+# directories: LLVM (`llvm-<hash>-<os>-<arch>`) and Triton (`triton-<hash>-<os>-<arch>`), then builds the triton-ext
+# extensions.
 
 on:
   push:
