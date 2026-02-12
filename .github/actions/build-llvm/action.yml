@@ -30,30 +30,26 @@ runs:
         echo "llvm_commit_hash=${LLVM_COMMIT_HASH}" >> ${GITHUB_ENV}
 
         SHORT_LLVM_COMMIT_HASH="${LLVM_COMMIT_HASH:0:8}"
-        RUNNER_OS="$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')"
-        RUNNER_ARCH="$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')"
-        INSTALL_DIR="llvm-${SHORT_LLVM_COMMIT_HASH}-${RUNNER_OS}-${RUNNER_ARCH}"
+        SYSINFO=$(python ci/probe-sysinfo.py)
+        INSTALL_DIR="llvm-${SHORT_LLVM_COMMIT_HASH}-${SYSINFO}"
         echo "LLVM installation directory: ${INSTALL_DIR}"
         echo "llvm_install_dir=${INSTALL_DIR}" >> ${GITHUB_ENV}
         echo "llvm_install_dir=${INSTALL_DIR}" >> ${GITHUB_OUTPUT}
 
     - name: Check if artifact exists
       id: check-artifact
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const artifacts = await github.rest.actions.listArtifactsForRepo({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-          });
-          const artifact = artifacts.data.artifacts.find(a => a.name == `${process.env.llvm_install_dir}`);
-          if (artifact) {
-            console.log(`Found existing LLVM artifact: ${artifact.name}`);
-            core.setOutput('exists', 'true');
-            core.setOutput('artifact_id', artifact.id);
-          } else {
-            core.setOutput('exists', 'false');
-          }
+      shell: bash
+      env:
+        VERBOSE: 1
+      run: |
+        echo "Using GITHUB_REPOSITORY=${GITHUB_REPOSITORY}"
+        if python ci/fetch-artifact-id.py "${{ env.llvm_install_dir }}"; then
+          echo "Artifact ${{ env.llvm_install_dir }} exists, skipping build."
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "Artifact ${{ env.llvm_install_dir }} does not exist, will build LLVM."
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
 
     - name: Checkout LLVM
       if: steps.check-artifact.outputs.exists == 'false'
@@ -140,30 +136,3 @@ runs:
       with:
         name: ${{ env.llvm_install_dir }}
         path: ${{ env.llvm_install_dir }}.tar.gz
-
-    - name: Download LLVM artifact
-      if: steps.check-artifact.outputs.exists == 'true'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const artifact_id = '${{ steps.check-artifact.outputs.artifact_id }}';
-          console.log(`Downloading existing LLVM artifact: ${artifact_id}`);
-          const download = await github.rest.actions.downloadArtifact({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              artifact_id: artifact_id,
-              archive_format: 'zip',
-          });
-
-          const fs = require('fs');
-          const tempDir = require('os').tmpdir();
-          const zipPath = require('path').join(tempDir, `${process.env.llvm_install_dir}.zip`);
-          console.log(`Downloading to: ${zipPath}`);
-          fs.writeFileSync(zipPath, Buffer.from(download.data));
-
-          const { execSync } = require('child_process');
-          execSync(`unzip -q ${zipPath} -d ${tempDir}`);
-          tarDir = require('path').join(tempDir, `${process.env.llvm_install_dir}.tar.gz`);
-          extractDir = process.cwd();
-          console.log(`Extracting ${tarDir} to ${extractDir}`);
-          execSync(`tar xzf ${tarDir} -C ${extractDir}`);
