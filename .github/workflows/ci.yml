@@ -5,12 +5,10 @@ description: |
 
 on:
   push:
-    paths:
-      - '.github/workflows/**'
-      - '.github/actions/**'
+    branches: [main]
   schedule:
-    # Run daily to check for upstream changes
     - cron: '0 0 * * *'
+  pull_request:
   workflow_dispatch:
 
 permissions:
