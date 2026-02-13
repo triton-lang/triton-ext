@@ -1,0 +1,169 @@
+name: Build LLVM
+description: |
+  Build LLVM from a specified commit. This composite action will:
+  - check if a GitHub artifact exists for this LLVM commit, OS, and architecture: `llvm-<short-hash>-<os>-<arch>`
+  - if the artifact does not exist, check out LLVM and build it _as shared libraries_ (required for triton-ext); then,
+    upload it as an artifact
+  - if the artifact does exist, download and extract it
+  - return the path the LLVM installation directory.
+
+  This action expects `sccache` to be set up by the caller.
+
+inputs:
+  llvm_hash:
+    description: LLVM commit hash to build.
+    required: true
+outputs:
+  llvm_install_dir:
+    description: LLVM installation directory name.
+    value: ${{ steps.get-hash.outputs.llvm_install_dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch LLVM commit hash
+      id: get-hash
+      shell: bash
+      run: |
+        LLVM_COMMIT_HASH="${{ inputs.llvm_hash }}"
+        echo "Using provided LLVM hash: ${LLVM_COMMIT_HASH}"
+        echo "llvm_commit_hash=${LLVM_COMMIT_HASH}" >> ${GITHUB_ENV}
+
+        SHORT_LLVM_COMMIT_HASH="${LLVM_COMMIT_HASH:0:8}"
+        RUNNER_OS="$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')"
+        RUNNER_ARCH="$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')"
+        INSTALL_DIR="llvm-${SHORT_LLVM_COMMIT_HASH}-${RUNNER_OS}-${RUNNER_ARCH}"
+        echo "LLVM installation directory: ${INSTALL_DIR}"
+        echo "llvm_install_dir=${INSTALL_DIR}" >> ${GITHUB_ENV}
+        echo "llvm_install_dir=${INSTALL_DIR}" >> ${GITHUB_OUTPUT}
+
+    - name: Check if artifact exists
+      id: check-artifact
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const artifacts = await github.rest.actions.listArtifactsForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+          });
+          const artifact = artifacts.data.artifacts.find(a => a.name == `${process.env.llvm_install_dir}`);
+          if (artifact) {
+            console.log(`Found existing LLVM artifact: ${artifact.name}`);
+            core.setOutput('exists', 'true');
+            core.setOutput('artifact_id', artifact.id);
+          } else {
+            core.setOutput('exists', 'false');
+          }
+
+    - name: Checkout LLVM
+      if: steps.check-artifact.outputs.exists == 'false'
+      uses: actions/checkout@v4
+      with:
+        repository: llvm/llvm-project
+        path: llvm-project
+        ref: ${{ env.llvm_commit_hash }}
+
+    - name: Set up Python
+      if: steps.check-artifact.outputs.exists == 'false'
+      uses: actions/setup-python@v6
+      with:
+        python-version: 3.11
+
+    - name: Install Prerequisites
+      if: steps.check-artifact.outputs.exists == 'false'
+      shell: bash
+      run: |
+        python3 -m pip install cmake ninja
+
+    - name: Free disk space on Ubuntu
+      if: steps.check-artifact.outputs.exists == 'false' && matrix.config.target-os == 'ubuntu'
+      shell: bash
+      run: |
+        df -h
+        echo "Removing large packages"
+        sudo apt-get remove -y 'php.*'
+        sudo apt-get remove -y google-chrome-stable firefox powershell mono-devel
+        sudo apt-get autoremove -y
+        sudo apt-get clean
+        df -h
+        echo "Removing large directories"
+        df -h
+
+    - name: Build LLVM
+      if: steps.check-artifact.outputs.exists == 'false' && matrix.config.arch == 'x64' && matrix.config.target-os == 'ubuntu'
+      # Note that using `LLVM_BUILD_SHARED_LIBS=ON` does not have the desired effect; only by using CMake's
+      # `BUILD_SHARED_LIBS` option do we actually get shared libraries. And this is not good practice: LLVM documents
+      # how `BUILD_SHARED_LIBS` should not be used for distributing LLVM
+      # (https://llvm.org/docs/BuildingADistribution.html#special-notes-for-library-only-distributions).
+      shell: bash
+      run: >
+        python3 -m pip install -r llvm-project/mlir/python/requirements.txt
+
+        cmake -GNinja -Bllvm-project/build
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+        -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+        -DCMAKE_INSTALL_PREFIX="${{ env.llvm_install_dir }}"
+        -DCMAKE_LINKER=lld
+        -DLLVM_BUILD_UTILS=ON
+        -DBUILD_SHARED_LIBS=ON
+        -DLLVM_BUILD_SHARED_LIBS=ON
+        -DLLVM_BUILD_TOOLS=ON
+        -DLLVM_ENABLE_ASSERTIONS=ON
+        -DMLIR_ENABLE_BINDINGS_PYTHON=OFF
+        -DLLVM_ENABLE_PROJECTS="mlir;lld"
+        -DLLVM_INSTALL_UTILS=ON
+        -DLLVM_TARGETS_TO_BUILD="host;NVPTX;AMDGPU"
+        -DLLVM_ENABLE_TERMINFO=OFF
+        -DLLVM_ENABLE_ZSTD=OFF
+        llvm-project/llvm
+
+        ninja -C llvm-project/build check-mlir install
+
+        tar czf "${{ env.llvm_install_dir }}.tar.gz" "${{ env.llvm_install_dir }}"
+
+    - name: Dump Disk Usage
+      if: steps.check-artifact.outputs.exists == 'false'
+      shell: bash
+      run: |
+        du -h ${{ env.llvm_install_dir }}
+        df -h
+
+    - name: Dump Sccache Statistics
+      if: steps.check-artifact.outputs.exists == 'false'
+      shell: bash
+      run: sccache --show-stats
+
+    - name: Upload LLVM artifact
+      if: steps.check-artifact.outputs.exists == 'false'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.llvm_install_dir }}
+        path: ${{ env.llvm_install_dir }}.tar.gz
+
+    - name: Download LLVM artifact
+      if: steps.check-artifact.outputs.exists == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const artifact_id = '${{ steps.check-artifact.outputs.artifact_id }}';
+          console.log(`Downloading existing LLVM artifact: ${artifact_id}`);
+          const download = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: artifact_id,
+              archive_format: 'zip',
+          });
+
+          const fs = require('fs');
+          const tempDir = require('os').tmpdir();
+          const zipPath = require('path').join(tempDir, `${process.env.llvm_install_dir}.zip`);
+          console.log(`Downloading to: ${zipPath}`);
+          fs.writeFileSync(zipPath, Buffer.from(download.data));
+
+          const { execSync } = require('child_process');
+          execSync(`unzip -q ${zipPath} -d ${tempDir}`);
+          tarDir = require('path').join(tempDir, `${process.env.llvm_install_dir}.tar.gz`);
+          extractDir = process.cwd();
+          console.log(`Extracting ${tarDir} to ${extractDir}`);
+          execSync(`tar xzf ${tarDir} -C ${extractDir}`);
