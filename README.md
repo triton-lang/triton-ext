@@ -1,10 +1,13 @@
 # Triton Extensions
 
-A collection of out-of-tree extensions for the Triton compiler, including passes, dialects, backends, and language extensions. 
+A collection of out-of-tree extensions for the Triton compiler, including passes, dialects, backends, and language extensions.
+
+> NOTE: this project is *under construction*. It is currently in the early stages of development and parts of it will
+> likely change. Contributions are welcome but be aware that the foundations may change rapidly.
 
 ## Overview
 
-This repository provides a framework for developing and building Triton compiler extensions that can extend functionality without modifying the core Triton codebase. Extensions are built as shared libraries that can be dynamically loaded by Triton at runtime. 
+This repository provides a framework for developing and building Triton compiler extensions that can extend functionality without modifying the core Triton codebase. Extensions are built as shared libraries that can be dynamically loaded by Triton at runtime.
 
 Extensions are built on top of the upstream Triton infrastructure documented here: https://github.com/triton-lang/triton/tree/main/examples/plugins
 
@@ -23,7 +26,7 @@ triton-ext/
 │   │   ├── CMakeLists.txt
 │   │   ├── LoopSplit.cpp
 │   │   ├── Passes.td
-│   │   └── test          # Lit tests 
+│   │   └── test          # Lit tests
 │   │       └── loop-split.mlir
 │   └── CMakeLists.txt
 │
