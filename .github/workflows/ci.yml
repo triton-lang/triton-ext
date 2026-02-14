@@ -68,6 +68,13 @@ jobs:
         with:
           llvm_hash: ${{ steps.hashes.outputs.llvm_hash }}
 
+      - name: Download LLVM artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python ci/download-artifact.py ${{ steps.build-llvm.outputs.llvm_install_dir }}
+
       - name: Build Triton
         id: build-triton
         uses: ./.github/actions/build-triton
@@ -75,12 +82,12 @@ jobs:
           triton_hash: ${{ steps.hashes.outputs.triton_hash }}
           llvm_install_dir: ${{ github.workspace }}/${{ steps.build-llvm.outputs.llvm_install_dir }}
 
-      - name: Download artifacts
+      - name: Download Triton artifact
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python ci/download-artifacts.py ${{ steps.hashes.outputs.triton_hash }}
+          python ci/download-artifact.py ${{ steps.build-triton.outputs.triton_install_dir }}
 
       - name: Find Triton build directory
         id: find-triton

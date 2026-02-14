@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-For a given Triton commit hash, retrieve pre-built Triton and LLVM artifacts and expand them in the current directory.
-If no Triton commit hash is provided, this will retrieve the latest version from the `main` branch.
+Retrieve a pre-built Triton or LLVM artifact and expand it in the current directory.
+
+This expects a single argument that can be incrementally more specific:
+- `<project>`: either `llvm` or `triton` (required)
+- `<commit>`: a full or short commit hash (optional; defaults to latest Triton commit and corresponding LLVM commit)
+- `<os>`: the operating system (optional; defaults to current system)
+- `<arch>`: the architecture (optional; defaults to current system)
 
 This script requires the `gh` CLI tool to interact with the GitHub API. This is available in GitHub Actions, but users
 running this locally will need to install it (https://cli.github.com) and authenticate (`gh auth login`) prior to use.
 
 Usage:
-    python ci/download-artifacts.py [<triton-rev>]
+    python ci/download-artifact.py <project>[-<commit>[-<os>[-<arch>]]]
 """
 
 import sys
 import os
 import subprocess
 import tarfile
-from pathlib import Path
 import logging
 import shutil
 
@@ -112,31 +116,35 @@ def extract_artifact(artifact_file):
         sys.exit(1)
 
 
-def main(repository: str, dry_run: bool):
-    triton_rev = sys.argv[1] if len(sys.argv) > 1 else None
-    if not triton_rev:
+def main(repository: str, project: str, commit: str, os_name: str, arch: str,
+         dry_run: bool):
+    assert project in ("llvm", "triton")
+
+    # If no commit hash is provided, fetch the latest Triton hash and corresponding LLVM hash.
+    if not commit:
         triton_rev = fetch_triton_hash()
-    logging.debug(f"Found Triton hash: {triton_rev}")
+        logging.debug(f"Found Triton hash: {triton_rev}")
+        if project == "triton":
+            commit = triton_rev
+        else:
+            commit = fetch_llvm_hash(triton_rev)
+            logging.debug(f"Found LLVM hash: {commit}")
 
-    llvm_hash = fetch_llvm_hash(triton_rev)
-    logging.debug(f"Found LLVM hash: {llvm_hash}")
+    # If no OS or architecture is provided, probe the current system.
+    probed_os_name, probed_arch = probe_sysinfo()
+    logging.debug(f"Probed system: {probed_os_name}-{probed_arch}")
+    if not os_name:
+        os_name = probed_os_name
+    if not arch:
+        arch = probed_arch
 
-    os_name, arch = probe_sysinfo()
-    logging.debug(f"Analyzed system: {os_name}-{arch}")
-
-    llvm_artifact = get_artifact_name("llvm", llvm_hash, os_name, arch)
-    triton_artifact = get_artifact_name("triton", triton_rev, os_name, arch)
+    artifact = f"{project}-{commit[:8]}-{os_name}-{arch}"
     if not dry_run:
-        llvm_file = download_artifact(repository, llvm_artifact)
-        extract_artifact(llvm_file)
+        tar_gz = download_artifact(repository, artifact)
+        extract_artifact(tar_gz)
 
-        triton_file = download_artifact(repository, triton_artifact)
-        extract_artifact(triton_file)
-
-    print("", file=sys.stderr)
-    print("Successfully downloaded and extracted artifacts.", file=sys.stderr)
-    print(f"LLVM installation: {llvm_artifact}/", file=sys.stderr)
-    print(f"Triton installation: {triton_artifact}/", file=sys.stderr)
+    print(f"Successfully downloaded and installed: {artifact}/",
+          file=sys.stderr)
 
 
 def env2bool(variable: str) -> bool:
@@ -151,4 +159,15 @@ if __name__ == "__main__":
 
     repository = os.getenv('GITHUB_REPOSITORY', 'triton-lang/triton-ext')
     dry_run = env2bool("DRY_RUN")
-    main(repository, dry_run)
+
+    USAGE = "python download-artifact.py <project>[-<commit>[-<os>[-<arch>]]]"
+    if len(sys.argv) != 2:
+        logging.error(f"Usage: {USAGE}")
+        sys.exit(1)
+
+    project, commit, os_name, arch = (sys.argv[1].split('-') + [None] * 4)[:4]
+    if project not in ("llvm", "triton"):
+        logging.error("Invalid project name; expected 'llvm' or 'triton'.")
+        logging.error(f"Usage: {USAGE}")
+        sys.exit(1)
+    main(repository, project, commit, os_name, arch, dry_run)
