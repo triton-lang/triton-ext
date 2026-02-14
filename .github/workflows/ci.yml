@@ -77,6 +77,8 @@ jobs:
 
       - name: Download artifacts
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python ci/download-artifacts.py ${{ steps.hashes.outputs.triton_hash }}
 

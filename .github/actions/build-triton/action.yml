@@ -48,6 +48,7 @@ runs:
       shell: bash
       env:
         VERBOSE: 1
+        GH_TOKEN: ${{ github.token }}
       run: |
         echo "Using GITHUB_REPOSITORY=${GITHUB_REPOSITORY}"
         if python ci/fetch-artifact-id.py "${{ env.triton_install_dir }}"; then
