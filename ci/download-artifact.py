@@ -2,7 +2,8 @@
 """
 Retrieve a pre-built Triton or LLVM artifact and expand it in the current directory.
 
-This expects a single argument that can be incrementally more specific:
+This expects a single, hyphen-delimited argument that can be incrementally more specific (e.g., `<project>`,
+`<project>-<commit>`, `<project>-<commit>-<os>`, etc.):
 - `<project>`: either `llvm` or `triton` (required)
 - `<commit>`: a full or short commit hash (optional; defaults to latest Triton commit and corresponding LLVM commit)
 - `<os>`: the operating system (optional; defaults to current system)
