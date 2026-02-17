@@ -2,14 +2,14 @@
 # This file defines code owners who will be requested for review on pull requests
 # Format: <file pattern> <owner> [<owner> ...]
 # Patterns are matched top-down, and the last matching pattern takes precedence
-# 
+#
 # Owners can be specified as:
 # - GitHub username: @username
 # - Email address: user@example.com
 # - Team: @org/team-name
 
 # Root level files
-* simon@kernelize.ai @crobeck
+* simon@kernelize.ai @crobeck @abrown
 
 # Infrastructure
 /infra/ simon@kernelize.ai
