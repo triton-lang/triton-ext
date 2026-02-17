@@ -88,8 +88,12 @@ def filter_data_no_symlinks(tarinfo, path):
     if tarinfo.issym() or tarinfo.islnk():
         return None
 
-    # Apply 'data' filter behavior: strip dangerous metadata.
-    tarinfo.mode = 0o755 if tarinfo.isdir() else 0o644
+    # Apply 'data' filter behavior: strip dangerous metadata, but preserve
+    # executability for files that were executable in the archive.
+    if tarinfo.isdir():
+        tarinfo.mode = 0o755
+    else:
+        tarinfo.mode = 0o755 if (tarinfo.mode & 0o111) else 0o644
     tarinfo.uid = tarinfo.gid = 0
     tarinfo.uname = tarinfo.gname = ""
 
