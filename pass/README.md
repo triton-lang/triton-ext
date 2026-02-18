@@ -54,24 +54,24 @@ To create a new pass extension:
    ```cmake
    project(my_pass)
    set(TRITON_EXT_CLASS MyPassClass)
-   
+
    # Only build this extension if it is enabled in TRITON_EXT_NAMES
    list(FIND TRITON_EXT_NAMES ${PROJECT_NAME} _index)
    list(LENGTH TRITON_EXT_NAMES _size)
    if(NOT _index EQUAL -1 OR _size EQUAL 0)
        message(STATUS "TRITON EXT: building ${PROJECT_NAME}")
-       
+
        # Add Pass tablegen
        set(EXT_Include "TritonExt${TRITON_EXT_CLASS}IncGen")
        set(LLVM_TARGET_DEFINITIONS Passes.td)
        mlir_tablegen(Passes.h.inc -gen-pass-decls -name Extension)
        add_public_tablegen_target(${EXT_Include})
-       
+
        add_compile_definitions(
-           TRITON_EXT_NAME=${PROJECT_NAME} 
+           TRITON_EXT_NAME=${PROJECT_NAME}
            TRITON_EXT_CLASS=${TRITON_EXT_CLASS}
        )
-       
+
        add_mlir_library(${PROJECT_NAME}
            MyPass.cpp
            SHARED
@@ -85,7 +85,7 @@ To create a new pass extension:
            LLVMSupport
            MLIRSupport
        )
-       
+
        set_target_properties(${PROJECT_NAME} PROPERTIES
            LIBRARY_OUTPUT_DIRECTORY
            "${TRITON_EXT_LIBRARY_DIR}")
@@ -105,4 +105,3 @@ To create a new pass extension:
    ```
 
 6. The extension will be automatically discovered by the build system (no need to manually add to `pass/CMakeLists.txt`).
-
