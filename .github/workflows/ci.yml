@@ -15,6 +15,24 @@ permissions:
   contents: read
 
 jobs:
+  pre-commit:
+    name: Run pre-commit hooks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Upgrade pre-commit package
+        run: python3 -m pip install --upgrade pre-commit
+      - name: Check pre-commit
+        run: python3 -m pre_commit run --all-files --verbose
+      - name: Print diff of changes if pre-commit failed
+        if: failure()
+        run: git diff
+
   build:
     name: Build on ${{ matrix.config.runner }}
     runs-on: ${{ matrix.config.runs_on }}
@@ -47,7 +65,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: 3.11
+          python-version: '3.11'
 
       - name: Setup virtual environment
         shell: bash
