@@ -30,7 +30,7 @@ class Artifact:
     created_at: str
 
     def __str__(self):
-        return f"{self.name} = {self.id}"
+        return f"{self.name} = {self.id} ({self.created_at})"
 
 
 def fetch(repository) -> list[Artifact]:
@@ -40,10 +40,12 @@ def fetch(repository) -> list[Artifact]:
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     artifacts_data = json.loads(result.stdout)
     logging.debug(f"Fetched artifacts: {json.dumps(artifacts_data, indent=2)}")
-    return [
+    artifacts = [
         Artifact(id=a['id'], name=a['name'], created_at=a['created_at'])
         for a in artifacts_data['artifacts']
     ]
+    artifacts.sort(key=lambda a: a.created_at, reverse=True)
+    return artifacts
 
 
 def print_all(artifacts):
