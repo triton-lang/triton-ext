@@ -156,8 +156,8 @@ LogicalResult LoopBisect::bisect() {
     Value midp = ccmp.getComparand();
     if (ccmp.isEqual()) {
       // midp += cmp.isGreater() ? -step : step
-      auto incr =
-          arith::ConstantIntOp::create(b, loc, ccmp.isGreater() ? -stepVal : stepVal, 32);
+      auto incr = arith::ConstantIntOp::create(
+          b, loc, ccmp.isGreater() ? -stepVal : stepVal, 32);
       midp = arith::AddIOp::create(b, loc, midp, incr);
     }
 
