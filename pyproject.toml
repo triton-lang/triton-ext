@@ -1,0 +1,6 @@
+# Ignore lit-provided `config` builtin in Python analysis tools.
+[tool.ruff]
+builtins = ["config"]
+[[tool.mypy.overrides]]
+module = ["lit.cfg", "lit.local.cfg"]
+disable_error_code = ["name-defined"]

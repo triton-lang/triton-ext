@@ -133,6 +133,8 @@ macro(triton_ext_pass_setup ext_class)
     if(_hash)
         set(TRITON_EXT_HASH ${_hash})
     endif()
+
+    set_property(GLOBAL APPEND PROPERTY TRITON_EXT_BUILT_TARGETS ${PROJECT_NAME})
 endmacro()
 
 # Function to safely add a subdirectory without failing the build

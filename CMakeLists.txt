@@ -10,12 +10,15 @@ set(TRITON_EXT_INFRA_DIR "${TRITON_EXT_SOURCE_DIR}/infra")
 
 # Locate Triton: we need TRITON_DIR for headers and libraries and TRITON_BUILD_DIR for TableGen-generated files.
 set(TRITON_DIR "$ENV{TRITON_DIR}" CACHE PATH "Path to Triton installation" FORCE)
-if(NOT TRITON_DIR)
-    set(TRITON_DIR "${CMAKE_CURRENT_LIST_DIR}/../triton")
+if(NOT IS_ABSOLUTE "${TRITON_DIR}")
+    get_filename_component(TRITON_DIR "${TRITON_DIR}" ABSOLUTE)
 endif()
 find_library(TRITON_LIB triton PATHS "${TRITON_DIR}/python/triton/_C")
 message(STATUS "Found Triton library at: ${TRITON_LIB}")
 set(TRITON_BUILD_DIR "$ENV{TRITON_BUILD_DIR}" CACHE PATH "Path to Triton's CMake-generated directory" FORCE)
+if(NOT IS_ABSOLUTE "${TRITON_BUILD_DIR}")
+    get_filename_component(TRITON_BUILD_DIR "${TRITON_BUILD_DIR}" ABSOLUTE)
+endif()
 message(STATUS "Found Triton build directory at: ${TRITON_BUILD_DIR}")
 # Include Triton headers.
 include_directories("${TRITON_DIR}/include")
@@ -23,6 +26,9 @@ include_directories("${TRITON_BUILD_DIR}/include")
 
 # Locate LLVM.
 set(LLVM_INSTALL_DIR "$ENV{LLVM_DIR}" CACHE PATH "Path to LLVM installation" FORCE)
+if(NOT IS_ABSOLUTE "${LLVM_INSTALL_DIR}")
+    get_filename_component(LLVM_INSTALL_DIR "${LLVM_INSTALL_DIR}" ABSOLUTE)
+endif()
 message(STATUS "Found LLVM installation at: ${LLVM_INSTALL_DIR}")
 find_package(MLIR REQUIRED CONFIG PATHS "${LLVM_INSTALL_DIR}/lib/cmake/mlir")
 # Include LLVM headers.
@@ -44,3 +50,12 @@ foreach(subdir ${ALL_SUBDIRECTORIES})
     add_subdirectory("${TRITON_EXT_SOURCE_DIR}/${subdir}"
                      "${TRITON_EXT_BINARY_DIR}/${subdir}")
 endforeach()
+
+# Add tests.
+add_subdirectory("${TRITON_EXT_SOURCE_DIR}/testing" "${TRITON_EXT_BINARY_DIR}/testing")
+
+# We create a meta-target to track when all extensions are built. All extension targets add themselves to the global
+# `TRITON_EXT_BUILT_TARGETS` during setup (e.g., `triton_ext_pass_setup`)
+add_custom_target(triton-ext-all-extensions)
+get_property(extension_targets GLOBAL PROPERTY TRITON_EXT_BUILT_TARGETS)
+add_dependencies(triton-ext-all-extensions ${extension_targets})

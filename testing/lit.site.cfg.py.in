@@ -1,0 +1,12 @@
+@LIT_SITE_CFG_IN_HEADER@
+
+config.triton_ext_source_dir = "@TRITON_EXT_SOURCE_DIR@"
+config.triton_ext_binary_dir = "@TRITON_EXT_BINARY_DIR@"
+config.triton_ext_test_dir = "@CMAKE_CURRENT_SOURCE_DIR@"
+config.triton_build_dir = "@TRITON_BUILD_DIR@"
+config.llvm_install_dir = "@LLVM_INSTALL_DIR@"
+
+import lit.llvm
+lit.llvm.initialize(lit_config, config)
+
+lit_config.load_config(config, config.triton_ext_test_dir + "/lit.cfg.py")
