@@ -142,9 +142,8 @@ tt.func @split_kernel_step10(%arg0: tensor<256x!tt.ptr<f32>>, %arg1: i32, %arg2:
   // Check the mid-point is rounded up
   // CHECK-LABEL: split_kernel_step10
   // CHECK: %[[REM:.*]] = arith.remui %arg2, %c10_i32
-  // CHECK: %[[CMP:.*]] = arith.cmpi ne, %[[REM]], %c0_i32
-  // CHECK: %[[EXT:.*]] = arith.extui %[[CMP]] : i1 to i32
-  // CHECK: %[[MIDP:.*]] = arith.addi %arg2, %[[EXT]] : i32
+  // CHECK: %[[SUB:.*]] = arith.subi %c10_i32, %[[REM]] : i32
+  // CHECK: %[[MIDP:.*]] = arith.addi %arg2, %[[SUB]] : i32
 
   // CHECK: scf.for {{.*}} = %c0_i32 to %[[MIDP]] step %c10_i32
   // CHECK:   arith.addf
