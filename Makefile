@@ -5,6 +5,7 @@ TRITON_BUILD_DIR ?= $(shell find $(TRITON_DIR)/build -maxdepth 1 -name "cmake.*"
 LLVM_DIR ?= $(shell ci/pick-local-artifact.py llvm)
 $(if $(and $(TRITON_DIR),$(TRITON_BUILD_DIR),$(LLVM_DIR)),,$(error Missing artifact directories))
 BUILD_DIR ?= build
+EXTRA_CMAKE_ARGS ?=
 
 default: build
 
@@ -14,7 +15,7 @@ configure:
 	LLVM_DIR="$(LLVM_DIR)" \
 	TRITON_DIR="$(TRITON_DIR)" \
 	TRITON_BUILD_DIR="$(TRITON_BUILD_DIR)" \
-		cmake -S . -B ${BUILD_DIR} -G Ninja
+		cmake -S . -B ${BUILD_DIR} -G Ninja ${EXTRA_CMAKE_ARGS}
 
 .PHONY: build
 build: configure
