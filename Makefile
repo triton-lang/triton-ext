@@ -21,6 +21,10 @@ configure:
 build: configure
 	cmake --build ${BUILD_DIR}
 
+.PHONY: test
+test:
+	ninja -C ${BUILD_DIR} check-lit-tests
+
 .PHONY: clean
 clean:
 	rm -rf ${BUILD_DIR}
