@@ -72,6 +72,7 @@ jobs:
           python3 -m venv ~/.venv
           source ~/.venv/bin/activate
           python3 -m pip install --upgrade pip
+          python3 -m pip install lit
           echo "pip version: $(pip --version)"
           echo "python version: $(python --version)"
 
@@ -125,6 +126,13 @@ jobs:
                TRITON_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
                TRITON_BUILD_DIR="${{ steps.find-triton.outputs.triton_build_dir }}"
                EXTRA_CMAKE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
+
+      - name: Run tests
+        shell: bash
+        run: >
+          make test LLVM_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
+                    TRITON_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
+                    TRITON_BUILD_DIR="${{ steps.find-triton.outputs.triton_build_dir }}"
 
       - name: List files
         shell: bash
