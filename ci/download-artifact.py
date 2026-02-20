@@ -121,8 +121,8 @@ def extract_artifact(artifact_file):
         sys.exit(1)
 
 
-def main(repository: str, project: str, commit: str, os_name: str, arch: str,
-         dry_run: bool):
+def main(repository: str, project: str, commit: str | None,
+         os_name: str | None, arch: str | None, dry_run: bool):
     assert project in ("llvm", "triton")
 
     # If no commit hash is provided, fetch the latest Triton hash and corresponding LLVM hash.
@@ -134,6 +134,7 @@ def main(repository: str, project: str, commit: str, os_name: str, arch: str,
         else:
             commit = fetch_llvm_hash(triton_rev)
             logging.debug(f"Found LLVM hash: {commit}")
+    assert (commit is not None)
 
     # If no OS or architecture is provided, probe the current system.
     probed_os_name, probed_arch = probe_sysinfo()

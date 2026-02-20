@@ -10,7 +10,6 @@ Usage:
 
 import sys
 import requests
-import logging
 
 
 def run(triton_rev):
