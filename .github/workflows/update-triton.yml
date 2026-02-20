@@ -1,0 +1,34 @@
+name: Update Triton Pin
+permissions:
+  actions: write
+
+on:
+  schedule:
+    - cron: '0 19 * * 0'  # Every Sunday at 19:00 UTC
+  workflow_dispatch:      # Allow manual trigger
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout triton-ext
+        uses: actions/checkout@v4
+
+      - name: Collect latest Triton commit
+        id: hash
+        shell: bash
+        run: |
+          TRITON_HASH=$(python ci/fetch-triton-hash.py)
+          echo "TRITON_HASH=$TRITON_HASH" >> $GITHUB_ENV
+          echo "Triton hash: $TRITON_HASH"
+
+      - name: Set GitHub action variable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        # Set the GitHub action variable for later use in `ci.yml`. This configuration can be manually inspected at
+        # https://github.com/triton-lang/triton-ext/settings/variables/actions.
+        run: gh variable set TRITON_HASH --body "$TRITON_HASH"
+
+      - name: Trigger CI
+        uses: ./.github/workflows/ci.yml
