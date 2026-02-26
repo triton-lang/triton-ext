@@ -24,11 +24,12 @@ import logging
 import shutil
 
 
-def fetch_triton_hash():
-    """See fecth-triton-hash.py."""
-    import importlib
-    module = importlib.import_module("fetch-triton-hash")
-    return module.run()
+def read_triton_hash():
+    """Read the pinned Triton hash from the `triton-hash.txt` file."""
+    dir = os.path.dirname(os.path.abspath(__file__))
+    file = os.path.join(dir, "triton-hash.txt")
+    hash = open(file).read().strip()
+    return hash
 
 
 def fetch_llvm_hash(triton_rev):
@@ -125,9 +126,9 @@ def main(repository: str, project: str, commit: str | None,
          os_name: str | None, arch: str | None, dry_run: bool):
     assert project in ("llvm", "triton")
 
-    # If no commit hash is provided, fetch the latest Triton hash and corresponding LLVM hash.
+    # If no commit hash is provided, fetch the pinned Triton hash and corresponding LLVM hash.
     if not commit:
-        triton_rev = fetch_triton_hash()
+        triton_rev = read_triton_hash()
         logging.debug(f"Found Triton hash: {triton_rev}")
         if project == "triton":
             commit = triton_rev
