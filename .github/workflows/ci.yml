@@ -71,6 +71,8 @@ jobs:
         run: |
           python3 -m venv ~/.venv
           source ~/.venv/bin/activate
+          echo "PATH=$PATH" >> $GITHUB_ENV
+
           python3 -m pip install --upgrade pip
           python3 -m pip install lit
           echo "pip version: $(pip --version)"
