@@ -6,10 +6,9 @@ name: CI
 on:
   push:
     branches: [main]
-  schedule:
-    - cron: '0 0 * * *'
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -52,8 +51,9 @@ jobs:
       - name: Collect commit hashes
         id: hashes
         shell: bash
+        # See `update-triton.yml` for where this GitHub action variable is set.
         run: |
-          TRITON_HASH=$(python ci/fetch-triton-hash.py)
+          TRITON_HASH=$(cat ci/triton-hash.txt)
           echo "triton_hash=$TRITON_HASH" >> $GITHUB_OUTPUT
           echo "Triton hash: $TRITON_HASH"
 

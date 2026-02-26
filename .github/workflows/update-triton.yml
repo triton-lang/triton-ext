@@ -1,0 +1,39 @@
+name: Update Triton Pin
+permissions:
+  contents: write
+  pull-requests: write
+
+on:
+  schedule:
+    - cron: '0 19 * * 0'  # Every Sunday at 19:00 UTC
+  workflow_dispatch:      # Allow manual trigger
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout triton-ext
+        uses: actions/checkout@v4
+
+      - name: Collect latest Triton commit
+        id: hash
+        shell: bash
+        run: |
+          TRITON_HASH=$(python ci/fetch-triton-hash.py)
+          echo "TRITON_HASH=$TRITON_HASH" >> $GITHUB_ENV
+          echo "Triton hash: $TRITON_HASH"
+
+      - name: Overwrite triton-hash.txt
+        shell: bash
+        run: echo "$TRITON_HASH" > cmake/triton-hash.txt
+
+      - name: Configure Git
+        run: |
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python ci/create-triton-pin-pr.py "$TRITON_HASH"
