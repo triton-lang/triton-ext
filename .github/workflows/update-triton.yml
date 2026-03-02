@@ -10,6 +10,7 @@ on:
 
 jobs:
   update:
+    name: Update Triton Pin
     runs-on: ubuntu-latest
     steps:
       - name: Checkout triton-ext
