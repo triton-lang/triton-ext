@@ -25,7 +25,7 @@ jobs:
 
       - name: Overwrite triton-hash.txt
         shell: bash
-        run: echo "$TRITON_HASH" > cmake/triton-hash.txt
+        run: echo "$TRITON_HASH" > ci/triton-hash.txt
 
       - name: Configure Git
         run: |
