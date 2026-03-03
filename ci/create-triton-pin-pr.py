@@ -79,12 +79,12 @@ def find_matching_pr(branch: str) -> str:
     ).stdout.strip()
 
 
-def open_pr(branch, hash, dry_run: bool):
+def open_pr(branch, short_hash, hash, dry_run: bool):
     """Open a new PR for the Triton pin update."""
     if dry_run:
         return
 
-    title = f"ci: update Triton pin to {hash}"
+    title = f"ci: update Triton pin to {short_hash}"
     body = "Automated update of `triton-hash.txt` to Triton commit "
     body += f"[{hash}](https://github.com/triton-lang/triton/commit/{hash})."
     exec([
@@ -115,12 +115,13 @@ def main(dry_run: bool):
         logging.error(f"Error: Triton hash is empty in {file}")
         sys.exit(1)
 
-    branch = push_pin_branch(hash, file, dry_run)
+    short_hash = hash[:8]
+    branch = push_pin_branch(short_hash, file, dry_run)
     existing_pr = find_matching_pr(branch)
     if existing_pr:
         print(f"PR #{existing_pr} already exists for {branch}")
         return
-    open_pr(branch, hash, dry_run)
+    open_pr(branch, short_hash, hash, dry_run)
 
 
 def env2bool(variable: str) -> bool:
