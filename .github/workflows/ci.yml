@@ -109,32 +109,18 @@ jobs:
         run: |
           python ci/download-artifact.py ${{ steps.build-triton.outputs.triton_install_dir }}
 
-      - name: Find Triton build directory
-        id: find-triton
-        shell: bash
-        run: |
-          TRITON_BUILD_DIR=$(find "${{ steps.build-triton.outputs.triton_install_dir }}" -type d -name "cmake.*" | head -1)
-          if [ ! -d "$TRITON_BUILD_DIR" ]; then
-            echo "Error: Triton build directory not found at $TRITON_BUILD_DIR"
-            exit 1
-          fi
-          echo "triton_build_dir=${TRITON_BUILD_DIR}" >> $GITHUB_ENV
-          echo "triton_build_dir=${TRITON_BUILD_DIR}" >> $GITHUB_OUTPUT
-
       - name: Build Triton extensions
         shell: bash
         run: >
-          make LLVM_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
-               TRITON_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
-               TRITON_BUILD_DIR="${{ steps.find-triton.outputs.triton_build_dir }}"
+          make LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
+               TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
                EXTRA_CMAKE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
 
       - name: Run tests
         shell: bash
         run: >
-          make test LLVM_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
-                    TRITON_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
-                    TRITON_BUILD_DIR="${{ steps.find-triton.outputs.triton_build_dir }}"
+          make test LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
+                    TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
 
       - name: List files
         shell: bash

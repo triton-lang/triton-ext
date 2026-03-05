@@ -25,7 +25,7 @@ for top in os.listdir(config.test_source_root):
         config.excludes.append(top)
 
 # Extend the environment: add Triton and LLVM tools to PATH (e.g., for `triton-opt`, `FileCheck`).
-triton_tools_dir = os.path.join(config.triton_build_dir, "bin")
+triton_tools_dir = os.path.join(config.triton_install_dir, "bin")
 llvm_tools_dir = os.path.join(config.llvm_install_dir, "bin")
 tool_dirs = [triton_tools_dir, llvm_tools_dir]
 for d in tool_dirs:
