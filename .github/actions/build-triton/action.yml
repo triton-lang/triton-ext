@@ -81,6 +81,8 @@ runs:
         LLVM_SYSPATH=${{ inputs.llvm_install_dir }}
         make dev-install
 
+        make install
+
     - name: Dump Sccache Statistics
       if: steps.check-artifact.outputs.exists == 'false'
       shell: bash
@@ -89,8 +91,12 @@ runs:
     - name: Package Triton
       if: steps.check-artifact.outputs.exists == 'false'
       shell: bash
+      working-directory: ${{ steps.setup.outputs.triton_install_dir }}
+      # Stripping debug symbols reduces the artifact size by an order of magnitude.
       run: |
-        tar czf "${{ env.triton_install_dir }}.tar.gz" --exclude=.git "${{ env.triton_install_dir }}"
+        make install
+        find build/install -type f -executable | xargs strip --strip-debug
+        tar czf ../"${{ env.triton_install_dir }}.tar.gz" build/install
 
     - name: Upload Triton artifact
       if: steps.check-artifact.outputs.exists == 'false'
