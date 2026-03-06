@@ -93,7 +93,7 @@ runs:
       run: |
         make install
         find build/install -type f -executable | xargs strip --strip-debug
-        tar czf ../"${{ env.triton_install_dir }}.tar.gz" build/install
+        tar czf ../"${{ env.triton_install_dir }}.tar.gz" --transform="s|^build/install|${{ env.triton_install_dir }}|" build/install
 
     - name: Upload Triton artifact
       if: steps.check-artifact.outputs.exists == 'false'
