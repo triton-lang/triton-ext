@@ -8,24 +8,19 @@ set(TRITON_EXT_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(TRITON_EXT_LIBRARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/lib")
 set(TRITON_EXT_INFRA_DIR "${TRITON_EXT_SOURCE_DIR}/infra")
 
-# Locate Triton: we need TRITON_DIR for headers and libraries and TRITON_BUILD_DIR for TableGen-generated files.
-set(TRITON_DIR "$ENV{TRITON_DIR}" CACHE PATH "Path to Triton installation" FORCE)
-if(NOT IS_ABSOLUTE "${TRITON_DIR}")
-    get_filename_component(TRITON_DIR "${TRITON_DIR}" ABSOLUTE)
+# Locate Triton: we expect TRITON_INSTALL_DIR to contain libraries and headers,
+# including the TableGen-generated files.
+set(TRITON_INSTALL_DIR "$ENV{TRITON_INSTALL_DIR}" CACHE PATH "Path to Triton installation" FORCE)
+if(NOT IS_ABSOLUTE "${TRITON_INSTALL_DIR}")
+    get_filename_component(TRITON_INSTALL_DIR "${TRITON_INSTALL_DIR}" ABSOLUTE)
 endif()
-find_library(TRITON_LIB triton PATHS "${TRITON_DIR}/python/triton/_C")
+find_library(TRITON_LIB triton PATHS "${TRITON_INSTALL_DIR}/lib" "${TRITON_INSTALL_DIR}/lib64")
 message(STATUS "Found Triton library at: ${TRITON_LIB}")
-set(TRITON_BUILD_DIR "$ENV{TRITON_BUILD_DIR}" CACHE PATH "Path to Triton's CMake-generated directory" FORCE)
-if(NOT IS_ABSOLUTE "${TRITON_BUILD_DIR}")
-    get_filename_component(TRITON_BUILD_DIR "${TRITON_BUILD_DIR}" ABSOLUTE)
-endif()
-message(STATUS "Found Triton build directory at: ${TRITON_BUILD_DIR}")
 # Include Triton headers.
-include_directories("${TRITON_DIR}/include")
-include_directories("${TRITON_BUILD_DIR}/include")
+include_directories("${TRITON_INSTALL_DIR}/include")
 
 # Locate LLVM.
-set(LLVM_INSTALL_DIR "$ENV{LLVM_DIR}" CACHE PATH "Path to LLVM installation" FORCE)
+set(LLVM_INSTALL_DIR "$ENV{LLVM_INSTALL_DIR}" CACHE PATH "Path to LLVM installation" FORCE)
 if(NOT IS_ABSOLUTE "${LLVM_INSTALL_DIR}")
     get_filename_component(LLVM_INSTALL_DIR "${LLVM_INSTALL_DIR}" ABSOLUTE)
 endif()

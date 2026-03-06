@@ -43,24 +43,23 @@ Each subdirectory's `CMakeLists.txt` is responsible for building its respective 
 ## Build
 
 This extension repository is designed to be built out-of-tree. It expects to be pointed to both LLVM
-(`LLVM_INSTALL_DIR`) and Triton (`TRITON_DIR`). Because some of Triton's generated headers are not packaged with Triton,
-it also needs to be pointed to a Triton build directory (`TRITON_BUILD_DIR`).
+(`LLVM_INSTALL_DIR`) and Triton (`TRITON_INSTALL_DIR`). Both directories should be installation directories, i.e.,
+built and then packaged with `make install`.
 
 To build the extensions:
 
 1. **Build LLVM**: Build LLVM as shared libraries and install it to a known location; see the CI
-   [action](./.github/actions/build-llvm/action.yml)` for reference.
+   [action](./.github/actions/build-llvm/action.yml) for reference.
 
 2. **Build Triton**: Build Triton and install it to a known location; see the CI
-   [action](./.github/actions/build-triton/action.yml)` for reference.
+   [action](./.github/actions/build-triton/action.yml) for reference.
 
 3. **Configure and build extensions**:
 
    ```bash
    mkdir build
-   export LLVM_DIR=/path/to/llvm/install
-   export TRITON_DIR=/path/to/triton/install
-   export TRITON_BUILD_DIR=/path/to/triton/build
+   export LLVM_INSTALL_DIR=/path/to/llvm/install
+   export TRITON_INSTALL_DIR=/path/to/triton/install
    cmake -S . -B build -G Ninja
    cmake --build build
    ```

@@ -112,15 +112,15 @@ jobs:
       - name: Build Triton extensions
         shell: bash
         run: >
-          make LLVM_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
-               TRITON_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
+          make LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
+               TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
                EXTRA_CMAKE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
 
       - name: Run tests
         shell: bash
         run: >
-          make test LLVM_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
-                    TRITON_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
+          make test LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
+                    TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
 
       - name: List files
         shell: bash
