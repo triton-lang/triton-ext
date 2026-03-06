@@ -21,9 +21,6 @@ outputs:
   triton_install_dir:
     description: The Triton installation directory.
     value: ${{ steps.setup.outputs.triton_install_dir }}
-  triton_build_dir:
-    description: The Triton build directory.
-    value: ${{ steps.find.outputs.triton_build_dir }}
 
 runs:
   using: composite
