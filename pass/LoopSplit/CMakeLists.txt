@@ -1,4 +1,4 @@
-triton_ext_pass_setup(LoopBisectPass)
+triton_extension(LoopBisectPass)
 
 # Add pass TableGen.
 set(PASS_TABLEGEN_OUTPUT "TritonExt${TRITON_EXT_CLASS}IncGen")

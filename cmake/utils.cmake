@@ -86,10 +86,21 @@ function(triton_ext_should_build_extension triton_ext_dir result_var)
     endif()
 endfunction()
 
-# Macro to set up a Triton extension project
-# Usage: triton_ext_pass_setup(<ext_class>)
-#   ext_class: Extension class name (required)
-macro(triton_ext_pass_setup ext_class)
+# Macro to set up a Triton extension project.
+#
+# Usage: triton_extension(<ext_class>)
+#
+# Inputs:
+# - ext_class: the extension class name (required)
+#
+# Outputs (set as CMake variables):
+# - TRITON_EXT_CONFIG_FILE: path to the extension's triton-ext.conf file
+# - TRITON_EXT_NAME: extension name (from config file)
+# - TRITON_EXT_CLASS: extension class (from argument)
+# - TRITON_EXT_STATUS: extension status (from config file, default "experimental")
+# - TRITON_EXT_HASH: expected Triton git hash (from config file, optional)
+# - Adds the extension project name to the global TRITON_EXT_BUILT_TARGETS list
+macro(triton_extension ext_class)
     # Read extension name, status, and hash from local triton-ext.conf file
     set(TRITON_EXT_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/triton-ext.conf")
     set(_ext_name "")
