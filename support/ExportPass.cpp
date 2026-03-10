@@ -1,21 +1,18 @@
-#include "TritonExtPassInfra.h"
+/// Export a pass using the Triton plugin API. This file is meant to be compiled
+/// in with the plugin implementation, exposing the necessary functions to
+/// register the plugin with Triton.
 
-#define CONCAT_INNER(a, b) a##b
-#define CONCAT(a, b) CONCAT_INNER(a, b)
-#define STRINGIFY(x) #x
-#define TOSTRING(x) STRINGIFY(x)
+#include "Export.h"
+#include "StringMacros.h"
 
 #define TRITON_EXT_PASS_CREATE_FUNC CONCAT(createTritonExt, TRITON_EXT_CLASS)
-
-namespace mlir {
-namespace triton_plugin {
+namespace triton::ext::plugin {
 std::unique_ptr<Pass> TRITON_EXT_PASS_CREATE_FUNC() {
   return std::make_unique<TRITON_EXT_CLASS>();
 }
-} // namespace triton_plugin
-} // namespace mlir
+} // namespace triton::ext::plugin
 
-using namespace ::mlir::triton_plugin;
+using namespace ::triton::ext::plugin;
 
 // Plugin pass creation and registration functions
 #define TRITON_EXT_PASS_ADD_FUNC CONCAT(addTritonExt, TRITON_EXT_CLASS)
@@ -35,5 +32,5 @@ static void TRITON_EXT_PASS_REGISTER_FUNC() {
 }
 
 static TritonPluginResult initPlugin =
-    TritonExtLoadPass(TOSTRING(TRITON_EXT_NAME), TRITON_EXT_PASS_REGISTER_FUNC,
-                      TRITON_EXT_PASS_ADD_FUNC);
+    exportPass(TOSTRING(TRITON_EXT_NAME), TRITON_EXT_PASS_REGISTER_FUNC,
+               TRITON_EXT_PASS_ADD_FUNC);

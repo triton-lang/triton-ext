@@ -222,5 +222,5 @@ private:
 };
 } // namespace
 
-// Include the MLIR pass plugin registry implementation
-#include "TritonExtPass.cpp"
+// Include the MLIR pass plugin registry implementation.
+#include "ExportPass.cpp"

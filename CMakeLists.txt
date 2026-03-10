@@ -6,7 +6,7 @@ include(cmake/utils.cmake)
 set(TRITON_EXT_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(TRITON_EXT_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(TRITON_EXT_LIBRARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/lib")
-set(TRITON_EXT_INFRA_DIR "${TRITON_EXT_SOURCE_DIR}/infra")
+set(TRITON_EXT_SUPPORT_DIR "${TRITON_EXT_SOURCE_DIR}/support")
 
 # Locate Triton: we expect TRITON_INSTALL_DIR to contain libraries and headers,
 # including the TableGen-generated files.
@@ -37,7 +37,7 @@ include(AddLLVM)
 include(AddMLIR)
 
 # Build common infrastructure files.
-add_subdirectory(${TRITON_EXT_INFRA_DIR})
+add_subdirectory(${TRITON_EXT_SUPPORT_DIR})
 
 # Build extensions (ordered by typical dependencies).
 set(ALL_SUBDIRECTORIES dialect pass backend language)

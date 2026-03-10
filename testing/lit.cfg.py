@@ -10,7 +10,7 @@ config.test_exec_root = os.path.join(config.triton_ext_binary_dir, "test")
 config.excludes = [
     ".git",
     "build",
-    "infra",
+    "support",
     # It is important that we exclude the directory containing this test configuration: otherwise,
     # `config.test_source_root` above will reload it, but without the `lit.site.cfg.py.in` substitutions, which will
     # cause this test configuration to fail to load. Instead, we load the `lit.site.cfg.py` generated from

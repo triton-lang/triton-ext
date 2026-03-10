@@ -6,8 +6,8 @@ the core Triton codebase.
 
 ## Dependencies
 
-All pass extensions depend on the `TritonExtPassInfra` shared library located in [`infra/pass/`](../infra/pass/). See
-it's [documentation](./infra/pass/README.md) for more details. Pass extension libraries may also depend on LLVM/MLIR and
+All pass extensions depend on the `TritonExtensionSupport` shared library located in [`support`](../support/). See
+it's [documentation](./support/README.md) for more details. Pass extension libraries may also depend on LLVM/MLIR and
 Triton shared libraries; see the top-level [README](../README.md) for more details on setting up these dependencies.
 
 ## Example
@@ -20,7 +20,7 @@ The `LoopSplit` extension in `pass/LoopSplit/` demonstrates how to create a pass
    the file, include the extension registration from the infrastructure library:
    ```cpp
    // Include the MLIR pass extension registry implementation
-   #include "TritonExtPass.cpp"
+   #include "ExportPass.cpp"
    ```
 
 3. **Extension Configuration**: Specify the extension name and status in a `triton-ext.conf` file

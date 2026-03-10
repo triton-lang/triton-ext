@@ -30,8 +30,7 @@ Each subdirectory's `CMakeLists.txt` is responsible for building its respective 
 - **[`pass/`](./pass/)**: Contains MLIR pass extensions. Each pass extension is implemented as a shared library that can
   be loaded dynamically. Pass extensions include a `triton-ext.conf` file that specifies the extension name and status.
 
-- **[`infra/`](./infra/)**: Contains extension infrastructure code. The `infra/pass/` subdirectory provides libraries to
-  automatically register extensions with Triton.
+- **[`support/`](./support/)**: Contains extension infrastructure code to automatically register extensions with Triton.
 
 ## Prerequisites
 
