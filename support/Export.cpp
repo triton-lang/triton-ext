@@ -1,106 +1,80 @@
 #include "Export.h"
-#include "mlir/Tools/Plugins/DialectPlugin.h" // For mlir::DialectPluginLibraryInfo.
-#include "triton/Tools/PluginUtils.h"         // For TritonPluginResult.
+#include "triton/Tools/PluginUtils.h" // For plugin:: callbacks and structs.
 #include "llvm/Support/Debug.h"
+
 #define DEBUG_TYPE "triton-ext"
 
 ///
 /// Internal API.
 ///
-namespace triton::ext::plugin {
+namespace triton::ext::support {
 
-static std::unordered_map<std::string, std::pair<AddPassFunc, RegisterPassFunc>>
+using namespace mlir::triton;
+
+static std::unordered_map<std::string, std::pair<plugin::AddPassCallback,
+                                                 plugin::RegisterPassCallback>>
     passMap;
-static std::unordered_map<std::string, InsertDialect> dialectMap;
+static std::unordered_map<std::string, plugin::RegisterDialectCallback>
+    dialectMap;
 
-TritonPluginResult exportPass(const std::string passName,
-                              RegisterPassFunc registerFunc,
-                              AddPassFunc addFunc) {
+Result exportPass(const std::string passName,
+                  plugin::RegisterPassCallback registerFunc,
+                  plugin::AddPassCallback addFunc) {
   LLVM_DEBUG(llvm::dbgs() << "internally exporting pass: " << passName << "\n");
   passMap[passName] = {addFunc, registerFunc};
   return TP_SUCCESS;
 }
 
-TritonPluginResult exportDialect(const std::string dialectName,
-                                 InsertDialect insertFunc) {
+Result exportDialect(const std::string dialectName,
+                     plugin::RegisterDialectCallback insertFunc) {
   LLVM_DEBUG(llvm::dbgs() << "internally exporting dialect: " << dialectName
                           << "\n");
   dialectMap[dialectName] = insertFunc;
   return TP_SUCCESS;
 }
-} // namespace triton::ext::plugin
+} // namespace triton::ext::support
 
 ///
-/// External pass API.
+/// External API.
 ///
-using namespace triton::ext::plugin;
+using namespace triton::ext::support;
+using namespace mlir::triton;
 
-TRITON_PLUGIN_API
-tritonEnumeratePluginPasses(uint32_t *passCount, const char **passNames) {
-  if (!passCount)
-    return TP_GENERIC_FAILURE;
-  auto count = passMap.size();
-  *passCount = count;
-  if (!passNames) {
-    LLVM_DEBUG(llvm::dbgs() << "found " << count << " passes\n");
-    return TP_SUCCESS;
-  }
-  unsigned i = 0;
+// TODO: because TritonExtensionSupport is a separate library, it will not be
+// built with TRITON_EXT_NAME or TRITON_EXT_CLASS defined. This means that we
+// cannot statically generate the name here. (Register it with the internal
+// API?)
+static const char *PLUGIN_NAME = "triton-ext-todo";
+static const char *VERSION = "0.1.0";
+
+TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
+  auto passes = new plugin::PassInfo[passMap.size()];
+  size_t numPasses = 0;
   for (const auto &pair : passMap) {
-    const char *passName = pair.first.c_str();
-    LLVM_DEBUG(llvm::dbgs() << "found pass: " << passName << "\n");
-    passNames[i++] = passName;
+    const std::string &passName = pair.first;
+    auto registerFunc = pair.second.second;
+    auto addFunc = pair.second.first;
+    passes[numPasses++] =
+        plugin::PassInfo{passName.c_str(), VERSION, addFunc, registerFunc};
   }
-  return TP_SUCCESS;
-}
 
-TRITON_PLUGIN_API
-tritonAddPluginPass(mlir::PassManager *pm, const char *passName) {
-  LLVM_DEBUG(llvm::dbgs() << "adding plugin pass: " << passName << "\n");
-  std::string passNameStr(passName);
-  if (passMap.find(passNameStr) == passMap.end())
-    return TP_GENERIC_FAILURE;
-  passMap[passNameStr].first(pm);
-  return TP_SUCCESS;
-}
-
-TRITON_PLUGIN_API
-tritonRegisterPluginPass(const char *passName) {
-  LLVM_DEBUG(llvm::dbgs() << "registering plugin pass: " << passName << "\n");
-  std::string passNameStr(passName);
-  if (passMap.find(passNameStr) == passMap.end())
-    return TP_GENERIC_FAILURE;
-  passMap[passNameStr].second();
-  return TP_SUCCESS;
-}
-
-///
-/// External dialect API.
-///
-TRITON_PLUGIN_API
-tritonEnumeratePluginDialects(uint32_t *outDialectCount,
-                              const char **outDialectNames) {
-  *outDialectCount = dialectMap.size();
-  if (!outDialectNames) {
-    LLVM_DEBUG(llvm::dbgs() << "found " << *outDialectCount << " dialects\n");
-    return TP_SUCCESS;
-  }
-  unsigned i = 0;
+  auto dialects = new plugin::DialectInfo[dialectMap.size()];
+  size_t numDialects = 0;
   for (const auto &pair : dialectMap) {
-    LLVM_DEBUG(llvm::dbgs() << "found dialect: " << pair.first << "\n");
-    outDialectNames[i++] = pair.first.c_str();
+    const std::string &dialectName = pair.first;
+    auto registerFunc = pair.second;
+    dialects[numDialects++] =
+        plugin::DialectInfo{dialectName.c_str(), VERSION, registerFunc};
   }
-  return TP_SUCCESS;
-}
 
-TRITON_PLUGIN_API_TYPE(mlir::DialectPluginLibraryInfo)
-tritonGetDialectPluginInfo(const char *name) {
-  LLVM_DEBUG(llvm::dbgs() << "get plugin info for dialect: " << name << "\n");
-  std::string nameStr(name);
-  if (dialectMap.find(nameStr) == dialectMap.end())
-    llvm::report_fatal_error(llvm::Twine("unknown dialect: ") + nameStr);
-  InsertDialect insertFunc = dialectMap[nameStr];
-  return {MLIR_PLUGIN_API_VERSION, name, LLVM_VERSION_STRING, insertFunc};
+  auto info = new plugin::PluginInfo{TRITON_PLUGIN_API_VERSION,
+                                     PLUGIN_NAME,
+                                     VERSION,
+                                     passes,
+                                     numPasses,
+                                     dialects,
+                                     numDialects};
+  return info;
 }
 
 #undef DEBUG_TYPE
