@@ -5,11 +5,13 @@
 #include "Export.h"
 #include "StringMacros.h"
 
-#define TRITON_EXT_PASS_CREATE_FUNC CONCAT(createTritonExt, TRITON_EXT_CLASS)
 namespace triton::ext::plugin {
+
+#define TRITON_EXT_PASS_CREATE_FUNC CONCAT(createTritonExt, TRITON_EXT_CLASS)
 std::unique_ptr<Pass> TRITON_EXT_PASS_CREATE_FUNC() {
   return std::make_unique<TRITON_EXT_CLASS>();
 }
+
 } // namespace triton::ext::plugin
 
 using namespace ::triton::ext::plugin;
@@ -20,7 +22,8 @@ using namespace ::triton::ext::plugin;
   CONCAT(registerTritonExt, TRITON_EXT_CLASS)
 
 // TritonExt pass creation function
-static void TRITON_EXT_PASS_ADD_FUNC(mlir::PassManager *pm) {
+static void TRITON_EXT_PASS_ADD_FUNC(mlir::PassManager *pm,
+                                     const std::vector<std::string> &args) {
   pm->addPass(TRITON_EXT_PASS_CREATE_FUNC());
 }
 
@@ -31,6 +34,7 @@ static void TRITON_EXT_PASS_REGISTER_FUNC() {
   });
 }
 
-static TritonPluginResult initPlugin =
-    exportPass(TOSTRING(TRITON_EXT_NAME), TRITON_EXT_PASS_REGISTER_FUNC,
-               TRITON_EXT_PASS_ADD_FUNC);
+using namespace ::triton::ext;
+static support::Result initPlugin = support::exportPass(
+    TOSTRING(TRITON_EXT_NAME), TRITON_EXT_PASS_REGISTER_FUNC,
+    TRITON_EXT_PASS_ADD_FUNC);

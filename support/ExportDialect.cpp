@@ -6,8 +6,6 @@
 #include "StringMacros.h"
 #include "mlir/IR/DialectRegistry.h"
 
-using namespace triton::ext::plugin;
-
 #define TRITON_EXT_DIALECT_INSERT_FUNC                                         \
   CONCAT(registerTritonExt, TRITON_EXT_CLASS)
 static void TRITON_EXT_DIALECT_INSERT_FUNC(mlir::DialectRegistry *registry) {
@@ -15,5 +13,6 @@ static void TRITON_EXT_DIALECT_INSERT_FUNC(mlir::DialectRegistry *registry) {
   registry->insert<TRITON_EXT_CLASS>();
 }
 
-static TritonPluginResult initPlugin =
-    exportDialect(TOSTRING(TRITON_EXT_NAME), TRITON_EXT_DIALECT_INSERT_FUNC);
+using namespace ::triton::ext;
+static support::Result initPlugin = support::exportDialect(
+    TOSTRING(TRITON_EXT_NAME), TRITON_EXT_DIALECT_INSERT_FUNC);
