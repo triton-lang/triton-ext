@@ -44,7 +44,7 @@ def fetch(repository) -> list[Artifact]:
         Artifact(id=a['id'], name=a['name'], created_at=a['created_at'])
         for a in artifacts_data['artifacts']
     ]
-    artifacts.sort(key=lambda a: a.created_at, reverse=True)
+    artifacts.sort(key=lambda a: a.created_at)
     return artifacts
 
 
