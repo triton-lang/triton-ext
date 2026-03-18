@@ -7,6 +7,7 @@ config.environment["TRITON_PASS_PLUGIN_PATH"] = os.path.join(
     config.triton_ext_binary_dir, "lib", "libloop_split.so")
 print(
     f"ENV: "
+    f"LD_PRELOAD={config.environment['LD_PRELOAD']} "
     f"LD_LIBRARY_PATH={config.environment['LD_LIBRARY_PATH']} "
     f"TRITON_PASS_PLUGIN_PATH={config.environment['TRITON_PASS_PLUGIN_PATH']}",
     file=sys.stderr)

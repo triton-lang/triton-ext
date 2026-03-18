@@ -40,3 +40,13 @@ config.environment["FILECHECK_OPTS"] = "--enable-var-scope"
 # libraries.
 llvm_lib_dir = os.path.join(config.llvm_install_dir, "lib")
 llvm_config.with_environment("LD_LIBRARY_PATH", llvm_lib_dir, append_path=True)
+
+# Extend the environment: for extensions that depend on Triton, we need some way
+# to provide implementations for Triton's undefined Python symbols. These are
+# normally provided by Python but during testing we use `triton-opt` and the
+# symbols will not be available. This is a hack (TODO): this could be fixed
+# upstream by splitting out a Triton library that contains the core IR without
+# any Python dependencies.
+libpystubs_path = os.path.join(config.triton_ext_binary_dir, "lib",
+                               "libpystubs.so")
+llvm_config.with_environment("LD_PRELOAD", libpystubs_path)
