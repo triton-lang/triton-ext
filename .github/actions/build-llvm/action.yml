@@ -87,7 +87,7 @@ runs:
         df -h
 
     - name: Build LLVM
-      if: steps.check-artifact.outputs.exists == 'false' && matrix.config.arch == 'x64' && matrix.config.target-os == 'ubuntu'
+      if: steps.check-artifact.outputs.exists == 'false'
       # Note that using `LLVM_BUILD_SHARED_LIBS=ON` does not have the desired effect; only by using CMake's
       # `BUILD_SHARED_LIBS` option do we actually get shared libraries. And this is not good practice: LLVM documents
       # how `BUILD_SHARED_LIBS` should not be used for distributing LLVM
