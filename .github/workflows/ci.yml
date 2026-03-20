@@ -35,6 +35,7 @@ jobs:
     name: Build on ${{ matrix.config.runner }}
     runs-on: ${{ matrix.config.runs_on }}
     timeout-minutes: 300
+    defaults: {run: {shell: bash}}
 
     strategy:
       fail-fast: true
@@ -50,8 +51,7 @@ jobs:
 
       - name: Collect commit hashes
         id: hashes
-        shell: bash
-        # See `update-triton.yml` for where this GitHub action variable is set.
+        # See `update-triton.yml` for where this commit hash is updated.
         run: |
           TRITON_HASH=$(cat ci/triton-hash.txt)
           echo "triton_hash=$TRITON_HASH" >> $GITHUB_OUTPUT
@@ -67,7 +67,6 @@ jobs:
           python-version: '3.11'
 
       - name: Setup virtual environment
-        shell: bash
         run: |
           python3 -m venv ~/.venv
           source ~/.venv/bin/activate
@@ -89,7 +88,6 @@ jobs:
           llvm_hash: ${{ steps.hashes.outputs.llvm_hash }}
 
       - name: Download LLVM artifact
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -103,25 +101,21 @@ jobs:
           llvm_install_dir: ${{ github.workspace }}/${{ steps.build-llvm.outputs.llvm_install_dir }}
 
       - name: Download Triton artifact
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python ci/download-artifact.py ${{ steps.build-triton.outputs.triton_install_dir }}
 
       - name: Build Triton extensions
-        shell: bash
         run: >
           make LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
                TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
                EXTRA_CMAKE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
 
       - name: Run tests
-        shell: bash
         run: >
           make test LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
                     TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
 
       - name: List files
-        shell: bash
         run: du -d 3 -h .
