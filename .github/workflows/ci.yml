@@ -56,7 +56,6 @@ jobs:
           python-version: '3.11'
 
       - name: Setup virtual environment
-        shell: bash
         run: |
           python -m venv "$HOME/.venv"
           source "$HOME/.venv/bin/activate"
@@ -64,14 +63,12 @@ jobs:
           echo "VIRTUAL_ENV=$HOME/.venv" >> $GITHUB_ENV
 
       - name: Upgrade pip
-        shell: bash
         run: |
           pip install --upgrade pip
           echo "pip version: $(pip --version)"
           echo "python version: $(python --version)"
 
       - name: Install dependencies
-        shell: bash
         run: pip install -r requirements.txt
 
       - name: Collect commit hashes
