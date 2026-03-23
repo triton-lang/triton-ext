@@ -102,17 +102,19 @@ runs:
         -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
         -DCMAKE_INSTALL_PREFIX="${{ env.llvm_install_dir }}"
         -DCMAKE_LINKER=lld
+        -DCMAKE_OSX_ARCHITECTURES=arm64
         -DLLVM_BUILD_UTILS=ON
         -DBUILD_SHARED_LIBS=ON
         -DLLVM_BUILD_SHARED_LIBS=ON
         -DLLVM_BUILD_TOOLS=ON
         -DLLVM_ENABLE_ASSERTIONS=ON
         -DMLIR_ENABLE_BINDINGS_PYTHON=OFF
-        -DLLVM_ENABLE_PROJECTS="mlir;lld"
-        -DLLVM_INSTALL_UTILS=ON
-        -DLLVM_TARGETS_TO_BUILD="host;NVPTX;AMDGPU"
-        -DLLVM_ENABLE_TERMINFO=OFF
+        -DLLVM_ENABLE_PROJECTS="mlir;lld;clang"
         -DLLVM_ENABLE_ZSTD=OFF
+        -DLLVM_INSTALL_UTILS=ON
+        -DLLVM_TARGETS_TO_BUILD="AArch64;NVPTX;AMDGPU"
+        -DLLVM_USE_HOST_TOOLS=ON
+        -DLLVM_ABI_BREAKING_CHECKS=FORCE_OFF
         llvm-project/llvm
 
         ninja -C llvm-project/build check-mlir install
