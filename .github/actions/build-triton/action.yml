@@ -76,6 +76,7 @@ runs:
         LLVM_LIBRARY_DIR=${{ inputs.llvm_install_dir }}/lib
         LLVM_SYSPATH=${{ inputs.llvm_install_dir }}
         TRITON_BUILD_WITH_CLANG_LLD=1
+        TRITON_EXT_ENABLED=1
         make dev-install
 
         make install
