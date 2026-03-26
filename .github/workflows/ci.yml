@@ -95,9 +95,6 @@ jobs:
         run: |
           python ci/download-artifact.py ${{ steps.build-llvm.outputs.llvm_install_dir }}
 
-      - name: Find clang++
-        run: which clang++
-
       - name: Build Triton
         id: build-triton
         uses: ./.github/actions/build-triton
