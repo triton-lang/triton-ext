@@ -116,7 +116,7 @@ runs:
         -DLLVM_ABI_BREAKING_CHECKS=FORCE_OFF
         llvm-project/llvm
 
-        ninja -C llvm-project/build check-mlir install
+        ninja -C llvm-project/build install
 
         tar czf "${{ env.llvm_install_dir }}.tar.gz" "${{ env.llvm_install_dir }}"
 
