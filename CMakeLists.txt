@@ -36,6 +36,9 @@ include(TableGen) # required by AddMLIR
 include(AddLLVM)
 include(AddMLIR)
 
+# Temporary workaround for missing header (see `support/python/src/ir.h`).
+include_directories(${TRITON_EXT_SUPPORT_DIR})
+
 # Build common infrastructure files.
 add_subdirectory(${TRITON_EXT_SUPPORT_DIR})
 
