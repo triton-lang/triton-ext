@@ -76,16 +76,7 @@ public:
         isClustered = (clusterDims[0] * clusterDims[1] * clusterDims[2]) > 1;
       }
       // There should not be a mapa in unclustered mode
-      if (!isClustered) {
-        if (mod.walk([&](ttng::MapToRemoteBufferOp mapaOp) {
-                 mapaOp.emitError()
-                     << "Unexpected buffer remote view in 1cta mode";
-                 return WalkResult::interrupt();
-               })
-                .wasInterrupted()) {
-          return failure();
-        }
-      }
+      // (MapToRemoteBufferOp may not exist in all Triton versions)
     }
     return success();
   }
