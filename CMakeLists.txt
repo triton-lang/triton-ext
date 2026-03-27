@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(triton-ext DESCRIPTION "Extensions for the Triton compiler" LANGUAGES CXX)
+project(triton-ext DESCRIPTION "Extensions for the Triton compiler" LANGUAGES C CXX)
 
 include(cmake/utils.cmake)
 
@@ -8,24 +8,57 @@ set(TRITON_EXT_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(TRITON_EXT_LIBRARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/lib")
 set(TRITON_EXT_SUPPORT_DIR "${TRITON_EXT_SOURCE_DIR}/support")
 
-# Locate Triton: we expect TRITON_INSTALL_DIR to contain libraries and headers,
-# including the TableGen-generated files.
+# Locate Triton: supports two modes:
+#   1. TRITON_INSTALL_DIR — path to a Triton installation (headers + lib)
+#   2. TRITON_SOURCE_DIR + TRITON_BUILD_DIR — path to Triton source + build trees
 set(TRITON_INSTALL_DIR "$ENV{TRITON_INSTALL_DIR}" CACHE PATH "Path to Triton installation" FORCE)
-if(NOT IS_ABSOLUTE "${TRITON_INSTALL_DIR}")
-    get_filename_component(TRITON_INSTALL_DIR "${TRITON_INSTALL_DIR}" ABSOLUTE)
+if(NOT TRITON_SOURCE_DIR AND DEFINED ENV{TRITON_SOURCE_DIR})
+    set(TRITON_SOURCE_DIR "$ENV{TRITON_SOURCE_DIR}" CACHE PATH "Path to Triton source tree")
 endif()
-find_library(TRITON_LIB triton PATHS "${TRITON_INSTALL_DIR}/lib" "${TRITON_INSTALL_DIR}/lib64")
-message(STATUS "Found Triton library at: ${TRITON_LIB}")
-# Include Triton headers.
-include_directories("${TRITON_INSTALL_DIR}/include")
+if(NOT TRITON_BUILD_DIR AND DEFINED ENV{TRITON_BUILD_DIR})
+    set(TRITON_BUILD_DIR "$ENV{TRITON_BUILD_DIR}" CACHE PATH "Path to Triton CMake build directory")
+endif()
 
-# Locate LLVM.
-set(LLVM_INSTALL_DIR "$ENV{LLVM_INSTALL_DIR}" CACHE PATH "Path to LLVM installation" FORCE)
-if(NOT IS_ABSOLUTE "${LLVM_INSTALL_DIR}")
-    get_filename_component(LLVM_INSTALL_DIR "${LLVM_INSTALL_DIR}" ABSOLUTE)
+if(TRITON_INSTALL_DIR)
+    if(NOT IS_ABSOLUTE "${TRITON_INSTALL_DIR}")
+        get_filename_component(TRITON_INSTALL_DIR "${TRITON_INSTALL_DIR}" ABSOLUTE)
+    endif()
+    find_library(TRITON_LIB triton PATHS "${TRITON_INSTALL_DIR}/lib" "${TRITON_INSTALL_DIR}/lib64")
+    include_directories("${TRITON_INSTALL_DIR}/include")
+elseif(TRITON_SOURCE_DIR)
+    find_library(TRITON_LIB triton PATHS "${TRITON_SOURCE_DIR}/python/triton/_C" NO_DEFAULT_PATH)
+    include_directories("${TRITON_SOURCE_DIR}/include")
+    include_directories("${TRITON_SOURCE_DIR}")
+    include_directories("${TRITON_SOURCE_DIR}/third_party/amd/include")
+    include_directories("${TRITON_SOURCE_DIR}/third_party")
+    if(TRITON_BUILD_DIR)
+        include_directories("${TRITON_BUILD_DIR}/include")
+        include_directories("${TRITON_BUILD_DIR}/third_party")
+    endif()
+else()
+    message(FATAL_ERROR "Set TRITON_INSTALL_DIR or TRITON_SOURCE_DIR (+ TRITON_BUILD_DIR)")
 endif()
-message(STATUS "Found LLVM installation at: ${LLVM_INSTALL_DIR}")
-find_package(MLIR REQUIRED CONFIG PATHS "${LLVM_INSTALL_DIR}/lib/cmake/mlir")
+message(STATUS "Found Triton library at: ${TRITON_LIB}")
+
+# Locate LLVM: supports LLVM_INSTALL_DIR or LLVM_BUILD_DIR.
+set(LLVM_INSTALL_DIR "$ENV{LLVM_INSTALL_DIR}" CACHE PATH "Path to LLVM installation" FORCE)
+if(NOT LLVM_BUILD_DIR AND DEFINED ENV{LLVM_BUILD_DIR})
+    set(LLVM_BUILD_DIR "$ENV{LLVM_BUILD_DIR}" CACHE PATH "Path to LLVM/MLIR build directory")
+endif()
+
+set(_MLIR_SEARCH_PATHS "")
+if(LLVM_INSTALL_DIR)
+    if(NOT IS_ABSOLUTE "${LLVM_INSTALL_DIR}")
+        get_filename_component(LLVM_INSTALL_DIR "${LLVM_INSTALL_DIR}" ABSOLUTE)
+    endif()
+    message(STATUS "Found LLVM installation at: ${LLVM_INSTALL_DIR}")
+    list(APPEND _MLIR_SEARCH_PATHS "${LLVM_INSTALL_DIR}/lib/cmake/mlir")
+endif()
+if(LLVM_BUILD_DIR)
+    message(STATUS "Found LLVM build at: ${LLVM_BUILD_DIR}")
+    list(APPEND _MLIR_SEARCH_PATHS "${LLVM_BUILD_DIR}/lib/cmake/mlir")
+endif()
+find_package(MLIR REQUIRED CONFIG PATHS ${_MLIR_SEARCH_PATHS})
 # Include LLVM headers.
 include_directories(${MLIR_INCLUDE_DIRS})
 include_directories(${LLVM_INCLUDE_DIRS})
@@ -43,7 +76,7 @@ include_directories(${TRITON_EXT_SUPPORT_DIR})
 add_subdirectory(${TRITON_EXT_SUPPORT_DIR})
 
 # Build extensions (ordered by typical dependencies).
-set(ALL_SUBDIRECTORIES dialect pass backend language)
+set(ALL_SUBDIRECTORIES dialect pass backend language extensions)
 foreach(subdir ${ALL_SUBDIRECTORIES})
     add_subdirectory("${TRITON_EXT_SOURCE_DIR}/${subdir}"
                      "${TRITON_EXT_BINARY_DIR}/${subdir}")

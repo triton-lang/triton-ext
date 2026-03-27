@@ -2,3 +2,4 @@ build
 llvm-*
 triton-*
 !triton-ext.conf
+*.pyc
