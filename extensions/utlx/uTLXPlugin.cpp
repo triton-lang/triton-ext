@@ -15,8 +15,8 @@
 #include "triton/Tools/PluginUtils.h"
 
 // TLX dialect headers
-#include "uTLX/dialect/include/IR/Dialect.h"
-#include "uTLX/dialect/include/Transforms/Passes.h"
+#include "tlx/dialect/include/IR/Dialect.h"
+#include "tlx/dialect/include/Transforms/Passes.h"
 
 namespace ttg = mlir::triton::gpu;
 namespace ttng = mlir::triton::nvidia_gpu;

@@ -29,9 +29,9 @@ endif()
 # ---------------------------------------------------------------------------
 # TableGen for the TLX dialect
 # ---------------------------------------------------------------------------
-set(UTLX_DIALECT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/uTLX/dialect")
+set(UTLX_DIALECT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tlx/dialect")
 set(UTLX_DIALECT_INCLUDE_DIR "${UTLX_DIALECT_DIR}/include")
-set(UTLX_TABLEGEN_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/uTLX/dialect/include")
+set(UTLX_TABLEGEN_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/tlx/dialect/include")
 
 # Ensure the output directories exist
 file(MAKE_DIRECTORY "${UTLX_TABLEGEN_OUTPUT_DIR}/IR")
@@ -173,23 +173,23 @@ set(UTLX_PLUGIN_SOURCES
     uTLXPlugin.cpp
     uTLXConversionPatterns.cpp
     # Dialect IR
-    uTLX/dialect/lib/IR/Dialect.cpp
-    uTLX/dialect/lib/IR/Ops.cpp
-    uTLX/dialect/lib/IR/Traits.cpp
-    uTLX/dialect/lib/IR/Types.cpp
+    tlx/dialect/lib/IR/Dialect.cpp
+    tlx/dialect/lib/IR/Ops.cpp
+    tlx/dialect/lib/IR/Traits.cpp
+    tlx/dialect/lib/IR/Types.cpp
     # Dialect Transforms
-    uTLX/dialect/lib/Transforms/Fixup.cpp
-    uTLX/dialect/lib/Transforms/PropagateLayout.cpp
-    uTLX/dialect/lib/Transforms/InsertRequireLayout.cpp
-    uTLX/dialect/lib/Transforms/RewriteLocalAlias.cpp
-    uTLX/dialect/lib/Transforms/ResolvePlaceholderLayouts.cpp
-    uTLX/dialect/lib/Transforms/PrintTTGIRToTLX.cpp
-    uTLX/dialect/lib/Transforms/StorageAliasSizeDefinition.cpp
-    uTLX/dialect/lib/Transforms/StorageAliasAllocation.cpp
-    uTLX/dialect/lib/Transforms/StorageAliasLowering.cpp
-    uTLX/dialect/lib/Transforms/BufferOffsetCalculation.cpp
+    tlx/dialect/lib/Transforms/Fixup.cpp
+    tlx/dialect/lib/Transforms/PropagateLayout.cpp
+    tlx/dialect/lib/Transforms/InsertRequireLayout.cpp
+    tlx/dialect/lib/Transforms/RewriteLocalAlias.cpp
+    tlx/dialect/lib/Transforms/ResolvePlaceholderLayouts.cpp
+    tlx/dialect/lib/Transforms/PrintTTGIRToTLX.cpp
+    tlx/dialect/lib/Transforms/StorageAliasSizeDefinition.cpp
+    tlx/dialect/lib/Transforms/StorageAliasAllocation.cpp
+    tlx/dialect/lib/Transforms/StorageAliasLowering.cpp
+    tlx/dialect/lib/Transforms/BufferOffsetCalculation.cpp
     # Analysis
-    uTLX/dialect/lib/Analysis/LayoutPropagation.cpp
+    tlx/dialect/lib/Analysis/LayoutPropagation.cpp
 )
 
 add_library(${PROJECT_NAME} SHARED ${UTLX_PLUGIN_SOURCES})
@@ -198,29 +198,16 @@ add_dependencies(${PROJECT_NAME} uTLXTableGen)
 # ---------------------------------------------------------------------------
 # Include directories
 # ---------------------------------------------------------------------------
-# Create a symlink in the build directory so that
-# #include "tlx/dialect/include/IR/Dialect.h.inc" works for generated headers
-file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tlx/dialect/include")
-# Symlink generated IR headers
-file(CREATE_LINK "${UTLX_TABLEGEN_OUTPUT_DIR}/IR"
-     "${CMAKE_CURRENT_BINARY_DIR}/tlx/dialect/include/IR" SYMBOLIC)
-# Symlink generated Transforms headers
-file(CREATE_LINK "${UTLX_TABLEGEN_OUTPUT_DIR}/Transforms"
-     "${CMAKE_CURRENT_BINARY_DIR}/tlx/dialect/include/Transforms" SYMBOLIC)
-
 set(UTLX_INCLUDE_DIRS
     # For #include "IR/Dialect.h" (relative from lib/IR/*.cpp)
-    # Source headers: found via uTLX/dialect/include/
+    # Source headers: found via tlx/dialect/include/
     "${UTLX_DIALECT_INCLUDE_DIR}"
     # Generated headers: found via tablegen output
     "${UTLX_TABLEGEN_OUTPUT_DIR}"
     # For #include "tlx/dialect/include/IR/..." (source headers)
-    # The symlink tlx -> uTLX at CMAKE_CURRENT_SOURCE_DIR makes this work
     "${CMAKE_CURRENT_SOURCE_DIR}"
     # For #include "tlx/dialect/include/IR/..." (generated headers)
     "${CMAKE_CURRENT_BINARY_DIR}"
-    # For #include "uTLX/dialect/include/IR/..." from plugin .cpp files
-    "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 if(TRITON_SOURCE_DIR)
