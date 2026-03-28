@@ -509,6 +509,37 @@ static void createReleaseLayout(TritonOpBuilder &self,
   operands[0] = self.create<tlx::ReleaseLayoutOp>(newType, operands[1]);
 }
 
+// --- utlx_async_commit_group: Commit async copies with token threading ---
+// operands[0] = result slot
+// operands[1..N] = input async tokens (optional)
+static void createAsyncCommitGroup(TritonOpBuilder &self,
+                                   std::vector<mlir::Value> &operands) {
+  llvm::SmallVector<mlir::Value> tokens;
+  for (unsigned i = 1; i < operands.size(); ++i)
+    tokens.push_back(operands[i]);
+  operands[0] = self.create<ttg::AsyncCommitGroupOp>(tokens);
+}
+
+// --- utlx_async_wait_group: Wait for async copies with token threading ---
+// operands[0] = result slot (unused for void ops, but kept for consistency)
+// operands[1] = pendings (i32 constant)
+// operands[2..N] = input async tokens (optional)
+static void createAsyncWaitGroup(TritonOpBuilder &self,
+                                 std::vector<mlir::Value> &operands) {
+  if (operands.size() < 2)
+    return;
+
+  auto pendingsVal = extractConstantInt(operands[1]);
+  if (!pendingsVal)
+    return;
+
+  llvm::SmallVector<mlir::Value> tokens;
+  for (unsigned i = 2; i < operands.size(); ++i)
+    tokens.push_back(operands[i]);
+  self.create<ttg::AsyncWaitOp>(tokens,
+                                static_cast<int>(*pendingsVal));
+}
+
 // --- utlx_warp_group_dot_wait: WarpGroupDotWaitOp with ReleaseLayoutOp unwrap ---
 // operands[0] = result slot
 // operands[1] = input value (possibly wrapped in ReleaseLayoutOp)
@@ -763,6 +794,9 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_thread_id", utlx::createThreadId},
       // MMA ops
       {"utlx_warp_group_dot_wait", createWarpGroupDotWait},
+      // Async copy ops with token threading
+      {"utlx_async_commit_group", createAsyncCommitGroup},
+      {"utlx_async_wait_group", createAsyncWaitGroup},
   };
 
   static plugin::PluginInfo info = {
@@ -774,7 +808,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       dialects,
       1,      // numDialects
       ops,
-      46,     // numOps
+      48,     // numOps
   };
   return &info;
 }

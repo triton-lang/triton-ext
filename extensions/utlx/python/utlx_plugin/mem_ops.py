@@ -475,7 +475,11 @@ def async_load_commit_group(
     _semantic=None,
 ) -> tlx.async_token:
     """Commits all prior async_load ops into an async group."""
-    return tlx.async_token(_semantic.builder.create_async_commit_group())
+    if tokens is None:
+        tokens = []
+    handles = [t.handle for t in tokens if t is not None and t.handle is not None]
+    result = _semantic.builder.utlx_async_commit_group(handles)
+    return tlx.async_token(result)
 
 
 @tl.builtin
@@ -486,7 +490,11 @@ def async_load_wait_group(
 ) -> tlx.async_token:
     """Wait for completion of prior asynchronous copy operations."""
     pendings = tl._unwrap_if_constexpr(pendings)
-    _semantic.builder.create_async_wait_group(pendings)
+    if tokens is None:
+        tokens = []
+    handles = [t.handle for t in tokens if t is not None and t.handle is not None]
+    args = [_semantic.builder.get_int32(pendings)] + handles
+    _semantic.builder.utlx_async_wait_group(args)
     return tlx.async_token(None)
 
 
@@ -507,7 +515,10 @@ def local_load(
         output = _semantic.builder.utlx_release_layout([load_handle])
         return tl.tensor(output, block_type)
     else:
-        output = _semantic.builder.utlx_local_load([src.handle])
+        args = [src.handle]
+        if token is not None and token.handle is not None:
+            args.append(token.handle)
+        output = _semantic.builder.utlx_local_load(args)
         return tl.tensor(output, block_type)
 
 
