@@ -186,6 +186,17 @@ class nv_mma_shared_layout_encoding(shared_layout_encoding):
             self.swizzled,
         )
 
+    def __str__(self) -> str:
+        return (f"nv_mma_shared_layout_encoding<{self.shape}, {self.order}, {self.elemType}, "
+                f"{self.numCTAsPerCGA}, {self.numCTASplit}, {self.numCTAOrder}, "
+                f"{self.fp4Padded}, {self.swizzled}>")
+
+    def __eq__(self, other) -> bool:
+        return (type(self) is type(other) and self.shape == other.shape and self.order == other.order
+                and self.elemType == other.elemType and self.numCTAsPerCGA == other.numCTAsPerCGA
+                and self.numCTASplit == other.numCTASplit and self.numCTAOrder == other.numCTAOrder
+                and self.fp4Padded == other.fp4Padded and self.swizzled == other.swizzled)
+
     def to_ir(self, builder: ir.builder) -> None:
         return builder.make_nv_mma_shared_encoding_attr(
             [int(x) for x in self.shape],
@@ -303,6 +314,10 @@ class reuse_group:
     def group_size(self):
         return self._group_size
 
+    def __repr__(self) -> str:
+        args_str = ", ".join(repr(a) for a in self._args)
+        return f"reuse_group({args_str}, type={self._group_type.value}, size={self._group_size})"
+
     def _flatten_ir(self, handles):
         for elem in self._args:
             elem._flatten_ir(handles)
@@ -378,6 +393,18 @@ class buffered_tensor_type(tl.block_type):
         if self.num > 0:
             shape += f"_{self.num}"
         return f"buffered_{elt}S{shape}"
+
+    def __str__(self) -> str:
+        return (f"buffered_tensor_type<{self.scalar}, {list(self.shape)}, "
+                f"num={self.num}, storage={self.storage.value}, layout={self.layout}>")
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __eq__(self, other) -> bool:
+        return (type(self) is type(other) and self.scalar == other.scalar
+                and list(self.shape) == list(other.shape) and self.num == other.num
+                and self.storage == other.storage and self.layout == other.layout)
 
     def to_ir(self, builder) -> None:
         shape = self.shape
@@ -544,6 +571,10 @@ class storage_alias_spec(tl.base_value):
     def buffer_size_bytes(self):
         return self._buffer_size_bytes
 
+    def __repr__(self) -> str:
+        return (f"storage_alias_spec(storage={self._storage.value}, "
+                f"buffer_size_bytes={self._buffer_size_bytes})")
+
     @tl.builtin
     def set_buffer_overlap(self, overlap_def, _semantic=None):
         """Define the buffer overlap scheme for this storage alias spec."""
@@ -573,6 +604,14 @@ class storage_alias_spec_type(tl.base_type):
     @property
     def buffer_size_bytes(self):
         return self._buffer_size_bytes
+
+    def __eq__(self, other) -> bool:
+        return (type(self) is type(other) and self._storage == other._storage
+                and self._buffer_size_bytes == other._buffer_size_bytes)
+
+    def __repr__(self) -> str:
+        return (f"storage_alias_spec_type(storage={self._storage.value}, "
+                f"buffer_size_bytes={self._buffer_size_bytes})")
 
     def mangle(self):
         size_part = f"_{self._buffer_size_bytes}" if self._buffer_size_bytes else ""
@@ -616,6 +655,9 @@ class async_token_type(tl.base_type):
     def __eq__(self, other):
         return isinstance(other, async_token_type)
 
+    def __repr__(self) -> str:
+        return "async_token_type"
+
     def mangle(self):
         return "async_token_type"
 
@@ -653,6 +695,9 @@ class tensor_descriptor_ptr_type(tl.pointer_type):
 
     def __eq__(self, other):
         return isinstance(other, tensor_descriptor_ptr_type) and self.num == other.num and self.size == other.size
+
+    def __repr__(self) -> str:
+        return f"tensor_descriptor_ptr_type(num={self.num}, size={self.size})"
 
     def mangle(self) -> str:
         if self.num > 1:
