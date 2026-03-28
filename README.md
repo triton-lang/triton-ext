@@ -35,12 +35,10 @@ Each subdirectory's `CMakeLists.txt` is responsible for building its respective 
 - **[`extensions/`](./extensions/)**: Contains standalone plugin extensions that bundle dialects, passes, and language
   bindings into self-contained shared libraries loadable by Triton at runtime.
 
-  - **[`TLXMemOps`](./extensions/TLXMemOps/)**: Triton plugin providing local memory operations (`local_alloc`,
-    `local_view`, `local_store`, `local_load`, `alloc_barriers`). Builds `libtlx_mem_ops.so`.
-
   - **[`utlx` (µTLX)](./extensions/utlx/)**: Triton Language Extensions plugin that provides most of Meta's TLX
-    functionality without modifying the Triton fork. Includes custom passes (e.g., PingPong, PruneUnusedBarriers), the
-    TLX dialect, conversion patterns, and a Python DSL. Builds `libutlx.so`.
+    functionality without modifying the Triton fork. Includes local memory operations (`local_alloc`, `local_view`,
+    `local_store`, `local_load`, `alloc_barriers`), custom passes (e.g., PingPong, PruneUnusedBarriers), the TLX
+    dialect, conversion patterns, and a Python DSL. Builds `libutlx.so`.
 
 - **[`support/`](./support/)**: Contains extension infrastructure code to automatically register extensions with Triton.
 
@@ -88,7 +86,7 @@ export TRITON_PASS_PLUGIN_PATH=/path/to/libmy_pass.so
 python your_script.py
 ```
 
-### Extension Plugins (TLXMemOps, µTLX)
+### Extension Plugins (µTLX)
 
 Extension plugins are loaded via `TRITON_PLUGIN_PATHS`. The µTLX plugin also requires a symlink so that
 `import triton.language.extra.tlx` resolves to its Python DSL:
@@ -106,5 +104,5 @@ python your_script.py
 To load multiple plugins, separate paths with `:`:
 
 ```bash
-export TRITON_PLUGIN_PATHS=build/lib/libutlx.so:build/lib/libtlx_mem_ops.so
+export TRITON_PLUGIN_PATHS=build/lib/libutlx.so:build/lib/libother_plugin.so
 ```

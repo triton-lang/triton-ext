@@ -1,37 +1,19 @@
-"""Standalone tests for tlx_plugin barrier ops (alloc_barriers, alloc_warp_barrier).
+"""Tests for utlx_plugin barrier ops (alloc_barriers, alloc_warp_barrier).
 
-Tests the plugin-ported alloc_barriers operation: allocating mbarrier buffers
-in shared memory and initializing them with InitBarrierOp. Covers compile-only
-IR verification and on-GPU execution.
+Tests the alloc_barriers operation: allocating mbarrier buffers in shared memory
+and initializing them with InitBarrierOp. Covers compile-only IR verification
+and on-GPU execution.
 
-These tests import from tlx_plugin (the out-of-tree plugin Python DSL)
-rather than triton.language.extra.tlx (the in-tree TLX DSL).
+Originally from TLXMemOps, consolidated into utlx.
 """
 
-import sys
-import os
 import pytest
 import torch
 
 import triton
 import triton.language as tl
 
-_plugin_python_dir = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                 "..", "python")
-)
-if _plugin_python_dir not in sys.path:
-    sys.path.insert(0, _plugin_python_dir)
-from tlx_plugin.utility import ensure_plugin_on_path
-ensure_plugin_on_path()
-import tlx_plugin as tlx  # type: ignore[import-not-found]
-
-
-def is_hopper_or_newer():
-    try:
-        return torch.cuda.get_device_capability()[0] >= 9
-    except Exception:
-        return False
+from conftest import tlx, is_hopper_or_newer
 
 
 # ---------------------------------------------------------------------------
@@ -114,12 +96,7 @@ def test_alloc_warp_barrier_compile_only():
 
 @pytest.mark.skipif(not is_hopper_or_newer(), reason="Need Hopper or newer")
 def test_alloc_barriers_on_gpu(device="cuda"):
-    """Allocate barriers on GPU and verify the kernel runs without errors.
-
-    Exercises the full alloc_barriers pipeline on hardware: LocalAllocOp
-    for the barrier buffer + InitBarrierOp for each slot. A simple
-    load/store via standard tl ops verifies the kernel completes correctly.
-    """
+    """Allocate barriers on GPU and verify the kernel runs without errors."""
 
     @triton.jit
     def kernel(in_ptr, out_ptr, BLOCK: tl.constexpr):

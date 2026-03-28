@@ -1,6 +1,6 @@
 """uTLX types for plugin operations.
 
-Extends TLXMemOps types with the full TLX type system including
+Provides the full TLX type system including buffered_tensor, mbarrier,
 storage_alias_spec, reuse_group, tensor_memory_layout, etc.
 """
 

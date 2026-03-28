@@ -1,45 +1,19 @@
-"""Standalone tests for tlx_plugin memory ops (local_alloc, local_view,
-local_store, local_load).
+"""Tests for utlx_plugin memory ops (local_alloc, local_view, local_store, local_load).
 
-Tests the plugin-ported local_alloc operation: allocating shared memory
-buffers, storing data into them, and loading data back out. Covers single
-and multi-buffer allocation, different dtypes, and 1D/2D shapes.
+Tests the local_alloc operation: allocating shared memory buffers, storing data
+into them, and loading data back out. Covers single and multi-buffer allocation,
+different dtypes, and 1D/2D shapes.
 
-These tests import from tlx_plugin (the out-of-tree plugin Python DSL)
-rather than triton.language.extra.tlx (the in-tree TLX DSL).
+Originally from TLXMemOps, consolidated into utlx.
 """
 
-import importlib
-import sys
-import os
 import pytest
 import torch
 
 import triton
 import triton.language as tl
-from triton import knobs
 
-_plugin_python_dir = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                 "..", "python")
-)
-if _plugin_python_dir not in sys.path:
-    sys.path.insert(0, _plugin_python_dir)
-from tlx_plugin.utility import ensure_plugin_on_path
-ensure_plugin_on_path()
-import tlx_plugin as tlx  # type: ignore[import-not-found]
-from tlx_plugin.custom_stages import inspect_stages_hook
-
-# Activate the plugin's custom ConvertTritonToTritonGPU pass so that
-# ttg.local_store / ttg.local_load ops emitted at TTIR level are legalized.
-knobs.runtime.add_stages_inspection_hook = inspect_stages_hook
-
-
-def is_hopper_or_newer():
-    try:
-        return torch.cuda.get_device_capability()[0] >= 9
-    except Exception:
-        return False
+from conftest import tlx, is_hopper_or_newer
 
 
 # ---------------------------------------------------------------------------
