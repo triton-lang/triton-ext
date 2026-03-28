@@ -427,12 +427,18 @@ def async_load(
         if bulk_size is None:
             bulk_size = dest_bytes
 
+        const_bulk_size = None
         if isinstance(bulk_size, tl.constexpr):
+            const_bulk_size = bulk_size.value
             bulk_size_handle = _semantic.builder.get_int32(bulk_size.value)
         elif isinstance(bulk_size, tl.tensor):
             bulk_size_handle = bulk_size.handle
         else:
+            const_bulk_size = int(bulk_size)
             bulk_size_handle = _semantic.builder.get_int32(int(bulk_size))
+        if const_bulk_size is not None:
+            assert const_bulk_size <= dest_bytes, (
+                f"bulk_size ({const_bulk_size}) exceeds destination buffer size ({dest_bytes} bytes)")
 
         cache = _semantic._str_to_load_cache_modifier(cache_modifier)
         eviction = _semantic._str_to_eviction_policy(eviction_policy)
@@ -635,6 +641,16 @@ def make_tensor_descriptor(
         raise ValueError(f"Expected block_shape to have {ndim} dimensions but got {len(block_shape)}")
     assert isinstance(base.dtype, tl.pointer_type)
 
+    elem_size = base.dtype.element_ty.primitive_bitwidth // 8
+    contig_dim_size = tl._unwrap_if_constexpr(block_shape[-1])
+    if contig_dim_size * elem_size < 16:
+        raise ValueError(
+            f"Descriptor block shape must have at least 16 bytes in the last dimension, "
+            f"but got {contig_dim_size} * {elem_size} = {contig_dim_size * elem_size} bytes")
+    last_stride = tl._unwrap_if_constexpr(strides[-1])
+    if last_stride != 1:
+        raise ValueError(f"Tensor descriptor last dim stride must be 1 but got {last_stride}")
+
     shape = [_semantic.make_scalar(x, tl.int32) for x in shape]
     strides = [_semantic.make_scalar(tl._unwrap_if_constexpr(x), tl.int64) for x in strides]
     block_shape = tl._unwrap_shape(block_shape)
@@ -693,6 +709,9 @@ def async_descriptor_load(
     from .mma_ops import require_nv_mma_shared_layout
     if multicast_targets is None:
         multicast_targets = []
+    eviction_policy = tl._unwrap_if_constexpr(eviction_policy)
+    assert eviction_policy in ("", "evict_first", "evict_last"), \
+        f"eviction_policy must be '', 'evict_first', or 'evict_last', got '{eviction_policy}'"
     assert isinstance(desc, tl.tensor_descriptor_base)
     ndim = len(desc.block_shape)
     assert len(offsets) == ndim
@@ -718,6 +737,9 @@ def async_descriptor_prefetch_tensor(
     _semantic=None,
 ) -> None:
     """Hint hardware to prefetch a tensor tile into L2 cache via TMA."""
+    eviction_policy = tl._unwrap_if_constexpr(eviction_policy)
+    assert eviction_policy in ("", "evict_first", "evict_last"), \
+        f"eviction_policy must be '', 'evict_first', or 'evict_last', got '{eviction_policy}'"
     assert isinstance(desc, tl.tensor_descriptor_base)
     ndim = len(desc.block_shape)
     assert len(offsets) == ndim
@@ -744,7 +766,11 @@ def async_descriptor_store(
     from .mma_ops import require_nv_mma_shared_layout
     assert isinstance(desc, tl.tensor_descriptor_base)
     eviction_policy = tl._unwrap_if_constexpr(eviction_policy)
+    assert eviction_policy in ("", "evict_first", "evict_last"), \
+        f"eviction_policy must be '', 'evict_first', or 'evict_last', got '{eviction_policy}'"
     store_reduce = tl._unwrap_if_constexpr(store_reduce)
+    assert store_reduce in ("", "add", "min", "max", "and", "or", "xor"), \
+        f"store_reduce must be one of '', 'add', 'min', 'max', 'and', 'or', 'xor', got '{store_reduce}'"
 
     ndim = len(desc.block_shape)
     assert len(offsets) == ndim
