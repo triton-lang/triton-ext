@@ -674,6 +674,22 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       // Modified ops with extended signatures (runtime op creation)
       {"utlx_fp_to_fp_with_rbits", utlx::createFpToFpWithRbits},
       {"utlx_make_tensor_desc_with_desc_ptr", utlx::createMakeTensorDescWithDescPtr},
+      // Combined require-layout ops (encoding + RequireLayoutOp)
+      {"utlx_require_nv_mma_shared_layout", utlx::createRequireNvMmaSharedLayout},
+      {"utlx_require_nv_mma_layout", utlx::createRequireNvMmaLayout},
+      {"utlx_require_dot_operand_layout", utlx::createRequireDotOperandLayout},
+      {"utlx_require_tensor_memory_layout", utlx::createRequireTensorMemoryLayout},
+      {"utlx_require_tensor_memory_scales_layout", utlx::createRequireTensorMemoryScalesLayout},
+      // Memory ops
+      {"utlx_async_load", utlx::createAsyncLoad},
+      {"utlx_global_scratch_alloc", utlx::createGlobalScratchAlloc},
+      {"utlx_make_dummy_register_layout", utlx::createMakeDummyRegisterLayout},
+      {"utlx_require_with_layout_carrier", utlx::createRequireWithLayoutCarrier},
+      {"utlx_alloc_clc_responses", utlx::createAllocClcResponses},
+      {"utlx_clc_query", utlx::createClcQuery},
+      // Thread/cluster ops
+      {"utlx_cluster_cta_rank", utlx::createClusterCtaRank},
+      {"utlx_thread_id", utlx::createThreadId},
   };
 
   static plugin::PluginInfo info = {
@@ -685,7 +701,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       dialects,
       1,      // numDialects
       ops,
-      31,     // numOps
+      45,     // numOps
   };
   return &info;
 }

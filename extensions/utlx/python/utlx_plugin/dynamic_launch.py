@@ -10,25 +10,25 @@ from .barrier import alloc_barriers, barrier_expect_bytes, barrier_wait, barrier
 @tl.builtin
 def _alloc_clc_responses(num_responses: tl.constexpr, _semantic=None) -> tlx.clc_response:
     layout = tlx.swizzled_shared_layout_encoding.make_default(rank=1)
-    layout_handle = _semantic.builder.make_swizzled_shared_encoding_attr(
-        layout.vectorSize, layout.perPhase, layout.maxPhase, layout.order,
-        layout.numCTAsPerCGA, layout.numCTASplit, layout.numCTAOrder)
-    return tlx.clc_response(
-        _semantic.builder.create_alloc_clc_responses(num_responses, layout_handle),
-        num_responses, layout)
+    num_responses_val = tl._unwrap_if_constexpr(num_responses)
+    handle = _semantic.builder.utlx_alloc_clc_responses(
+        [_semantic.builder.get_int32(int(num_responses_val))])
+    return tlx.clc_response(handle, num_responses_val, layout)
 
 
 @tl.builtin
 def _clc_issue(clc_response_addr, barrier, _semantic=None):
     assert isinstance(clc_response_addr, tlx.clc_response)
-    return _semantic.builder.clc_issue(clc_response_addr.handle, barrier.handle)
+    _semantic.builder.utlx_async_clc_try_cancel(
+        [barrier.handle, clc_response_addr.handle])
 
 
 @tl.builtin
 def _clc_query(clc_response_addr, _semantic=None):
     assert isinstance(clc_response_addr, tlx.clc_response)
-    x = _semantic.builder.clc_query(clc_response_addr.handle)
-    return _semantic.tensor(x, tl.int32)
+    x = _semantic.builder.utlx_clc_query(
+        [clc_response_addr.handle])
+    return tl.tensor(x, tl.int32)
 
 
 @tl.builtin
@@ -52,7 +52,7 @@ def clc_producer(context, p_producer=None, multi_ctas=False, k=0, _semantic=None
     response = local_view(context._clc_responses, k, _semantic=_semantic)
 
     if multi_ctas:
-        cta_rank = _semantic.builder.create_cluster_cta_rank()
+        cta_rank = _semantic.builder.utlx_cluster_cta_rank([])
         zero = _semantic.builder.get_int32(0)
         pred_cta0_handle = _semantic.builder.create_icmpEQ(cta_rank, zero)
         pred_cta0 = tl.tensor(pred_cta0_handle, tl.int1)
