@@ -88,15 +88,10 @@ python your_script.py
 
 ### Extension Plugins (µTLX)
 
-Extension plugins are loaded via `TRITON_PLUGIN_PATHS`. The µTLX plugin also requires a symlink so that
-`import triton.language.extra.tlx` resolves to its Python DSL:
+Extension plugins are loaded via `TRITON_PLUGIN_PATHS`. The µTLX plugin automatically registers itself as
+`triton.language.extra.tlx` when imported, so no filesystem symlinks are needed:
 
 ```bash
-# Symlink the tlx language module into triton
-ln -sfn /path/to/triton-ext/extensions/utlx/python/utlx \
-    "$(python -c 'import triton.language.extra as e, os; print(os.path.dirname(e.__file__))')/tlx"
-
-# Load the plugin(s)
 export TRITON_PLUGIN_PATHS=/path/to/triton-ext/build/lib/libutlx.so
 python your_script.py
 ```

@@ -183,6 +183,14 @@ from .utility import (
     stoch_round,
     thread_id,
 )
+# Register this module as triton.language.extra.tlx so that
+# `import triton.language.extra.tlx` works without a filesystem symlink.
+# This must happen before importing mxfp8_utils which does that import.
+import sys as _sys
+import triton.language.extra as _extra
+_sys.modules['triton.language.extra.tlx'] = _sys.modules[__name__]
+_extra.tlx = _sys.modules[__name__]
+
 from .mxfp8_utils import _to_mxfp8_block
 from .warp_ops import vote_ballot_sync
 

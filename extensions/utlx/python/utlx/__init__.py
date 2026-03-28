@@ -1,8 +1,8 @@
 """triton.language.extra.tlx — re-export from utlx_plugin.
 
-This package can be symlinked into triton/python/triton/language/extra/tlx
-so that `import triton.language.extra.tlx as tlx` resolves to the uTLX
-plugin's Python DSL.
+This module is no longer required: utlx_plugin now registers itself as
+triton.language.extra.tlx via sys.modules at import time. This file is
+kept as a fallback for legacy symlink-based setups.
 """
 
 import os as _os
