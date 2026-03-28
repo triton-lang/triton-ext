@@ -456,5 +456,316 @@ def test_multi_buffer_compile_only():
     assert "memdesc_index" in ir_str or "memdesc_subview" in ir_str
 
 
+# ---------------------------------------------------------------------------
+# Varying block sizes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("BLOCK", [32, 64, 128, 256])
+def test_local_alloc_varying_block_sizes(BLOCK):
+    """local_alloc -> store -> load with different block sizes."""
+
+    @triton.jit
+    def kernel(in_ptr, out_ptr, BLOCK: tl.constexpr):
+        offs = tl.arange(0, BLOCK)
+        x = tl.load(in_ptr + offs)
+        buf = tlx.local_alloc((BLOCK,), tl.float32, 1)
+        view = tlx.local_view(buf, 0)
+        tlx.local_store(view, x)
+        y = tlx.local_load(view)
+        tl.store(out_ptr + offs, y)
+
+    x = torch.randn(BLOCK, device=DEVICE, dtype=torch.float32)
+    out = torch.empty_like(x)
+    kernel[(1,)](x, out, BLOCK=BLOCK)
+    torch.testing.assert_close(out, x)
+
+
+# ---------------------------------------------------------------------------
+# Integer dtypes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("dtype,torch_dtype", [
+    (tl.int8, torch.int8),
+    (tl.int16, torch.int16),
+    (tl.int32, torch.int32),
+])
+def test_local_alloc_integer_dtypes(dtype, torch_dtype):
+    """local_alloc with integer element types."""
+
+    @triton.jit
+    def kernel(in_ptr, out_ptr, BLOCK: tl.constexpr, DTYPE: tl.constexpr):
+        offs = tl.arange(0, BLOCK)
+        x = tl.load(in_ptr + offs)
+        buf = tlx.local_alloc((BLOCK,), DTYPE, 1)
+        view = tlx.local_view(buf, 0)
+        tlx.local_store(view, x)
+        y = tlx.local_load(view)
+        tl.store(out_ptr + offs, y)
+
+    BLOCK = 64
+    x = torch.randint(-100, 100, (BLOCK,), device=DEVICE, dtype=torch_dtype)
+    out = torch.empty_like(x)
+    kernel[(1,)](x, out, BLOCK=BLOCK, DTYPE=dtype)
+    torch.testing.assert_close(out, x)
+
+
+# ---------------------------------------------------------------------------
+# Overwrite: store twice, last write wins
+# ---------------------------------------------------------------------------
+
+def test_local_alloc_overwrite():
+    """Store twice to the same view, verify last write wins."""
+
+    @triton.jit
+    def kernel(a_ptr, b_ptr, out_ptr, BLOCK: tl.constexpr):
+        offs = tl.arange(0, BLOCK)
+        a = tl.load(a_ptr + offs)
+        b = tl.load(b_ptr + offs)
+
+        buf = tlx.local_alloc((BLOCK,), tl.float32, 1)
+        view = tlx.local_view(buf, 0)
+
+        tlx.local_store(view, a)  # first write
+        tlx.local_store(view, b)  # overwrite
+
+        y = tlx.local_load(view)
+        tl.store(out_ptr + offs, y)
+
+    BLOCK = 64
+    a = torch.randn(BLOCK, device=DEVICE, dtype=torch.float32)
+    b = torch.randn(BLOCK, device=DEVICE, dtype=torch.float32)
+    out = torch.empty(BLOCK, device=DEVICE, dtype=torch.float32)
+    kernel[(1,)](a, b, out, BLOCK=BLOCK)
+    torch.testing.assert_close(out, b)
+
+
+# ---------------------------------------------------------------------------
+# Varying 2D shapes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("M,N", [
+    (16, 16),
+    (32, 64),
+    (64, 32),
+    (128, 128),
+])
+def test_local_alloc_2d_shapes(M, N):
+    """local_alloc 2D with different tile shapes."""
+
+    @triton.jit
+    def kernel(in_ptr, out_ptr, M: tl.constexpr, N: tl.constexpr):
+        row = tl.arange(0, M)
+        col = tl.arange(0, N)
+        offs = row[:, None] * N + col[None, :]
+        x = tl.load(in_ptr + offs)
+        buf = tlx.local_alloc((M, N), tl.float16, 1)
+        view = tlx.local_view(buf, 0)
+        tlx.local_store(view, x)
+        y = tlx.local_load(view)
+        tl.store(out_ptr + offs, y)
+
+    x = torch.randn(M, N, device=DEVICE, dtype=torch.float16)
+    out = torch.empty_like(x)
+    kernel[(1,)](x, out, M=M, N=N)
+    torch.testing.assert_close(out, x)
+
+
+# ---------------------------------------------------------------------------
+# Multi-block kernel with local_alloc
+# ---------------------------------------------------------------------------
+
+def test_local_alloc_multi_block_kernel():
+    """Multiple program instances each with their own local_alloc."""
+
+    @triton.jit
+    def kernel(in_ptr, out_ptr, n_elements, BLOCK: tl.constexpr):
+        pid = tl.program_id(0)
+        offs = pid * BLOCK + tl.arange(0, BLOCK)
+        mask = offs < n_elements
+        x = tl.load(in_ptr + offs, mask=mask)
+
+        buf = tlx.local_alloc((BLOCK,), tl.float32, 1)
+        view = tlx.local_view(buf, 0)
+        tlx.local_store(view, x)
+        y = tlx.local_load(view)
+
+        tl.store(out_ptr + offs, y, mask=mask)
+
+    N = 1024
+    BLOCK = 128
+    x = torch.randn(N, device=DEVICE, dtype=torch.float32)
+    out = torch.empty_like(x)
+    grid = (triton.cdiv(N, BLOCK),)
+    kernel[grid](x, out, N, BLOCK=BLOCK)
+    torch.testing.assert_close(out, x)
+
+
+# ---------------------------------------------------------------------------
+# Accumulation pattern: load from two smem buffers and add
+# ---------------------------------------------------------------------------
+
+def test_local_alloc_accumulate_from_smem():
+    """Load from two smem buffers, add in registers, store result."""
+
+    @triton.jit
+    def kernel(a_ptr, b_ptr, out_ptr, BLOCK: tl.constexpr):
+        offs = tl.arange(0, BLOCK)
+        a = tl.load(a_ptr + offs)
+        b = tl.load(b_ptr + offs)
+
+        buf = tlx.local_alloc((BLOCK,), tl.float16, 2)
+
+        va = tlx.local_view(buf, 0)
+        vb = tlx.local_view(buf, 1)
+
+        tlx.local_store(va, a)
+        tlx.local_store(vb, b)
+
+        a_reg = tlx.local_load(va)
+        b_reg = tlx.local_load(vb)
+        result = a_reg + b_reg
+
+        tl.store(out_ptr + offs, result)
+
+    BLOCK = 128
+    a = torch.randn(BLOCK, device=DEVICE, dtype=torch.float16)
+    b = torch.randn(BLOCK, device=DEVICE, dtype=torch.float16)
+    out = torch.empty(BLOCK, device=DEVICE, dtype=torch.float16)
+    kernel[(1,)](a, b, out, BLOCK=BLOCK)
+    torch.testing.assert_close(out, a + b)
+
+
+# ---------------------------------------------------------------------------
+# Chain: alloc -> store -> load -> compute -> store -> load
+# ---------------------------------------------------------------------------
+
+def test_local_alloc_chain():
+    """Chain of smem store/load with computation in between."""
+
+    @triton.jit
+    def kernel(in_ptr, out_ptr, BLOCK: tl.constexpr):
+        offs = tl.arange(0, BLOCK)
+        x = tl.load(in_ptr + offs)
+
+        buf = tlx.local_alloc((BLOCK,), tl.float32, 2)
+
+        v0 = tlx.local_view(buf, 0)
+        v1 = tlx.local_view(buf, 1)
+
+        # store x, load, double it
+        tlx.local_store(v0, x)
+        y = tlx.local_load(v0)
+        doubled = y + y
+
+        # store doubled, load back
+        tlx.local_store(v1, doubled)
+        z = tlx.local_load(v1)
+
+        tl.store(out_ptr + offs, z)
+
+    BLOCK = 64
+    x = torch.randn(BLOCK, device=DEVICE, dtype=torch.float32)
+    out = torch.empty_like(x)
+    kernel[(1,)](x, out, BLOCK=BLOCK)
+    torch.testing.assert_close(out, x * 2)
+
+
+# ---------------------------------------------------------------------------
+# local_view with dynamic index (loop variable)
+# ---------------------------------------------------------------------------
+
+def test_local_view_in_loop():
+    """Use local_view with loop variable index (pipelining pattern)."""
+
+    @triton.jit
+    def kernel(in_ptr, out_ptr, BLOCK: tl.constexpr, NUM_BUFS: tl.constexpr):
+        offs = tl.arange(0, BLOCK)
+        x = tl.load(in_ptr + offs)
+
+        bufs = tlx.local_alloc((BLOCK,), tl.float32, NUM_BUFS)
+
+        # Store into each buffer sequentially
+        for i in tl.static_range(NUM_BUFS):
+            view = tlx.local_view(bufs, i)
+            tlx.local_store(view, x)
+
+        # Load from last buffer
+        last_view = tlx.local_view(bufs, NUM_BUFS - 1)
+        y = tlx.local_load(last_view)
+        tl.store(out_ptr + offs, y)
+
+    BLOCK = 64
+    x = torch.randn(BLOCK, device=DEVICE, dtype=torch.float32)
+    out = torch.empty_like(x)
+    kernel[(1,)](x, out, BLOCK=BLOCK, NUM_BUFS=4)
+    torch.testing.assert_close(out, x)
+
+
+# ---------------------------------------------------------------------------
+# Dot with multi-iteration K loop through smem
+# ---------------------------------------------------------------------------
+
+def test_dot_k_loop_through_smem():
+    """GEMM with K tiled through smem (2 iterations)."""
+
+    @triton.jit
+    def kernel(
+        a_ptr, b_ptr, c_ptr,
+        M, N, K,
+        stride_am, stride_ak,
+        stride_bk, stride_bn,
+        stride_cm, stride_cn,
+        BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
+    ):
+        offs_m = tl.arange(0, BLOCK_M)
+        offs_n = tl.arange(0, BLOCK_N)
+        offs_k = tl.arange(0, BLOCK_K)
+
+        a_ptrs = a_ptr + (offs_m[:, None] * stride_am + offs_k[None, :] * stride_ak)
+        b_ptrs = b_ptr + (offs_k[:, None] * stride_bk + offs_n[None, :] * stride_bn)
+
+        bufs_A = tlx.local_alloc((BLOCK_M, BLOCK_K), tlx.dtype_of(a_ptr), 1)
+        bufs_B = tlx.local_alloc((BLOCK_K, BLOCK_N), tlx.dtype_of(b_ptr), 1)
+
+        acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+
+        K_ITERS = tl.cdiv(K, BLOCK_K)
+        for _ in tl.range(0, K_ITERS, num_stages=0):
+            a_view = tlx.local_view(bufs_A, 0)
+            b_view = tlx.local_view(bufs_B, 0)
+
+            a_reg = tl.load(a_ptrs, mask=offs_k[None, :] < K)
+            b_reg = tl.load(b_ptrs, mask=offs_k[:, None] < K)
+
+            tlx.local_store(a_view, a_reg)
+            tlx.local_store(b_view, b_reg)
+
+            a_tile = tlx.local_load(a_view)
+            b_tile = tlx.local_load(b_view)
+            acc = tl.dot(a_tile, b_tile, acc)
+
+            a_ptrs += BLOCK_K * stride_ak
+            b_ptrs += BLOCK_K * stride_bk
+
+        c = acc.to(tlx.dtype_of(c_ptr))
+        c_ptrs = c_ptr + stride_cm * offs_m[:, None] + stride_cn * offs_n[None, :]
+        tl.store(c_ptrs, c)
+
+    M, N, K = 64, 64, 128
+    a = torch.randn((M, K), device=DEVICE, dtype=torch.float16)
+    b = torch.randn((K, N), device=DEVICE, dtype=torch.float16)
+    c = torch.zeros((M, N), device=DEVICE, dtype=torch.float16)
+
+    kernel[(1,)](
+        a, b, c, M, N, K,
+        a.stride(0), a.stride(1),
+        b.stride(0), b.stride(1),
+        c.stride(0), c.stride(1),
+        BLOCK_M=M, BLOCK_N=N, BLOCK_K=64,
+    )
+    c_ref = torch.matmul(a, b)
+    torch.testing.assert_close(c, c_ref, atol=1e-1, rtol=1e-2)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
