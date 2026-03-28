@@ -5,7 +5,7 @@ operations that require the TLX dialect, and standard triton builder
 methods for operations that exist in upstream triton.
 """
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import triton.language.core as tl
 from triton._C.libtriton import ir
@@ -105,7 +105,7 @@ def local_alloc(
     num: tl.constexpr,
     storage: tlx.storage_kind = tlx.storage_kind.smem,
     layout=None,
-    reuse=None,
+    reuse: Optional[Union[tlx.buffered_tensor, tlx.storage_alias_spec]] = None,
     _semantic=None,
 ) -> tlx.buffered_tensor:
     """Allocate buffers in shared/tensor memory and return a buffered_tensor."""

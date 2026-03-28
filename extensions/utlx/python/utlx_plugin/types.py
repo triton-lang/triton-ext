@@ -610,8 +610,10 @@ class storage_alias_spec_type(tl.base_type):
                 and self._buffer_size_bytes == other._buffer_size_bytes)
 
     def __repr__(self) -> str:
-        return (f"storage_alias_spec_type(storage={self._storage.value}, "
-                f"buffer_size_bytes={self._buffer_size_bytes})")
+        if self._buffer_size_bytes is not None:
+            return (f"storage_alias_spec_type(storage={self._storage.value}, "
+                    f"buffer_bytes={self._buffer_size_bytes})")
+        return f"storage_alias_spec_type(storage={self._storage.value})"
 
     def mangle(self):
         size_part = f"_{self._buffer_size_bytes}" if self._buffer_size_bytes else ""
