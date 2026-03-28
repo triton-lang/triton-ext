@@ -1,3 +1,8 @@
+# µTLX: Triton Language Extensions distributed as a Plugin
+
+This package provides most of the function that Meta's TLX (https://github.com/facebookexperimental/triton) does, but without any changes to a fork of Triton.
+
+
 ## Create a Project Root Directory
 ```
 mkdir TRITON-uTLX
