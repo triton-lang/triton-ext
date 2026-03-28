@@ -43,5 +43,34 @@ def is_hopper_or_newer():
         return False
 
 
+def is_hopper():
+    try:
+        return is_cuda() and torch.cuda.get_device_capability() == (9, 0)
+    except Exception:
+        return False
+
+
+def is_blackwell():
+    try:
+        return is_cuda() and torch.cuda.get_device_capability()[0] >= 10
+    except Exception:
+        return False
+
+
+def is_hip_cdna2():
+    if not is_hip():
+        return False
+    try:
+        target = triton.runtime.driver.active.get_current_target()
+        return target.arch in ("gfx90a",)
+    except Exception:
+        return False
+
+
 def get_current_target():
     return triton.runtime.driver.active.get_current_target()
+
+
+@pytest.fixture
+def device():
+    return DEVICE
