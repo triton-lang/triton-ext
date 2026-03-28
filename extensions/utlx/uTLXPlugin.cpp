@@ -21,6 +21,9 @@
 // Ported passes
 #include "passes/Passes.h"
 
+// New/modified op wrappers
+#include "ops/NewOps.h"
+
 namespace ttg = mlir::triton::gpu;
 namespace ttng = mlir::triton::nvidia_gpu;
 namespace tlx = mlir::triton::tlx;
@@ -269,19 +272,7 @@ static void createBarrierExpect(TritonOpBuilder &self,
                                      static_cast<int>(*expectBytesVal), pred);
 }
 
-// --- utlx_named_barrier_wait ---
-// NOTE: NamedBarrierWaitOp does not exist in this Triton version.
-static void createNamedBarrierWait(TritonOpBuilder &self,
-                                   std::vector<mlir::Value> &operands) {
-  llvm::errs() << "utlx_named_barrier_wait: not supported in this Triton version\n";
-}
-
-// --- utlx_named_barrier_arrive ---
-// NOTE: NamedBarrierArriveOp does not exist in this Triton version.
-static void createNamedBarrierArrive(TritonOpBuilder &self,
-                                     std::vector<mlir::Value> &operands) {
-  llvm::errs() << "utlx_named_barrier_arrive: not supported in this Triton version\n";
-}
+// Named barrier ops are now handled by runtime op wrappers in ops/NewOps.cpp
 
 // --- utlx_storage_alias_spec: Create a storage alias specification ---
 static void createStorageAliasSpec(TritonOpBuilder &self,
@@ -646,6 +637,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
   };
 
   static plugin::OpInfo ops[] = {
+      // Original TLX ops
       {"utlx_local_alloc", createLocalAllocSmem},
       {"utlx_local_alloc_tmem", createLocalAllocTmem},
       {"utlx_local_view", createLocalView},
@@ -655,8 +647,6 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_barrier_wait", createBarrierWait},
       {"utlx_barrier_arrive", createBarrierArrive},
       {"utlx_barrier_expect", createBarrierExpect},
-      {"utlx_named_barrier_wait", createNamedBarrierWait},
-      {"utlx_named_barrier_arrive", createNamedBarrierArrive},
       {"utlx_storage_alias_spec", createStorageAliasSpec},
       {"utlx_storage_alias_local_alloc", createStorageAliasLocalAlloc},
       {"utlx_reuse_group", createReuseGroup},
@@ -664,6 +654,26 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_local_alias", createLocalAlias},
       {"utlx_require_layout", createRequireLayout},
       {"utlx_release_layout", createReleaseLayout},
+      // New TTG ops (runtime op creation)
+      {"utlx_remote_shmem_store", utlx::createRemoteShmemStore},
+      {"utlx_async_remote_shmem_store", utlx::createAsyncRemoteShmemStore},
+      {"utlx_clock64", utlx::createClock64},
+      // New TTNG ops (runtime op creation)
+      {"utlx_async_store", utlx::createAsyncStore},
+      {"utlx_fence", utlx::createFence},
+      {"utlx_map_to_remote_buffer", utlx::createMapToRemoteBuffer},
+      {"utlx_cluster_size_1d", utlx::createClusterSize1D},
+      {"utlx_async_clc_try_cancel", utlx::createAsyncCLCTryCancel},
+      {"utlx_clc_query_cancel", utlx::createCLCQueryCancel},
+      {"utlx_vote_ballot_sync", utlx::createVoteBallotSync},
+      {"utlx_async_tma_prefetch", utlx::createAsyncTMAPrefetch},
+      {"utlx_named_barrier_arrive", utlx::createNamedBarrierArrive},
+      {"utlx_named_barrier_wait", utlx::createNamedBarrierWait},
+      // New AMD ops (runtime op creation)
+      {"utlx_read_barrier_phase", utlx::createReadBarrierPhase},
+      // Modified ops with extended signatures (runtime op creation)
+      {"utlx_fp_to_fp_with_rbits", utlx::createFpToFpWithRbits},
+      {"utlx_make_tensor_desc_with_desc_ptr", utlx::createMakeTensorDescWithDescPtr},
   };
 
   static plugin::PluginInfo info = {
@@ -675,7 +685,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       dialects,
       1,      // numDialects
       ops,
-      18,     // numOps
+      31,     // numOps
   };
   return &info;
 }

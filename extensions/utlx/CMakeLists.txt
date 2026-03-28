@@ -190,6 +190,8 @@ set(UTLX_PLUGIN_SOURCES
     tlx/dialect/lib/Transforms/BufferOffsetCalculation.cpp
     # Analysis
     tlx/dialect/lib/Analysis/LayoutPropagation.cpp
+    # New/modified op wrappers (runtime op creation)
+    ops/NewOps.cpp
     # Ported passes - NVIDIA
     passes/nvidia/PruneUnusedBarriers.cpp
     passes/nvidia/PingPong.cpp
