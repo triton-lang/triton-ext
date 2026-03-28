@@ -10,6 +10,7 @@ from typing import List, Optional, Tuple
 
 import triton.language.core as tl
 from triton._C.libtriton import ir
+from triton.language.core import _aggregate as aggregate
 
 
 class layout_encoding:
@@ -198,10 +199,63 @@ class nv_mma_shared_layout_encoding(shared_layout_encoding):
         )
 
 
+class tensor_memory_scales_layout_encoding:
+    def __init__(self, CTASplitM: int = 1, CTASplitN: int = 1):
+        self.CTASplitM = CTASplitM
+        self.CTASplitN = CTASplitN
+
+    @classmethod
+    def make_default(cls):
+        return cls(CTASplitM=1, CTASplitN=1)
+
+    def to_ir(self, builder: ir.builder) -> None:
+        return builder.make_tensor_memory_scales_encoding_attr(
+            self.CTASplitM, self.CTASplitN)
+
+
+class DummyRegisterLayoutEncoding(layout_encoding):
+    def __init__(self, shape: List[int], element_type: tl.dtype, tmem_compatible: bool = False):
+        super().__init__()
+        self.shape = shape
+        self.element_type = element_type
+        self.tmem_compatible = tmem_compatible
+
+    def to_ir(self, builder: ir.builder):
+        return builder.make_dummy_register_layout_attr(
+            self.shape, self.element_type.to_ir(builder), self.tmem_compatible)
+
+    def __repr__(self):
+        return f"DummyRegisterLayoutEncoding<{self.shape}, {self.element_type}, tmem_compatible={self.tmem_compatible}>"
+
+    def __eq__(self, other):
+        return (isinstance(other, DummyRegisterLayoutEncoding) and self.shape == other.shape
+                and self.element_type == other.element_type and self.tmem_compatible == other.tmem_compatible)
+
+    def __hash__(self):
+        return hash((tuple(self.shape), self.element_type, self.tmem_compatible))
+
+
 class storage_kind(enum.Enum):
     smem = "smem"
     tmem = "tmem"
     smemCluster = "smemCluster"
+
+
+class DummyTMEMLayoutEncoding(layout_encoding):
+    def __init__(self):
+        super().__init__()
+
+    def to_ir(self, builder: ir.builder):
+        return builder.make_dummy_tmem_layout_attr()
+
+    def __repr__(self):
+        return "DummyTMEMLayoutEncoding<>"
+
+    def __eq__(self, other):
+        return isinstance(other, DummyTMEMLayoutEncoding)
+
+    def __hash__(self):
+        return hash(self.__class__.__name__)
 
 
 class reuse_group_type(enum.Enum):
@@ -319,25 +373,85 @@ class buffered_tensor_type(tl.block_type):
         self.num = num
 
 
-class mbarrier(buffered_tensor):
+class mbarrier(tl.base_value):
     """An mbarrier allocated in shared memory."""
 
     def __init__(
         self,
         handle,
-        num_barriers: int,
-        layout: Optional[shared_layout_encoding] = None,
+        num: int,
+        layout: Optional[swizzled_shared_layout_encoding] = None,
+        storage: storage_kind = storage_kind.smem,
         is_warp_barrier: bool = False,
     ):
-        super().__init__(
-            handle,
-            element_ty=tl.int64,
-            shape=[num_barriers],
-            num=num_barriers,
-            storage=storage_kind.smem,
-            layout=layout,
-        )
+        assert storage == storage_kind.smem or storage == storage_kind.smemCluster, (
+            "mbarrier requires storage to be smem or smemCluster")
+        self.handle = handle
+        self.type = mbarrier_type(num, layout, storage, is_warp_barrier)
+        self.num = num
         self.is_warp_barrier = is_warp_barrier
+
+    def _flatten_ir(self, handles) -> None:
+        handles.append(self.handle)
+
+
+class mbarrier_type(buffered_tensor_type):
+
+    def __init__(self, num: int, layout: Optional[swizzled_shared_layout_encoding], storage,
+                 is_warp_barrier: bool = False):
+        super().__init__(tl.int64, [1], num, storage, layout)
+        self.is_warp_barrier = is_warp_barrier
+
+
+class clc_response(tl.base_value):
+    """A CLC response object."""
+
+    def __init__(self, handle, num: int, layout: Optional[swizzled_shared_layout_encoding]):
+        self.handle = handle
+        self.type = clc_response_type(num, layout)
+        self.num = num
+
+    def _flatten_ir(self, handles) -> None:
+        handles.append(self.handle)
+
+
+class clc_response_type(buffered_tensor_type):
+
+    def __init__(self, num: int, layout: Optional[swizzled_shared_layout_encoding]):
+        super().__init__(tl.int64, [1], num, storage_kind.smem, layout)
+
+
+@aggregate
+class CLCPipelineContext:
+    _clc_mbars_empty: mbarrier
+    _clc_mbars_full: mbarrier
+    _clc_responses: clc_response
+
+    def __init__(
+        self,
+        clc_mbars_empty: mbarrier,
+        clc_mbars_full: mbarrier,
+        clc_responses: clc_response,
+    ):
+        self._clc_mbars_empty = clc_mbars_empty
+        self._clc_mbars_full = clc_mbars_full
+        self._clc_responses = clc_responses
+
+
+class reuse_group_ir_type(tl.base_type):
+
+    def __init__(self, group_kind: reuse_group_type):
+        self._group_kind = group_kind
+
+    @property
+    def group_kind(self) -> reuse_group_type:
+        return self._group_kind
+
+    def __eq__(self, other):
+        return (isinstance(other, reuse_group_ir_type) and self._group_kind == other._group_kind)
+
+    def mangle(self) -> str:
+        return f"reuse_group_{self._group_kind.value}"
 
 
 class storage_alias_spec(tl.base_value):
@@ -424,3 +538,37 @@ class async_token_type(tl.base_type):
 
     def mangle(self):
         return "async_token_type"
+
+
+class tensor_descriptor_ptr(tl.base_value):
+    def __init__(self, handle, num: int, descriptor_size: int):
+        super().__init__()
+        self.handle = handle
+        self.type = tensor_descriptor_ptr_type(num, descriptor_size)
+
+    @property
+    def num(self) -> int:
+        return self.type.num
+
+    @property
+    def descriptor_size(self) -> int:
+        return self.type.size
+
+    def _flatten_ir(self, handles) -> None:
+        handles.append(self.handle)
+
+
+class tensor_descriptor_ptr_type(tl.pointer_type):
+    def __init__(self, num: int, size: int = 128):
+        element_type = tl.block_type(tl.int8, [size])
+        super().__init__(element_type, address_space=1)
+        self.num = num
+        self.size = size
+
+    def __eq__(self, other):
+        return isinstance(other, tensor_descriptor_ptr_type) and self.num == other.num and self.size == other.size
+
+    def mangle(self) -> str:
+        if self.num > 1:
+            return f"tensor_desc_ptr_{self.num}_{self.size}"
+        return f"tensor_desc_ptr_{self.size}"

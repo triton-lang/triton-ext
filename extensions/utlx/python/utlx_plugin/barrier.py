@@ -12,6 +12,12 @@ These ops call plugin custom ops registered by uTLXPlugin.cpp:
 import triton.language.core as tl
 
 from . import types as tlx
+from .utility import is_hip
+
+
+@tl.builtin
+def cluster_barrier(_semantic=None):
+    _semantic.builder.create_cluster_barrier()
 
 
 @tl.builtin
@@ -111,12 +117,18 @@ def barrier_wait(
 def barrier_arrive(
     bar: tlx.buffered_tensor,
     arrive_count: tl.constexpr = tl.constexpr(1),
+    remote_cta_rank: tl.tensor = None,
     _semantic=None,
 ) -> None:
     """Perform the arrive operation on an mbarrier."""
     assert bar.type.storage == tlx.storage_kind.smem
-
     arrive_count_val = tl._unwrap_if_constexpr(arrive_count)
+    assert arrive_count_val == 1 or not is_hip(), "AMD backend currently only supports arrive_count == 1"
+
+    if remote_cta_rank is not None:
+        from .mem_ops import remote_view
+        bar = remote_view(bar, remote_cta_rank, _semantic=_semantic)
+
     arrive_count_ir = _semantic.builder.get_int32(int(arrive_count_val))
 
     _semantic.builder.utlx_barrier_arrive(
