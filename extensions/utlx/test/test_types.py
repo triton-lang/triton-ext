@@ -346,15 +346,15 @@ class TestMbarrier:
 
     def test_construction(self):
         layout = tlx.swizzled_shared_layout_encoding.make_default(rank=1)
-        bar = tlx.mbarrier(handle=None, num_barriers=4, layout=layout)
+        bar = tlx.mbarrier(handle=None, num=4, layout=layout)
         assert bar.type.num == 4
         assert bar.type.storage == tlx.storage_kind.smem
-        assert bar.dtype == tl.int64
+        assert bar.type.element_ty == tl.int64
         assert bar.is_warp_barrier is False
 
     def test_warp_barrier(self):
         layout = tlx.swizzled_shared_layout_encoding.make_default(rank=1)
-        bar = tlx.mbarrier(handle=None, num_barriers=2, layout=layout, is_warp_barrier=True)
+        bar = tlx.mbarrier(handle=None, num=2, layout=layout, is_warp_barrier=True)
         assert bar.is_warp_barrier is True
 
 
