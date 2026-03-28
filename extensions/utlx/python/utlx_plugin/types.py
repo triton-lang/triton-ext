@@ -372,6 +372,40 @@ class buffered_tensor_type(tl.block_type):
         self.layout = layout
         self.num = num
 
+    def mangle(self) -> str:
+        elt = self.scalar.mangle()
+        shape = "_".join(map(str, self.shape))
+        if self.num > 0:
+            shape += f"_{self.num}"
+        return f"buffered_{elt}S{shape}"
+
+    def to_ir(self, builder) -> None:
+        shape = self.shape
+        if self.num >= 1:
+            shape = [self.num] + list(shape)
+        layout_ir = self.layout.to_ir(builder)
+        alloc_shape = list(shape)
+        if self.storage == storage_kind.tmem:
+            return builder.get_tensor_mem_desc_ty(
+                self.element_ty.to_ir(builder), shape, layout_ir, alloc_shape)
+        else:
+            return builder.get_shared_mem_desc_ty(
+                self.element_ty.to_ir(builder), shape, layout_ir, alloc_shape)
+
+    def _flatten_ir_types(self, builder, out) -> None:
+        out.append(self.to_ir(builder))
+
+    def _unflatten_ir(self, handles, cursor):
+        value = buffered_tensor(
+            handles[cursor],
+            self.scalar,
+            self.shape,
+            self.num,
+            self.storage,
+            self.layout,
+        )
+        return value, cursor + 1
+
 
 class mbarrier(tl.base_value):
     """An mbarrier allocated in shared memory."""
@@ -402,6 +436,20 @@ class mbarrier_type(buffered_tensor_type):
         super().__init__(tl.int64, [1], num, storage, layout)
         self.is_warp_barrier = is_warp_barrier
 
+    def to_ir(self, builder) -> None:
+        if self.num >= 1:
+            shape = [self.num]
+        else:
+            shape = self.shape
+        layout_ir = self.layout.to_ir(builder)
+        return builder.get_shared_mem_desc_ty(
+            self.element_ty.to_ir(builder), shape, layout_ir, shape)
+
+    def _unflatten_ir(self, handles, cursor):
+        value = mbarrier(handles[cursor], self.num, self.layout, self.storage,
+                         is_warp_barrier=self.is_warp_barrier)
+        return value, cursor + 1
+
 
 class clc_response(tl.base_value):
     """A CLC response object."""
@@ -419,6 +467,19 @@ class clc_response_type(buffered_tensor_type):
 
     def __init__(self, num: int, layout: Optional[swizzled_shared_layout_encoding]):
         super().__init__(tl.int64, [1], num, storage_kind.smem, layout)
+
+    def to_ir(self, builder) -> None:
+        if self.num >= 1:
+            shape = [self.num]
+        else:
+            shape = self.shape
+        layout_ir = self.layout.to_ir(builder)
+        return builder.get_shared_mem_desc_ty(
+            self.element_ty.to_ir(builder), shape, layout_ir, shape)
+
+    def _unflatten_ir(self, handles, cursor):
+        value = clc_response(handles[cursor], self.num, self.layout)
+        return value, cursor + 1
 
 
 @aggregate
@@ -517,6 +578,25 @@ class storage_alias_spec_type(tl.base_type):
         size_part = f"_{self._buffer_size_bytes}" if self._buffer_size_bytes else ""
         return f"storage_alias_spec_{self._storage.value}{size_part}"
 
+    def to_ir(self, builder):
+        # TODO: Requires get_storage_alias_spec_type builder method which
+        # is TLX-specific and not available through the plugin interface.
+        raise NotImplementedError(
+            "storage_alias_spec_type.to_ir() requires TLX-specific builder methods "
+            "not available in the plugin interface"
+        )
+
+    def _flatten_ir_types(self, builder, out) -> None:
+        out.append(self.to_ir(builder))
+
+    def _unflatten_ir(self, handles, cursor):
+        value = storage_alias_spec(
+            handles[cursor],
+            self._storage,
+            self._buffer_size_bytes,
+        )
+        return value, cursor + 1
+
 
 class async_token(tl.base_value):
     """Tracks and synchronizes asynchronous operations."""
@@ -538,6 +618,12 @@ class async_token_type(tl.base_type):
 
     def mangle(self):
         return "async_token_type"
+
+    def _flatten_ir_types(self, builder, out) -> None:
+        return  # No-op: async tokens don't contribute IR types
+
+    def _unflatten_ir(self, handles, cursor):
+        return async_token(handles[cursor]), cursor + 1
 
 
 class tensor_descriptor_ptr(tl.base_value):
@@ -572,3 +658,6 @@ class tensor_descriptor_ptr_type(tl.pointer_type):
         if self.num > 1:
             return f"tensor_desc_ptr_{self.num}_{self.size}"
         return f"tensor_desc_ptr_{self.size}"
+
+    def _unflatten_ir(self, handles, cursor):
+        return tensor_descriptor_ptr(handles[cursor], self.num, self.size), cursor + 1
