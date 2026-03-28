@@ -18,6 +18,9 @@
 #include "tlx/dialect/include/IR/Dialect.h"
 #include "tlx/dialect/include/Transforms/Passes.h"
 
+// Ported passes
+#include "passes/Passes.h"
+
 namespace ttg = mlir::triton::gpu;
 namespace ttng = mlir::triton::nvidia_gpu;
 namespace tlx = mlir::triton::tlx;
@@ -553,6 +556,45 @@ static void addStorageAliasLoweringPass(mlir::PassManager *pm,
 
 static void noopRegister() {}
 
+// --- Ported NVIDIA passes ---
+static void addPruneUnusedBarriersPass(mlir::PassManager *pm,
+                                        const std::vector<std::string> &) {
+  pm->addPass(utlx::createPruneUnusedBarriersPass());
+}
+
+static void registerPruneUnusedBarriersPassFn() {
+  utlx::registerPruneUnusedBarriersPass();
+}
+
+static void addPingPongPrepPass(mlir::PassManager *pm,
+                                 const std::vector<std::string> &) {
+  pm->addPass(utlx::createPingPongPrepPass());
+}
+
+static void registerPingPongPrepPassFn() {
+  utlx::registerPingPongPrepPass();
+}
+
+static void addPingPongSyncPass(mlir::PassManager *pm,
+                                 const std::vector<std::string> &) {
+  pm->addPass(utlx::createPingPongSyncPass());
+}
+
+static void registerPingPongSyncPassFn() {
+  utlx::registerPingPongSyncPass();
+}
+
+// --- Ported AMD passes ---
+// NOTE: AMD barrier passes are disabled until triton-tlx-core-changes patch
+// is applied. Uncomment when patched triton is available:
+// static void addAMDLowerBarrierOpsPass(mlir::PassManager *pm,
+//                                        const std::vector<std::string> &) {
+//   pm->addPass(utlx::createAMDLowerBarrierOpsPass());
+// }
+// static void registerAMDLowerBarrierOpsPassFn() {
+//   utlx::registerAMDLowerBarrierOpsPass();
+// }
+
 // ===========================================================================
 // Dialect registration
 // ===========================================================================
@@ -587,6 +629,16 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
        addPrintTTGIRToTLXPass, noopRegister},
       {"utlx_storage_alias_lowering", "0.1.0",
        addStorageAliasLoweringPass, noopRegister},
+      // Ported NVIDIA passes
+      {"utlx_prune_unused_barriers", "0.1.0",
+       addPruneUnusedBarriersPass, registerPruneUnusedBarriersPassFn},
+      {"utlx_ping_pong_prep", "0.1.0",
+       addPingPongPrepPass, registerPingPongPrepPassFn},
+      {"utlx_ping_pong_sync", "0.1.0",
+       addPingPongSyncPass, registerPingPongSyncPassFn},
+      // Ported AMD passes (disabled until patched triton is available)
+      // {"utlx_amd_lower_barrier_ops", "0.1.0",
+      //  addAMDLowerBarrierOpsPass, registerAMDLowerBarrierOpsPassFn},
   };
 
   static plugin::DialectInfo dialects[] = {
@@ -619,7 +671,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       "uTLXPlugin",
       "0.1.0",
       passes,
-      9,      // numPasses
+      12,     // numPasses
       dialects,
       1,      // numDialects
       ops,

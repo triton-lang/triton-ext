@@ -190,6 +190,15 @@ set(UTLX_PLUGIN_SOURCES
     tlx/dialect/lib/Transforms/BufferOffsetCalculation.cpp
     # Analysis
     tlx/dialect/lib/Analysis/LayoutPropagation.cpp
+    # Ported passes - NVIDIA
+    passes/nvidia/PruneUnusedBarriers.cpp
+    passes/nvidia/PingPong.cpp
+    # Ported passes - AMD
+    # NOTE: AMD barrier passes require patched triton (ReadBarrierPhaseOp,
+    # ArriveBarrierOp with expectedCount). Uncomment when
+    # triton-tlx-core-changes patch is applied:
+    # passes/amd/LowerBarrierOps.cpp
+    # passes/amd/BarrierOpConversion.cpp
 )
 
 add_library(${PROJECT_NAME} SHARED ${UTLX_PLUGIN_SOURCES})
