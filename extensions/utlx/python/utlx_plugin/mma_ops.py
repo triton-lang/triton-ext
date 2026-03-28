@@ -209,8 +209,10 @@ def async_dot_scaled(
 def async_dot_wait(pendings: tl.constexpr, inp: tl.tensor, _semantic=None) -> tl.tensor:
     """Wait for completion of prior asynchronous dot operations."""
     pendings = tl._unwrap_if_constexpr(pendings)
-    # Use gluon: create_warpgroup_mma_wait
-    return tl.tensor(_semantic.builder.create_warpgroup_mma_wait([inp.handle], pendings)[0], inp.type)
+    # Use custom op that handles ReleaseLayoutOp unwrap/rewire
+    result = _semantic.builder.utlx_warp_group_dot_wait(
+        [inp.handle, _semantic.builder.get_int32(pendings)])
+    return tl.tensor(result, inp.type)
 
 
 @tl.builtin

@@ -100,18 +100,50 @@ static void createLocalAllocSmem(TritonOpBuilder &self,
 }
 
 // --- utlx_local_alloc_tmem: TMEM allocation (Blackwell) ---
+// operands[0] = result slot
+// operands[1] = type carrier (element type)
+// operands[2..N-2] = shape dims (full shape including num buffers)
+// operands[N-1] = layout hint (0 = tensor_memory_layout, 1 = dummy_tmem_layout)
 static void createLocalAllocTmem(TritonOpBuilder &self,
                                   std::vector<mlir::Value> &operands) {
-  if (operands.empty())
+  if (operands.size() < 4)
     return;
 
-  auto memDescType =
-      mlir::dyn_cast<ttg::MemDescType>(operands[0].getType());
-  if (!memDescType)
-    return;
+  mlir::Type elemType = operands[1].getType();
 
-  if (!mlir::isa<ttng::TensorMemorySpaceAttr>(memDescType.getMemorySpace()))
+  auto layoutHintVal = extractConstantInt(operands.back());
+  if (!layoutHintVal)
     return;
+  bool useDummyTmemLayout = *layoutHintVal == 1;
+
+  llvm::SmallVector<int64_t> fullShape;
+  for (unsigned i = 2; i < operands.size() - 1; ++i) {
+    auto dimVal = extractConstantInt(operands[i]);
+    if (!dimVal)
+      return;
+    fullShape.push_back(*dimVal);
+  }
+
+  unsigned perBufferRank = fullShape.size() - 1;
+  auto *context = self.getBuilder().getContext();
+
+  mlir::Attribute encoding;
+  if (useDummyTmemLayout) {
+    encoding = tlx::DummyTMEMLayoutAttr::get(context);
+  } else {
+    // TensorMemoryEncodingAttr with blockM=shape[0], blockN=shape[1], colStride=1
+    auto cgaLayout = ttg::CGAEncodingAttr::get1CTALayout(context, perBufferRank);
+    llvm::SmallVector<int64_t> perBufferShape(fullShape.begin() + 1,
+                                              fullShape.end());
+    unsigned blockM = perBufferShape.size() >= 1 ? perBufferShape[0] : 1;
+    unsigned blockN = perBufferShape.size() >= 2 ? perBufferShape[1] : 1;
+    encoding = ttng::TensorMemoryEncodingAttr::get(
+        context, blockM, blockN, /*colStride=*/1, cgaLayout, /*twoCTAs=*/false);
+  }
+
+  auto memorySpace = ttng::TensorMemorySpaceAttr::get(context);
+  auto memDescType = ttg::MemDescType::get(fullShape, elemType, encoding,
+                                           memorySpace, true);
 
   operands[0] = self.create<ttng::TMEMAllocOp>(memDescType, nullptr);
 }
@@ -477,6 +509,45 @@ static void createReleaseLayout(TritonOpBuilder &self,
   operands[0] = self.create<tlx::ReleaseLayoutOp>(newType, operands[1]);
 }
 
+// --- utlx_warp_group_dot_wait: WarpGroupDotWaitOp with ReleaseLayoutOp unwrap ---
+// operands[0] = result slot
+// operands[1] = input value (possibly wrapped in ReleaseLayoutOp)
+// operands[2] = pendings (i32 constant)
+static void createWarpGroupDotWait(TritonOpBuilder &self,
+                                   std::vector<mlir::Value> &operands) {
+  if (operands.size() < 3)
+    return;
+
+  mlir::Value input = operands[1];
+  auto pendingsVal = extractConstantInt(operands[2]);
+  if (!pendingsVal)
+    return;
+
+  // Unwrap ReleaseLayoutOp if present
+  mlir::Value realInput = input;
+  tlx::ReleaseLayoutOp releaseOp = nullptr;
+  if (auto defOp = input.getDefiningOp()) {
+    if (auto release = mlir::dyn_cast<tlx::ReleaseLayoutOp>(defOp)) {
+      releaseOp = release;
+      realInput = release.getSrc();
+    }
+  }
+
+  // Create WarpGroupDotWaitOp with the unwrapped input
+  auto waitOp = self.create<ttng::WarpGroupDotWaitOp>(
+      llvm::SmallVector<mlir::Value>{realInput},
+      static_cast<unsigned>(*pendingsVal));
+
+  if (releaseOp) {
+    // Move ReleaseLayoutOp after the wait and rewire
+    releaseOp->moveAfter(waitOp.getOperation());
+    releaseOp.getOperation()->setOperand(0, waitOp.getResult(0));
+    operands[0] = releaseOp.getResult();
+  } else {
+    operands[0] = waitOp.getResult(0);
+  }
+}
+
 // ===========================================================================
 // Pass registration
 // ===========================================================================
@@ -690,6 +761,8 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       // Thread/cluster ops
       {"utlx_cluster_cta_rank", utlx::createClusterCtaRank},
       {"utlx_thread_id", utlx::createThreadId},
+      // MMA ops
+      {"utlx_warp_group_dot_wait", createWarpGroupDotWait},
   };
 
   static plugin::PluginInfo info = {
@@ -701,7 +774,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       dialects,
       1,      // numDialects
       ops,
-      45,     // numOps
+      46,     // numOps
   };
   return &info;
 }

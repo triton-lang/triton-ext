@@ -120,10 +120,15 @@ def local_alloc(
             _semantic, reuse, dtype, full_shape, unwrapped_shape, unwrapped_num, storage
         )
 
+    # If reuse is a buffered_tensor, use local_alias (share memory with existing buffer)
+    if reuse is not None and isinstance(reuse, tlx.buffered_tensor):
+        return _local_alloc_with_alias(
+            _semantic, reuse, dtype, full_shape, unwrapped_shape, unwrapped_num, storage
+        )
+
     if storage == tlx.storage_kind.tmem:
-        raise NotImplementedError(
-            "uTLX plugin tmem local_alloc without storage_alias_spec "
-            "requires the full dialect plugin. Use storage_alias_spec for tmem."
+        return _local_alloc_tmem(
+            _semantic, dtype, full_shape, unwrapped_shape, unwrapped_num
         )
 
     type_carrier = _make_type_carrier(_semantic.builder, dtype)
@@ -158,6 +163,63 @@ def _local_alloc_with_storage_alias(semantic, spec, dtype, full_shape,
 
     args = [spec.handle, type_carrier] + shape_values + [storage_hint]
     tensor_handle = semantic.builder.utlx_storage_alias_local_alloc(args)
+
+    if is_tmem:
+        py_layout = tlx.tensor_memory_layout_encoding.make_default(unwrapped_shape)
+    elif len(unwrapped_shape) == 1 or _detect_amd(semantic.builder):
+        py_layout = tlx.swizzled_shared_layout_encoding.make_default(
+            rank=len(unwrapped_shape)
+        )
+    else:
+        py_layout = tlx.nv_mma_shared_layout_encoding.make_default(
+            unwrapped_shape, dtype
+        )
+
+    return tlx.buffered_tensor(
+        tensor_handle, dtype, unwrapped_shape, unwrapped_num, storage, py_layout
+    )
+
+
+def _local_alloc_tmem(semantic, dtype, full_shape, unwrapped_shape, unwrapped_num):
+    """Allocate standalone TMEM (without storage_alias_spec)."""
+    type_carrier = _make_type_carrier(semantic.builder, dtype)
+    shape_values = [semantic.builder.get_int32(int(dim)) for dim in full_shape]
+
+    # Use DummyTMEMLayoutEncoding for sub-16-bit types (int8/uint8 for scales)
+    use_dummy = dtype.primitive_bitwidth < 16
+    if use_dummy and dtype not in (tl.uint8, tl.int8):
+        raise NotImplementedError(f"TMEM layouts not supported for {dtype} yet")
+    layout_hint = semantic.builder.get_int32(1 if use_dummy else 0)
+
+    args = [type_carrier] + shape_values + [layout_hint]
+    tensor_handle = semantic.builder.utlx_local_alloc_tmem(args)
+
+    if use_dummy:
+        py_layout = tlx.DummyTMEMLayoutEncoding()
+    else:
+        py_layout = tlx.tensor_memory_layout_encoding.make_default(unwrapped_shape)
+
+    return tlx.buffered_tensor(
+        tensor_handle, dtype, unwrapped_shape, unwrapped_num,
+        storage_kind.tmem, py_layout
+    )
+
+
+def _local_alloc_with_alias(semantic, reuse_tensor, dtype, full_shape,
+                             unwrapped_shape, unwrapped_num, storage):
+    """Allocate via utlx_local_alias (share memory with existing buffered_tensor)."""
+    if reuse_tensor.type.storage != storage:
+        raise ValueError(
+            f"reuse tensor has storage {reuse_tensor.type.storage} but "
+            f"allocation requests {storage}"
+        )
+    type_carrier = _make_type_carrier(semantic.builder, dtype)
+    shape_values = [semantic.builder.get_int32(int(dim)) for dim in full_shape]
+    is_tmem = storage == storage_kind.tmem
+    storage_hint = semantic.builder.get_int32(1 if is_tmem else 0)
+
+    args = [reuse_tensor.handle, type_carrier] + shape_values + [storage_hint]
+    tensor_handle = semantic.builder.utlx_local_alias(args)
 
     if is_tmem:
         py_layout = tlx.tensor_memory_layout_encoding.make_default(unwrapped_shape)
