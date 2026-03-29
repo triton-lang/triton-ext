@@ -21,17 +21,26 @@ class async_task:
             if isinstance(args[0], core.constexpr) and args[0] == "default":
                 self.is_explict = True
                 self.is_default = True
-                self.num_regs = core._unwrap_if_constexpr(kwargs.get("num_regs", kwargs.get("registers", None)))
-                self.replicate = core._unwrap_if_constexpr(kwargs.get("replicate", 1))
-                self.warp_group_start_id = core._unwrap_if_constexpr(kwargs.get("warp_group_start_id", None))
+                self.num_regs = core._unwrap_if_constexpr(
+                    kwargs.get("num_regs", kwargs.get("registers", None)))
+                self.replicate = core._unwrap_if_constexpr(
+                    kwargs.get("replicate", 1))
+                self.warp_group_start_id = core._unwrap_if_constexpr(
+                    kwargs.get("warp_group_start_id", None))
             else:
-                self.task_ids = list({core._unwrap_if_constexpr(tid) for tid in args[0]})
+                self.task_ids = list(
+                    {core._unwrap_if_constexpr(tid)
+                     for tid in args[0]})
         else:
             self.is_explict = True
-            self.num_warps = core._unwrap_if_constexpr(kwargs.get("num_warps", None))
-            self.num_regs = core._unwrap_if_constexpr(kwargs.get("num_regs", kwargs.get("registers", None)))
-            self.replicate = core._unwrap_if_constexpr(kwargs.get("replicate", 1))
-            self.warp_group_start_id = core._unwrap_if_constexpr(kwargs.get("warp_group_start_id", None))
+            self.num_warps = core._unwrap_if_constexpr(
+                kwargs.get("num_warps", None))
+            self.num_regs = core._unwrap_if_constexpr(
+                kwargs.get("num_regs", kwargs.get("registers", None)))
+            self.replicate = core._unwrap_if_constexpr(
+                kwargs.get("replicate", 1))
+            self.warp_group_start_id = core._unwrap_if_constexpr(
+                kwargs.get("warp_group_start_id", None))
 
     def __enter__(self):
         return self

@@ -46,17 +46,29 @@ def create_benchmark(versions):
             line_names=line_names,
             ylabel="TFLOPS",
             plot_name="flash-attention-performance-fp16",
-            args={"BATCH": 4, "H": 32, "HEAD_DIM": 128, "causal": True},
+            args={
+                "BATCH": 4,
+                "H": 32,
+                "HEAD_DIM": 128,
+                "causal": True
+            },
         ))
     def benchmark(BATCH, H, N_CTX, HEAD_DIM, causal, provider):
-        q = torch.randn((BATCH, H, N_CTX, HEAD_DIM), device=DEVICE, dtype=torch.float16).requires_grad_()
-        k = torch.randn((BATCH, H, N_CTX, HEAD_DIM), device=DEVICE, dtype=torch.float16).requires_grad_()
-        v = torch.randn((BATCH, H, N_CTX, HEAD_DIM), device=DEVICE, dtype=torch.float16).requires_grad_()
+        q = torch.randn((BATCH, H, N_CTX, HEAD_DIM),
+                        device=DEVICE,
+                        dtype=torch.float16).requires_grad_()
+        k = torch.randn((BATCH, H, N_CTX, HEAD_DIM),
+                        device=DEVICE,
+                        dtype=torch.float16).requires_grad_()
+        v = torch.randn((BATCH, H, N_CTX, HEAD_DIM),
+                        device=DEVICE,
+                        dtype=torch.float16).requires_grad_()
         sm_scale = 1.3
         quantiles = [0.5, 0.2, 0.8]
         if provider == ref_lib.lower():
             ms, min_ms, max_ms = triton.testing.do_bench(
-                lambda: torch.nn.functional.scaled_dot_product_attention(q, k, v, scale=sm_scale, is_causal=causal),
+                lambda: torch.nn.functional.scaled_dot_product_attention(
+                    q, k, v, scale=sm_scale, is_causal=causal),
                 quantiles=quantiles,
                 warmup=500,
                 rep=500,
@@ -85,18 +97,21 @@ def create_benchmark(versions):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Benchmark TLX Blackwell Flash Attention implementations")
+    parser = argparse.ArgumentParser(
+        description="Benchmark TLX Blackwell Flash Attention implementations")
     parser.add_argument(
         "--version",
         type=str,
         nargs="+",
         choices=list(ATTENTION_METHODS.keys()),
-        help=f"Run only the specified version(s). Choices: {list(ATTENTION_METHODS.keys())}",
+        help=
+        f"Run only the specified version(s). Choices: {list(ATTENTION_METHODS.keys())}",
     )
     args = parser.parse_args()
 
     if is_blackwell():
-        versions = args.version if args.version else list(ATTENTION_METHODS.keys())
+        versions = args.version if args.version else list(
+            ATTENTION_METHODS.keys())
         print(f"Running benchmarks for: {versions}")
         benchmark = create_benchmark(versions)
         benchmark.run(print_data=True)

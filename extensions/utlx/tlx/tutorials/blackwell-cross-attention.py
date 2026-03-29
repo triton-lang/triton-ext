@@ -128,7 +128,8 @@ def get_fwd_pipeline_configs() -> List[triton.Config]:
 
 
 @triton.jit
-def forward_valid_mask(offs_m, offs_n, uih_len_q, seq_len_q, seq_len_kv, HAS_CAUSAL: tl.constexpr):
+def forward_valid_mask(offs_m, offs_n, uih_len_q, seq_len_q, seq_len_kv,
+                       HAS_CAUSAL: tl.constexpr):
     valid_mask = (offs_m[:, None] < seq_len_q) & (offs_n[None, :] < seq_len_kv)
     if HAS_CAUSAL:
         offs_m = offs_m + seq_len_kv - uih_len_q
@@ -199,13 +200,11 @@ def get_fwd_triton_single() -> List[triton.Config]:
             num_stages=1,
             num_warps=nw,
             pre_hook=_host_descriptor_pre_hook,
-        )
-        for bm in [128]  # 32, 64, 128]
+        ) for bm in [128]  # 32, 64, 128]
         for bn in [64]  # 32, 64, 128]
         for nw in [4]  # 2, 4, 8]
         for ns in [2]  # 2
-        for off in [False]
-        for mask in [True]  # True]
+        for off in [False] for mask in [True]  # True]
         for tma in [False]  # False]
         for trans in [True]  # True]
     ]
@@ -228,13 +227,8 @@ def get_fwd_triton_configs() -> List[triton.Config]:
             num_stages=1,
             num_warps=nw,
             pre_hook=_host_descriptor_pre_hook,
-        )
-        for bm in [32, 64, 128]
-        for bn in [32, 64, 128]
-        for nw in [2, 4]
-        for ns in [2, 4]
-        for off in [False]
-        for mask in [True]
+        ) for bm in [32, 64, 128] for bn in [32, 64, 128] for nw in [2, 4]
+        for ns in [2, 4] for off in [False] for mask in [True]
         for tma_trans in [(True, False), (False, True), (False, False)]
         # trans doesn't work with TMA
     ]
@@ -242,7 +236,8 @@ def get_fwd_triton_configs() -> List[triton.Config]:
 
 
 @triton.jit
-def forward_valid_mask_trans(offs_m, offs_n, uih_len_q, seq_len_q, seq_len_kv, HAS_CAUSAL: tl.constexpr):
+def forward_valid_mask_trans(offs_m, offs_n, uih_len_q, seq_len_q, seq_len_kv,
+                             HAS_CAUSAL: tl.constexpr):
     valid_mask = (offs_m[None, :] < seq_len_q) & (offs_n[:, None] < seq_len_kv)
     return valid_mask
 
@@ -281,7 +276,8 @@ def _attn_fwd_triton_inner(
     TMA_STORE: tl.constexpr,
     NUM_STAGES: tl.constexpr,
     WITH_MASK: tl.constexpr,
-    WITH_ACT: tl.constexpr,  # when this is false, WITH_MASK should be false too
+    WITH_ACT: tl.
+    constexpr,  # when this is false, WITH_MASK should be false too
     WITH_STORE: tl.constexpr,
 ):
     # initialize offsets
@@ -296,8 +292,10 @@ def _attn_fwd_triton_inner(
             acc = tl.zeros([BLOCK_M, BLOCK_D_V], dtype=tl.float32)
         for start_n in tl.range(0, seq_len_kv, BLOCK_N, num_stages=NUM_STAGES):
             start_n = tl.multiple_of(start_n, BLOCK_N)
-            k = desc_k.load([(seq_start_kv + start_n).to(tl.int32), off_h * stride_kh])
-            v = desc_v.load([(seq_start_kv + start_n).to(tl.int32), off_h * stride_vh])
+            k = desc_k.load([(seq_start_kv + start_n).to(tl.int32),
+                             off_h * stride_kh])
+            v = desc_v.load([(seq_start_kv + start_n).to(tl.int32),
+                             off_h * stride_vh])
 
             if WITH_MASK:
                 if REMAT_OFF:
@@ -397,14 +395,16 @@ def _attn_fwd_triton_inner(
                     off_o = Out + seq_start_q * stride_om + off_h * stride_oh
                     offs_m = start_m + tl.arange(0, BLOCK_M)
                     offs_v_d = tl.arange(0, BLOCK_D_V)
-                    out_ptrs = off_o + offs_m[None, :] * stride_om + offs_v_d[:, None]
+                    out_ptrs = off_o + offs_m[
+                        None, :] * stride_om + offs_v_d[:, None]
                     acc = acc.to(Out.dtype.element_ty)
                     tl.store(out_ptrs, acc, mask=(offs_m < seq_len_q)[None, :])
                 else:
                     off_o = Out + seq_start_q * stride_om + off_h * stride_oh
                     offs_m = start_m + tl.arange(0, BLOCK_M)
                     offs_v_d = tl.arange(0, BLOCK_D_V)
-                    out_ptrs = off_o + offs_m[:, None] * stride_om + offs_v_d[None, :]
+                    out_ptrs = off_o + offs_m[:, None] * stride_om + offs_v_d[
+                        None, :]
                     acc = acc.to(Out.dtype.element_ty)
                     tl.store(out_ptrs, acc, mask=(offs_m < seq_len_q)[:, None])
 
@@ -420,10 +420,12 @@ def keep(conf):
     BLOCK_M = conf.kwargs["BLOCK_M"]
     BLOCK_N = conf.kwargs["BLOCK_N"]
     TRANS = conf.kwargs["TRANS"]
-    return not (BLOCK_M >= 32 and BLOCK_N == 32 and TRANS and conf.num_warps >= 4)
+    return not (BLOCK_M >= 32 and BLOCK_N == 32 and TRANS
+                and conf.num_warps >= 4)
 
 
-@triton.autotune(configs=list(filter(keep, fwd_triton_configs_sel)), key=["Z", "HEAD_DIM", "AUTOTUNE_MAX_Q_LEN"])
+@triton.autotune(configs=list(filter(keep, fwd_triton_configs_sel)),
+                 key=["Z", "HEAD_DIM", "AUTOTUNE_MAX_Q_LEN"])
 @triton.jit
 def _attn_fwd_triton(
     alpha,
@@ -536,16 +538,9 @@ def get_fwd_triton_spec_configs() -> List[triton.Config]:
             num_stages=1,
             num_warps=nw,
             pre_hook=_host_descriptor_pre_hook_spec,
-        )
-        for bm in [64, 128]
-        for bn in [64, 128]
-        for bm1 in [32, 64]
-        for bn1 in [32, 64]
-        for nw in [2, 4]
-        for ns in [2, 4]
-        for ns1 in [2, 4]
-        for off in [False]
-        for mask in [True]
+        ) for bm in [64, 128] for bn in [64, 128] for bm1 in [32, 64]
+        for bn1 in [32, 64] for nw in [2, 4] for ns in [2, 4]
+        for ns1 in [2, 4] for off in [False] for mask in [True]
         for tma_trans in [(True, False), (False, True), (False, False)]
     ]
     return configs
@@ -562,7 +557,8 @@ def keep_spec(conf):
     BLOCK_N = conf.kwargs["BLOCK_N"]
     BLOCK_N1 = conf.kwargs["BLOCK_N1"]
     TRANS = conf.kwargs["TRANS"]
-    return not ((BLOCK_N1 == 32 or BLOCK_N == 32) and TRANS and conf.num_warps >= 4)
+    return not ((BLOCK_N1 == 32 or BLOCK_N == 32) and TRANS
+                and conf.num_warps >= 4)
 
 
 @triton.autotune(configs=list(filter(keep_spec, fwd_triton_spec_configs_sel)),
@@ -759,22 +755,40 @@ def get_fwd_configs() -> List[triton.Config]:
     return configs
 
 
-@triton.autotune(configs=get_fwd_configs(), key=["Z", "HEAD_DIM", "AUTOTUNE_MAX_Q_LEN"])
+@triton.autotune(configs=get_fwd_configs(),
+                 key=["Z", "HEAD_DIM", "AUTOTUNE_MAX_Q_LEN"])
 @triton.jit
-def _attn_fwd_single_q(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, seq_offsets, max_seq_len, stride_qh,
-                       stride_kh, stride_vh, stride_om, stride_oh, AUTOTUNE_MAX_Q_LEN: tl.constexpr,
-                       HEAD_DIM: tl.constexpr,  #
-                       BLOCK_D_V: tl.constexpr, BLOCK_M: tl.constexpr,  #
-                       BLOCK_N: tl.constexpr,  #
-                       NUM_BUFFERS_KV: tl.constexpr,  #
-                       NUM_MMA_GROUPS: tl.constexpr,  #
-                       ):
+def _attn_fwd_single_q(
+        alpha,
+        Z,
+        H,
+        desc_q,
+        desc_k,
+        desc_v,
+        Out,
+        seq_offsets_q,
+        seq_offsets,
+        max_seq_len,
+        stride_qh,
+        stride_kh,
+        stride_vh,
+        stride_om,
+        stride_oh,
+        AUTOTUNE_MAX_Q_LEN: tl.constexpr,
+        HEAD_DIM: tl.constexpr,  #
+        BLOCK_D_V: tl.constexpr,
+        BLOCK_M: tl.constexpr,  #
+        BLOCK_N: tl.constexpr,  #
+        NUM_BUFFERS_KV: tl.constexpr,  #
+        NUM_MMA_GROUPS: tl.constexpr,  #
+):
     """
     Single Q, multiple K/V pipeline
     """
     # allocate SMEM buffers and barriers
     q_tiles = tlx.local_alloc((BLOCK_M, HEAD_DIM), tlx.dtype_of(desc_q), 1)
-    kv_tiles = tlx.local_alloc((BLOCK_N, HEAD_DIM), tlx.dtype_of(desc_k), NUM_BUFFERS_KV)
+    kv_tiles = tlx.local_alloc((BLOCK_N, HEAD_DIM), tlx.dtype_of(desc_k),
+                               NUM_BUFFERS_KV)
 
     q_fulls = tlx.alloc_barriers(num_barriers=1)
     kv_fulls = tlx.alloc_barriers(num_barriers=NUM_BUFFERS_KV)
@@ -821,21 +835,25 @@ def _attn_fwd_single_q(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                 off_o = Out + seq_start_q * stride_om + off_h * stride_oh
                 offs_m = start_m + tl.arange(0, BLOCK_M)
                 offs_v_d = tl.arange(0, BLOCK_D_V)
-                out_ptrs = off_o + offs_m[:, None] * stride_om + offs_v_d[None, :]
+                out_ptrs = off_o + offs_m[:,
+                                          None] * stride_om + offs_v_d[None, :]
                 acc = tlx.local_load(acc_tiles[0])
                 # TODO: using 1/ max_seq_len as attn_scale for now, need to fix later
                 acc = acc / max_seq_len
                 acc = acc.to(tlx.dtype_of(desc_v))
                 tl.store(out_ptrs, acc, mask=(offs_m < seq_len_q)[:, None])
         # silu groups
-        with tlx.async_task(num_warps=4, registers=152, replicate=NUM_MMA_GROUPS):
+        with tlx.async_task(num_warps=4,
+                            registers=152,
+                            replicate=NUM_MMA_GROUPS):
             # initialize offsets
             start_m, off_h, _, seq_len_kv, seq_start_q, seq_len_q = _compute_offsets(
                 H, BLOCK_M, seq_offsets_q, seq_offsets)
             if start_m < seq_len_q:
                 phase = 0
                 cid = tlx.async_task_replica_id()
-                for start_n in tl.range(cid * BLOCK_N, seq_len_kv, BLOCK_N * NUM_MMA_GROUPS):
+                for start_n in tl.range(cid * BLOCK_N, seq_len_kv,
+                                        BLOCK_N * NUM_MMA_GROUPS):
                     tlx.barrier_wait(qk_fulls[cid], phase)
                     qk = tlx.local_load(qk_tiles[cid])
 
@@ -885,7 +903,8 @@ def _attn_fwd_single_q(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                     kv_cnt += 1
                     # -- compute q @ k(i) ----
                     # wait for the K buffer to be populated by the producer
-                    k_buff_id, phase = _get_bufidx_phase(kv_cnt, NUM_BUFFERS_KV)
+                    k_buff_id, phase = _get_bufidx_phase(
+                        kv_cnt, NUM_BUFFERS_KV)
                     tlx.barrier_wait(kv_fulls[k_buff_id], phase)
                     k_tile = tlx.local_trans(kv_tiles[k_buff_id])
                     qk_id_prev = qk_id
@@ -940,7 +959,8 @@ def _attn_fwd_single_q(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                 H, BLOCK_M, seq_offsets_q, seq_offsets)
             if start_m < seq_len_q:
                 # load q: it will stay in SRAM throughout
-                tlx.barrier_expect_bytes(q_fulls[0], 2 * BLOCK_M * HEAD_DIM)  # float16
+                tlx.barrier_expect_bytes(q_fulls[0],
+                                         2 * BLOCK_M * HEAD_DIM)  # float16
                 qo_offset_y_split = seq_start_q + start_m
                 tlx.async_descriptor_load(
                     desc_q,
@@ -952,7 +972,8 @@ def _attn_fwd_single_q(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                 accum_cnt = 0
                 k_buff_id, phase = _get_bufidx_phase(accum_cnt, NUM_BUFFERS_KV)
                 k_tile = tlx.local_view(kv_tiles, k_buff_id)
-                tlx.barrier_expect_bytes(kv_fulls[k_buff_id], 2 * BLOCK_N * HEAD_DIM)
+                tlx.barrier_expect_bytes(kv_fulls[k_buff_id],
+                                         2 * BLOCK_N * HEAD_DIM)
                 tlx.async_descriptor_load(
                     desc_k,
                     k_tile,
@@ -962,11 +983,13 @@ def _attn_fwd_single_q(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                 for _ in tl.range(BLOCK_N, seq_len_kv, BLOCK_N):
                     accum_cnt += 1
                     seq_start_kv += BLOCK_N
-                    k_buff_id, phase = _get_bufidx_phase(accum_cnt, NUM_BUFFERS_KV)
+                    k_buff_id, phase = _get_bufidx_phase(
+                        accum_cnt, NUM_BUFFERS_KV)
                     tlx.barrier_wait(kv_empties[k_buff_id], phase ^ 1)
                     # load k(i)
                     k_tile = tlx.local_view(kv_tiles, k_buff_id)
-                    tlx.barrier_expect_bytes(kv_fulls[k_buff_id], 2 * BLOCK_N * HEAD_DIM)
+                    tlx.barrier_expect_bytes(kv_fulls[k_buff_id],
+                                             2 * BLOCK_N * HEAD_DIM)
                     tlx.async_descriptor_load(
                         desc_k,
                         k_tile,
@@ -975,16 +998,19 @@ def _attn_fwd_single_q(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                     )
                     # load v(i - 1)
                     accum_cnt += 1
-                    v_buf_id, phase = _get_bufidx_phase(accum_cnt, NUM_BUFFERS_KV)
+                    v_buf_id, phase = _get_bufidx_phase(
+                        accum_cnt, NUM_BUFFERS_KV)
                     tlx.barrier_wait(kv_empties[v_buf_id], phase ^ 1)
                     # load V
                     v_full = tlx.local_view(kv_fulls, v_buf_id)
                     v_tile = tlx.local_view(kv_tiles, v_buf_id)
-                    tlx.barrier_expect_bytes(v_full, 2 * BLOCK_N * BLOCK_D_V)  # float16
+                    tlx.barrier_expect_bytes(v_full, 2 * BLOCK_N *
+                                             BLOCK_D_V)  # float16
                     tlx.async_descriptor_load(
                         desc_v,
                         v_tile,
-                        [(seq_start_kv - BLOCK_N).to(tl.int32), off_h * stride_vh],
+                        [(seq_start_kv - BLOCK_N).to(tl.int32),
+                         off_h * stride_vh],
                         v_full,
                     )
                 # load last V
@@ -993,7 +1019,8 @@ def _attn_fwd_single_q(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                 tlx.barrier_wait(kv_empties[v_buf_id], phase ^ 1)
                 v_full = tlx.local_view(kv_fulls, v_buf_id)
                 v_tile = tlx.local_view(kv_tiles, v_buf_id)
-                tlx.barrier_expect_bytes(v_full, 2 * BLOCK_N * BLOCK_D_V)  # float16
+                tlx.barrier_expect_bytes(v_full,
+                                         2 * BLOCK_N * BLOCK_D_V)  # float16
                 tlx.async_descriptor_load(
                     desc_v,
                     v_tile,
@@ -1002,22 +1029,42 @@ def _attn_fwd_single_q(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                 )
 
 
-@triton.autotune(configs=get_fwd_pipeline_configs(), key=["Z", "HEAD_DIM", "AUTOTUNE_MAX_Q_LEN"])
+@triton.autotune(configs=get_fwd_pipeline_configs(),
+                 key=["Z", "HEAD_DIM", "AUTOTUNE_MAX_Q_LEN"])
 @triton.jit
-def _attn_fwd_pipeline(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, seq_offsets, max_seq_len, stride_qh,
-                       stride_kh, stride_vh, stride_om, stride_oh, AUTOTUNE_MAX_Q_LEN: tl.constexpr,
-                       HEAD_DIM: tl.constexpr,  #
-                       BLOCK_D_V: tl.constexpr, BLOCK_M: tl.constexpr,  #
-                       BLOCK_N: tl.constexpr,  #
-                       NUM_MMA_GROUPS: tl.constexpr,  #
-                       NUM_BUFFERS_KV: tl.constexpr,  #
-                       ):
+def _attn_fwd_pipeline(
+        alpha,
+        Z,
+        H,
+        desc_q,
+        desc_k,
+        desc_v,
+        Out,
+        seq_offsets_q,
+        seq_offsets,
+        max_seq_len,
+        stride_qh,
+        stride_kh,
+        stride_vh,
+        stride_om,
+        stride_oh,
+        AUTOTUNE_MAX_Q_LEN: tl.constexpr,
+        HEAD_DIM: tl.constexpr,  #
+        BLOCK_D_V: tl.constexpr,
+        BLOCK_M: tl.constexpr,  #
+        BLOCK_N: tl.constexpr,  #
+        NUM_MMA_GROUPS: tl.constexpr,  #
+        NUM_BUFFERS_KV: tl.constexpr,  #
+):
     BLOCK_M_SPLIT: tl.constexpr = BLOCK_M // NUM_MMA_GROUPS
 
     # allocate SMEM buffers and barriers
-    q_tiles = tlx.local_alloc((BLOCK_M_SPLIT, HEAD_DIM), tlx.dtype_of(desc_q), NUM_MMA_GROUPS)
-    k_tiles = tlx.local_alloc((BLOCK_N, HEAD_DIM), tlx.dtype_of(desc_k), NUM_BUFFERS_KV)
-    v_tiles = tlx.local_alloc((BLOCK_N, BLOCK_D_V), tlx.dtype_of(desc_v), NUM_BUFFERS_KV)
+    q_tiles = tlx.local_alloc((BLOCK_M_SPLIT, HEAD_DIM), tlx.dtype_of(desc_q),
+                              NUM_MMA_GROUPS)
+    k_tiles = tlx.local_alloc((BLOCK_N, HEAD_DIM), tlx.dtype_of(desc_k),
+                              NUM_BUFFERS_KV)
+    v_tiles = tlx.local_alloc((BLOCK_N, BLOCK_D_V), tlx.dtype_of(desc_v),
+                              NUM_BUFFERS_KV)
 
     q_fulls = tlx.alloc_barriers(num_barriers=NUM_MMA_GROUPS)
     k_fulls = tlx.alloc_barriers(num_barriers=NUM_BUFFERS_KV)
@@ -1062,19 +1109,25 @@ def _attn_fwd_pipeline(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
             start_m, off_h, kv_offset_y, seq_len_kv, seq_start_q, seq_len_q = _compute_offsets(
                 H, BLOCK_M, seq_offsets_q, seq_offsets)
             if start_m < seq_len_q:
-                for cid in tl.range(0, NUM_MMA_GROUPS, loop_unroll_factor=NUM_MMA_GROUPS):
+                for cid in tl.range(0,
+                                    NUM_MMA_GROUPS,
+                                    loop_unroll_factor=NUM_MMA_GROUPS):
                     tlx.barrier_wait(acc_empties[cid], 0)
                     # epilogue
                     off_o = Out + seq_start_q * stride_om + off_h * stride_oh
-                    offs_m = start_m + cid * BLOCK_M_SPLIT + tl.arange(0, BLOCK_M_SPLIT)
+                    offs_m = start_m + cid * BLOCK_M_SPLIT + tl.arange(
+                        0, BLOCK_M_SPLIT)
                     offs_v_d = tl.arange(0, BLOCK_D_V)
-                    out_ptrs = off_o + offs_m[:, None] * stride_om + offs_v_d[None, :]
+                    out_ptrs = off_o + offs_m[:, None] * stride_om + offs_v_d[
+                        None, :]
                     acc = tlx.local_load(acc_tiles[cid])
                     acc = acc / max_seq_len
                     acc = acc.to(tlx.dtype_of(desc_v))
                     tl.store(out_ptrs, acc, mask=(offs_m < seq_len_q)[:, None])
         # silu groups
-        with tlx.async_task(num_warps=4, registers=152, replicate=NUM_MMA_GROUPS):
+        with tlx.async_task(num_warps=4,
+                            registers=152,
+                            replicate=NUM_MMA_GROUPS):
             # initialize offsets
             start_m, off_h, kv_offset_y, seq_len_kv, seq_start_q, seq_len_q = _compute_offsets(
                 H, BLOCK_M, seq_offsets_q, seq_offsets)
@@ -1085,7 +1138,8 @@ def _attn_fwd_pipeline(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                     tlx.barrier_wait(qk_fulls[cid], accum_cnt_qk & 1)
                     qk = tlx.local_load(qk_tiles[cid])
 
-                    offs_m = start_m + cid * BLOCK_M_SPLIT + tl.arange(0, BLOCK_M_SPLIT)
+                    offs_m = start_m + cid * BLOCK_M_SPLIT + tl.arange(
+                        0, BLOCK_M_SPLIT)
                     offs_n = start_n + tl.arange(0, BLOCK_N)
                     valid_mask = forward_valid_mask(
                         offs_m,
@@ -1111,7 +1165,8 @@ def _attn_fwd_pipeline(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                 # compute q0 @ k
                 # wait for the Q buffer to be populated by the producer
                 accum_cnt_kv = 0
-                kv_buf_id, kv_phase = _get_bufidx_phase(accum_cnt_kv, NUM_BUFFERS_KV)
+                kv_buf_id, kv_phase = _get_bufidx_phase(
+                    accum_cnt_kv, NUM_BUFFERS_KV)
                 tlx.barrier_wait(q_fulls[0], 0)
                 tlx.barrier_wait(k_fulls[kv_buf_id], kv_phase)
                 k_tile = tlx.local_trans(k_tiles[kv_buf_id])
@@ -1150,7 +1205,8 @@ def _attn_fwd_pipeline(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                     # -- compute q0 @ k ----
                     # wait for the K buffer to be populated by the producer
                     kv_buf_id_prev = kv_buf_id
-                    kv_buf_id, kv_phase = _get_bufidx_phase(accum_cnt_kv, NUM_BUFFERS_KV)
+                    kv_buf_id, kv_phase = _get_bufidx_phase(
+                        accum_cnt_kv, NUM_BUFFERS_KV)
                     tlx.barrier_wait(k_fulls[kv_buf_id], kv_phase)
                     k_tile = tlx.local_trans(k_tiles[kv_buf_id])
                     tlx.async_dot(
@@ -1209,7 +1265,8 @@ def _attn_fwd_pipeline(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
             if start_m < seq_len_q:
                 # load q: it will stay in SRAM throughout
                 # load Q0
-                tlx.barrier_expect_bytes(q_fulls[0], 2 * BLOCK_M_SPLIT * HEAD_DIM)  # float16
+                tlx.barrier_expect_bytes(q_fulls[0], 2 * BLOCK_M_SPLIT *
+                                         HEAD_DIM)  # float16
                 q_offset_split = seq_start_q + start_m
                 tlx.async_descriptor_load(
                     desc_q,
@@ -1219,10 +1276,12 @@ def _attn_fwd_pipeline(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                 )
                 # load K
                 accum_cnt_kv = 0
-                k_buff_id, k_phase = _get_bufidx_phase(accum_cnt_kv, NUM_BUFFERS_KV)
+                k_buff_id, k_phase = _get_bufidx_phase(accum_cnt_kv,
+                                                       NUM_BUFFERS_KV)
                 k_full = tlx.local_view(k_fulls, k_buff_id)
                 k_tile = tlx.local_view(k_tiles, k_buff_id)
-                tlx.barrier_expect_bytes(k_full, 2 * BLOCK_N * HEAD_DIM)  # float16
+                tlx.barrier_expect_bytes(k_full,
+                                         2 * BLOCK_N * HEAD_DIM)  # float16
                 tlx.async_descriptor_load(
                     desc_k,
                     k_tile,
@@ -1230,7 +1289,8 @@ def _attn_fwd_pipeline(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                     k_full,
                 )
                 # load Q1
-                tlx.barrier_expect_bytes(q_fulls[1], 2 * BLOCK_M_SPLIT * HEAD_DIM)  # float16
+                tlx.barrier_expect_bytes(q_fulls[1], 2 * BLOCK_M_SPLIT *
+                                         HEAD_DIM)  # float16
                 q_offset_split = seq_start_q + start_m + BLOCK_M_SPLIT
                 tlx.async_descriptor_load(
                     desc_q,
@@ -1240,10 +1300,12 @@ def _attn_fwd_pipeline(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                 )
 
                 # load V
-                v_buf_id, v_phase = _get_bufidx_phase(accum_cnt_kv, NUM_BUFFERS_KV)
+                v_buf_id, v_phase = _get_bufidx_phase(accum_cnt_kv,
+                                                      NUM_BUFFERS_KV)
                 v_full = tlx.local_view(v_fulls, v_buf_id)
                 v_tile = tlx.local_view(v_tiles, v_buf_id)
-                tlx.barrier_expect_bytes(v_full, 2 * BLOCK_N * BLOCK_D_V)  # float16
+                tlx.barrier_expect_bytes(v_full,
+                                         2 * BLOCK_N * BLOCK_D_V)  # float16
                 tlx.async_descriptor_load(
                     desc_v,
                     v_tile,
@@ -1256,13 +1318,15 @@ def _attn_fwd_pipeline(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                 for _ in tl.range(BLOCK_N, seq_len_kv, BLOCK_N):
                     seq_start_kv += BLOCK_N
                     # wait for the K buffer to be released by the consumer
-                    kv_buf_id, kv_phase = _get_bufidx_phase(accum_cnt_kv, NUM_BUFFERS_KV)
+                    kv_buf_id, kv_phase = _get_bufidx_phase(
+                        accum_cnt_kv, NUM_BUFFERS_KV)
                     k_empty = tlx.local_view(k_empties, kv_buf_id)
                     tlx.barrier_wait(k_empty, kv_phase ^ 1)
                     # load K
                     k_full = tlx.local_view(k_fulls, kv_buf_id)
                     k_tile = tlx.local_view(k_tiles, kv_buf_id)
-                    tlx.barrier_expect_bytes(k_full, 2 * BLOCK_N * HEAD_DIM)  # float16
+                    tlx.barrier_expect_bytes(k_full,
+                                             2 * BLOCK_N * HEAD_DIM)  # float16
                     tlx.async_descriptor_load(
                         desc_k,
                         k_tile,
@@ -1276,7 +1340,8 @@ def _attn_fwd_pipeline(alpha, Z, H, desc_q, desc_k, desc_v, Out, seq_offsets_q, 
                     # load V
                     v_full = tlx.local_view(v_fulls, kv_buf_id)
                     v_tile = tlx.local_view(v_tiles, kv_buf_id)
-                    tlx.barrier_expect_bytes(v_full, 2 * BLOCK_N * BLOCK_D_V)  # float16
+                    tlx.barrier_expect_bytes(v_full, 2 * BLOCK_N *
+                                             BLOCK_D_V)  # float16
                     tlx.async_descriptor_load(
                         desc_v,
                         v_tile,
@@ -1475,7 +1540,11 @@ class AttentionFunction(torch.autograd.Function):
         total_seq_len_q, H, DimQ = q.shape
         _, _, DimV = v.shape
         if total_seq_len_q == 0:
-            out = torch.zeros(total_seq_len_q, H, DimV, device=q.device, dtype=q.dtype)
+            out = torch.zeros(total_seq_len_q,
+                              H,
+                              DimV,
+                              device=q.device,
+                              dtype=q.dtype)
             return out
 
         # shape constraints
@@ -1590,7 +1659,8 @@ def generate_sparse_seq_len(
     if sparsity == 0.0:
         return torch.zeros(size=(size, ), device=device, dtype=torch.int)
     elif sparsity == 1.0:
-        return torch.ones(size=(size, ), device=device, dtype=torch.int) * max_seq_len
+        return torch.ones(size=(size, ), device=device,
+                          dtype=torch.int) * max_seq_len
     elif sparsity >= 0.5:
         min_seq_len: int = int((2 * sparsity - 1.0) * max_seq_len)
         return torch.randint(
@@ -1644,8 +1714,12 @@ def test_op(max_uih_len_kv, max_targets):
             device=torch.device("cuda"),
         )
     else:
-        lengths_kv = torch.randint(1, max_uih_len_kv + 1, size=(batch_size, ), device=torch.device("cuda"))
-    uih_lengths_q = torch.where(lengths_kv >= max_uih_len_q, max_uih_len_q, lengths_kv)
+        lengths_kv = torch.randint(1,
+                                   max_uih_len_kv + 1,
+                                   size=(batch_size, ),
+                                   device=torch.device("cuda"))
+    uih_lengths_q = torch.where(lengths_kv >= max_uih_len_q, max_uih_len_q,
+                                lengths_kv)
     num_targets = torch.randint(
         1,
         max_targets + 1,
@@ -1653,16 +1727,22 @@ def test_op(max_uih_len_kv, max_targets):
         device=torch.device("cuda"),
     )
     max_seq_len = max_uih_len_kv + (max_targets if has_targets else 0)
-    seq_offsets = torch.zeros((batch_size + 1, ), dtype=torch.int64, device=torch.device("cuda"))
+    seq_offsets = torch.zeros((batch_size + 1, ),
+                              dtype=torch.int64,
+                              device=torch.device("cuda"))
     seq_offsets[1:] = torch.cumsum(lengths_kv, dim=0)
-    seq_offsets_q = torch.zeros((batch_size + 1, ), dtype=torch.int64, device=torch.device("cuda"))
+    seq_offsets_q = torch.zeros((batch_size + 1, ),
+                                dtype=torch.int64,
+                                device=torch.device("cuda"))
     if has_targets:
         seq_offsets_q[1:] = torch.cumsum(uih_lengths_q + num_targets, dim=0)
     else:
         seq_offsets_q[1:] = torch.cumsum(uih_lengths_q, dim=0)
     total_seq_len_q = int(seq_offsets_q[-1].item())
     total_seq_len_kv = int(seq_offsets[-1].item())
-    q = torch.empty((total_seq_len_q, heads, attn_dim), dtype=dtype, device=torch.device("cuda")).uniform_(-0.1, 0.1)
+    q = torch.empty((total_seq_len_q, heads, attn_dim),
+                    dtype=dtype,
+                    device=torch.device("cuda")).uniform_(-0.1, 0.1)
     k = torch.empty(
         (total_seq_len_kv, heads, attn_dim),
         dtype=dtype,
@@ -1737,13 +1817,9 @@ configs: List[triton.testing.Benchmark] = [
             "max_uih_len_q": max_uih_len_q,
             "max_targets": max_targets,
         },
-    )
-    for mode in modes
-    for max_uih_len_q in [0]
-    for max_targets in [32, 128, 160, 256]
-    for num_softmax_heads in [0]
-    for attn_dim in [128]
-    for hidden_dim in [128]
+    ) for mode in modes for max_uih_len_q in [0]
+    for max_targets in [32, 128, 160, 256] for num_softmax_heads in [0]
+    for attn_dim in [128] for hidden_dim in [128]
 ]
 
 
@@ -1780,8 +1856,12 @@ def bench_cross_attention(
             device=torch.device("cuda"),
         )
     else:
-        lengths_kv = torch.randint(1, max_uih_len_kv + 1, size=(batch_size, ), device=torch.device("cuda"))
-    uih_lengths_q = torch.where(lengths_kv >= max_uih_len_q, max_uih_len_q, lengths_kv)
+        lengths_kv = torch.randint(1,
+                                   max_uih_len_kv + 1,
+                                   size=(batch_size, ),
+                                   device=torch.device("cuda"))
+    uih_lengths_q = torch.where(lengths_kv >= max_uih_len_q, max_uih_len_q,
+                                lengths_kv)
     num_targets = torch.randint(
         1,
         max_targets + 1,
@@ -1789,16 +1869,22 @@ def bench_cross_attention(
         device=torch.device("cuda"),
     )
     max_seq_len = max_uih_len_kv + (max_targets if has_targets else 0)
-    seq_offsets = torch.zeros((batch_size + 1, ), dtype=torch.int64, device=torch.device("cuda"))
+    seq_offsets = torch.zeros((batch_size + 1, ),
+                              dtype=torch.int64,
+                              device=torch.device("cuda"))
     seq_offsets[1:] = torch.cumsum(lengths_kv, dim=0)
-    seq_offsets_q = torch.zeros((batch_size + 1, ), dtype=torch.int64, device=torch.device("cuda"))
+    seq_offsets_q = torch.zeros((batch_size + 1, ),
+                                dtype=torch.int64,
+                                device=torch.device("cuda"))
     if has_targets:
         seq_offsets_q[1:] = torch.cumsum(uih_lengths_q + num_targets, dim=0)
     else:
         seq_offsets_q[1:] = torch.cumsum(uih_lengths_q, dim=0)
     total_seq_len_q = int(seq_offsets_q[-1].item())
     total_seq_len_kv = int(seq_offsets[-1].item())
-    q = torch.empty((total_seq_len_q, heads, attn_dim), dtype=dtype, device=torch.device("cuda")).uniform_(-0.1, 0.1)
+    q = torch.empty((total_seq_len_q, heads, attn_dim),
+                    dtype=dtype,
+                    device=torch.device("cuda")).uniform_(-0.1, 0.1)
     k = torch.empty(
         (total_seq_len_kv, heads, attn_dim),
         dtype=dtype,

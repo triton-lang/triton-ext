@@ -10,7 +10,13 @@ DEVICE = triton.runtime.driver.active.get_active_torch_device()
 def get_cuda_autotune_config():
     return [
         triton.Config(
-            {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 256, 'BLOCK_SIZE_K': 64, 'GROUP_SIZE_M': 8, 'NUM_STAGES': 3},
+            {
+                'BLOCK_SIZE_M': 128,
+                'BLOCK_SIZE_N': 256,
+                'BLOCK_SIZE_K': 64,
+                'GROUP_SIZE_M': 8,
+                'NUM_STAGES': 3
+            },
             num_warps=8),
     ]
 
@@ -18,20 +24,55 @@ def get_cuda_autotune_config():
 def get_hip_autotune_config():
     return [
         triton.Config(
-            {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 256, 'BLOCK_SIZE_K': 16, 'GROUP_SIZE_M': 1, 'waves_per_eu': 2},
-            num_warps=4, num_stages=2),
+            {
+                'BLOCK_SIZE_M': 128,
+                'BLOCK_SIZE_N': 256,
+                'BLOCK_SIZE_K': 16,
+                'GROUP_SIZE_M': 1,
+                'waves_per_eu': 2
+            },
+            num_warps=4,
+            num_stages=2),
         triton.Config(
-            {'BLOCK_SIZE_M': 256, 'BLOCK_SIZE_N': 256, 'BLOCK_SIZE_K': 16, 'GROUP_SIZE_M': 4, 'waves_per_eu': 2},
-            num_warps=8, num_stages=2),
+            {
+                'BLOCK_SIZE_M': 256,
+                'BLOCK_SIZE_N': 256,
+                'BLOCK_SIZE_K': 16,
+                'GROUP_SIZE_M': 4,
+                'waves_per_eu': 2
+            },
+            num_warps=8,
+            num_stages=2),
         triton.Config(
-            {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 1, 'waves_per_eu': 2},
-            num_warps=8, num_stages=2),
+            {
+                'BLOCK_SIZE_M': 128,
+                'BLOCK_SIZE_N': 128,
+                'BLOCK_SIZE_K': 32,
+                'GROUP_SIZE_M': 1,
+                'waves_per_eu': 2
+            },
+            num_warps=8,
+            num_stages=2),
         triton.Config(
-            {'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 8, 'waves_per_eu': 3},
-            num_warps=4, num_stages=2),
+            {
+                'BLOCK_SIZE_M': 64,
+                'BLOCK_SIZE_N': 128,
+                'BLOCK_SIZE_K': 32,
+                'GROUP_SIZE_M': 8,
+                'waves_per_eu': 3
+            },
+            num_warps=4,
+            num_stages=2),
         triton.Config(
-            {'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 64, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 1, 'waves_per_eu': 8},
-            num_warps=4, num_stages=2),
+            {
+                'BLOCK_SIZE_M': 64,
+                'BLOCK_SIZE_N': 64,
+                'BLOCK_SIZE_K': 32,
+                'GROUP_SIZE_M': 1,
+                'waves_per_eu': 8
+            },
+            num_warps=4,
+            num_stages=2),
     ]
 
 
@@ -40,13 +81,25 @@ def get_hip_autotune_config():
     key=['M', 'N', 'K'],
 )
 @triton.jit
-def matmul_kernel_pipelined_hopper(a_ptr, b_ptr, c_ptr, M, N, K, stride_am, stride_ak,  #
-                                   stride_bk, stride_bn,  #
-                                   stride_cm, stride_cn, BLOCK_SIZE_M: tl.constexpr, BLOCK_SIZE_N: tl.constexpr,
-                                   BLOCK_SIZE_K: tl.constexpr,  #
-                                   GROUP_SIZE_M: tl.constexpr,  #
-                                   NUM_STAGES: tl.constexpr  #
-                                   ):
+def matmul_kernel_pipelined_hopper(
+        a_ptr,
+        b_ptr,
+        c_ptr,
+        M,
+        N,
+        K,
+        stride_am,
+        stride_ak,  #
+        stride_bk,
+        stride_bn,  #
+        stride_cm,
+        stride_cn,
+        BLOCK_SIZE_M: tl.constexpr,
+        BLOCK_SIZE_N: tl.constexpr,
+        BLOCK_SIZE_K: tl.constexpr,  #
+        GROUP_SIZE_M: tl.constexpr,  #
+        NUM_STAGES: tl.constexpr  #
+):
     pid = tl.program_id(axis=0)
     num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
     num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
@@ -61,19 +114,27 @@ def matmul_kernel_pipelined_hopper(a_ptr, b_ptr, c_ptr, M, N, K, stride_am, stri
     offs_am = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M
     offs_bn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
     offs_k = tl.arange(0, BLOCK_SIZE_K)
-    a_ptrs = a_ptr + (offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak)
-    b_ptrs = b_ptr + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
+    a_ptrs = a_ptr + (offs_am[:, None] * stride_am +
+                      offs_k[None, :] * stride_ak)
+    b_ptrs = b_ptr + (offs_k[:, None] * stride_bk +
+                      offs_bn[None, :] * stride_bn)
 
     # allocate NUM_STAGES buffers
-    buffers_A = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_K), tlx.dtype_of(a_ptr), NUM_STAGES)
-    buffers_B = tlx.local_alloc((BLOCK_SIZE_K, BLOCK_SIZE_N), tlx.dtype_of(b_ptr), NUM_STAGES)
+    buffers_A = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_K),
+                                tlx.dtype_of(a_ptr), NUM_STAGES)
+    buffers_B = tlx.local_alloc((BLOCK_SIZE_K, BLOCK_SIZE_N),
+                                tlx.dtype_of(b_ptr), NUM_STAGES)
 
     # prefetch (pipelining) for NUM_STAGES - 1 buffers
     for i in tl.range(0, NUM_STAGES - 1, loop_unroll_factor=NUM_STAGES - 1):
         a = tlx.local_view(buffers_A, i)
         b = tlx.local_view(buffers_B, i)
-        token_a = tlx.async_load(a_ptrs, a, mask=offs_k[None, :] < K - i * BLOCK_SIZE_K)
-        token_b = tlx.async_load(b_ptrs, b, mask=offs_k[:, None] < K - i * BLOCK_SIZE_K)
+        token_a = tlx.async_load(a_ptrs,
+                                 a,
+                                 mask=offs_k[None, :] < K - i * BLOCK_SIZE_K)
+        token_b = tlx.async_load(b_ptrs,
+                                 b,
+                                 mask=offs_k[:, None] < K - i * BLOCK_SIZE_K)
         a_ptrs += BLOCK_SIZE_K * stride_ak
         b_ptrs += BLOCK_SIZE_K * stride_bk
         tlx.async_load_commit_group([token_a, token_b])
@@ -100,8 +161,12 @@ def matmul_kernel_pipelined_hopper(a_ptr, b_ptr, c_ptr, M, N, K, stride_am, stri
         # wait for the previous MMA using this buffer to complete
         acc = tlx.async_dot_wait(1, acc)
         # prefetch
-        token_a = tlx.async_load(a_ptrs, a_next, mask=offs_k[None, :] < K - i * BLOCK_SIZE_K)
-        token_b = tlx.async_load(b_ptrs, b_next, mask=offs_k[:, None] < K - i * BLOCK_SIZE_K)
+        token_a = tlx.async_load(a_ptrs,
+                                 a_next,
+                                 mask=offs_k[None, :] < K - i * BLOCK_SIZE_K)
+        token_b = tlx.async_load(b_ptrs,
+                                 b_next,
+                                 mask=offs_k[:, None] < K - i * BLOCK_SIZE_K)
         tlx.async_load_commit_group([token_a, token_b])
         # Advance the ptrs to the next K block.
         a_ptrs += BLOCK_SIZE_K * stride_ak
@@ -112,7 +177,8 @@ def matmul_kernel_pipelined_hopper(a_ptr, b_ptr, c_ptr, M, N, K, stride_am, stri
     c = acc.to(tlx.dtype_of(c_ptr))
     offs_cm = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
     offs_cn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
-    c_ptrs = c_ptr + stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
+    c_ptrs = c_ptr + stride_cm * offs_cm[:,
+                                         None] + stride_cn * offs_cn[None, :]
     c_mask = (offs_cm[:, None] < M) & (offs_cn[None, :] < N)
     tl.store(c_ptrs, c, mask=c_mask)
 
@@ -128,7 +194,8 @@ def matmul(a, b, config=None):
     c = torch.empty((M, N), device=a.device, dtype=torch.float16)
 
     if config is not None:
-        grid = (triton.cdiv(M, config['BLOCK_SIZE_M']) * triton.cdiv(N, config['BLOCK_SIZE_N']), )
+        grid = (triton.cdiv(M, config['BLOCK_SIZE_M']) *
+                triton.cdiv(N, config['BLOCK_SIZE_N']), )
         matmul_kernel_pipelined_hopper.fn[grid](
             a,
             b,
@@ -146,7 +213,8 @@ def matmul(a, b, config=None):
         )
     else:
         # 1D launch kernel where each block gets its own program.
-        grid = lambda META: (triton.cdiv(M, META['BLOCK_SIZE_M']) * triton.cdiv(N, META['BLOCK_SIZE_N']), )
+        grid = lambda META: (triton.cdiv(M, META['BLOCK_SIZE_M']) * triton.
+                             cdiv(N, META['BLOCK_SIZE_N']), )
         matmul_kernel_pipelined_hopper[grid](
             a,
             b,

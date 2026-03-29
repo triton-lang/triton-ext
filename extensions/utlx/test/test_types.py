@@ -16,10 +16,10 @@ import pytest
 import triton.language.core as tl
 from conftest import tlx
 
-
 # ---------------------------------------------------------------------------
 # storage_kind
 # ---------------------------------------------------------------------------
+
 
 class TestStorageKind:
 
@@ -37,6 +37,7 @@ class TestStorageKind:
 # reuse_group_type
 # ---------------------------------------------------------------------------
 
+
 class TestReuseGroupType:
 
     def test_values(self):
@@ -51,6 +52,7 @@ class TestReuseGroupType:
 # ---------------------------------------------------------------------------
 # storage_alias_spec_type
 # ---------------------------------------------------------------------------
+
 
 class TestStorageAliasSpecType:
 
@@ -109,49 +111,47 @@ class TestStorageAliasSpecType:
 # storage_alias_spec class (Python-level, no IR handle)
 # ---------------------------------------------------------------------------
 
+
 class TestStorageAliasSpecClass:
     """Tests for the storage_alias_spec Python class (via storage_alias_spec_type_class)."""
 
     def test_smem_unsized(self):
-        spec = tlx.storage_alias_spec_type_class(
-            handle=None, storage=tlx.storage_kind.smem
-        )
+        spec = tlx.storage_alias_spec_type_class(handle=None,
+                                                 storage=tlx.storage_kind.smem)
         assert spec.storage == tlx.storage_kind.smem
         assert spec.buffer_size_bytes is None
         assert spec.handle is None
 
     def test_tmem_sized(self):
-        spec = tlx.storage_alias_spec_type_class(
-            handle=None, storage=tlx.storage_kind.tmem, buffer_size_bytes=32768
-        )
+        spec = tlx.storage_alias_spec_type_class(handle=None,
+                                                 storage=tlx.storage_kind.tmem,
+                                                 buffer_size_bytes=32768)
         assert spec.storage == tlx.storage_kind.tmem
         assert spec.buffer_size_bytes == 32768
 
     def test_rejects_smem_cluster(self):
         with pytest.raises(ValueError, match="smemCluster"):
             tlx.storage_alias_spec_type_class(
-                handle=None, storage=tlx.storage_kind.smemCluster
-            )
+                handle=None, storage=tlx.storage_kind.smemCluster)
 
     def test_type_attribute(self):
-        spec = tlx.storage_alias_spec_type_class(
-            handle=None, storage=tlx.storage_kind.smem, buffer_size_bytes=4096
-        )
+        spec = tlx.storage_alias_spec_type_class(handle=None,
+                                                 storage=tlx.storage_kind.smem,
+                                                 buffer_size_bytes=4096)
         assert isinstance(spec.type, tlx.storage_alias_spec_type)
         assert spec.type.storage == tlx.storage_kind.smem
         assert spec.type.buffer_size_bytes == 4096
 
     def test_immutability_storage(self):
-        spec = tlx.storage_alias_spec_type_class(
-            handle=None, storage=tlx.storage_kind.smem
-        )
+        spec = tlx.storage_alias_spec_type_class(handle=None,
+                                                 storage=tlx.storage_kind.smem)
         with pytest.raises(AttributeError):
             spec.storage = tlx.storage_kind.tmem
 
     def test_immutability_buffer_size(self):
-        spec = tlx.storage_alias_spec_type_class(
-            handle=None, storage=tlx.storage_kind.smem, buffer_size_bytes=1024
-        )
+        spec = tlx.storage_alias_spec_type_class(handle=None,
+                                                 storage=tlx.storage_kind.smem,
+                                                 buffer_size_bytes=1024)
         with pytest.raises(AttributeError):
             spec.buffer_size_bytes = 2048
 
@@ -159,6 +159,7 @@ class TestStorageAliasSpecClass:
 # ---------------------------------------------------------------------------
 # reuse_group
 # ---------------------------------------------------------------------------
+
 
 def _make_test_buffered_tensor(storage=tlx.storage_kind.smem):
     layout = tlx.swizzled_shared_layout_encoding.make_default(rank=2)
@@ -196,7 +197,8 @@ class TestReuseGroup:
 
     def test_multiple_elements(self):
         elems = tuple(_make_test_buffered_tensor() for _ in range(4))
-        group = tlx.reuse_group(*elems, group_type=tlx.reuse_group_type.distinct)
+        group = tlx.reuse_group(*elems,
+                                group_type=tlx.reuse_group_type.distinct)
         assert group.args == elems
         assert len(group.args) == 4
 
@@ -204,10 +206,14 @@ class TestReuseGroup:
         """Nested reuse_group (Flash Attention pattern)."""
         p = _make_test_buffered_tensor()
         alpha = _make_test_buffered_tensor()
-        inner = tlx.reuse_group(p, alpha, group_type=tlx.reuse_group_type.distinct)
+        inner = tlx.reuse_group(p,
+                                alpha,
+                                group_type=tlx.reuse_group_type.distinct)
 
         qk = _make_test_buffered_tensor()
-        outer = tlx.reuse_group(qk, inner, group_type=tlx.reuse_group_type.shared)
+        outer = tlx.reuse_group(qk,
+                                inner,
+                                group_type=tlx.reuse_group_type.shared)
 
         assert outer.group_type == tlx.reuse_group_type.shared
         assert len(outer.args) == 2
@@ -222,10 +228,14 @@ class TestReuseGroup:
         inner = tlx.reuse_group(c, d, group_type=tlx.reuse_group_type.shared)
 
         b = _make_test_buffered_tensor()
-        middle = tlx.reuse_group(b, inner, group_type=tlx.reuse_group_type.distinct)
+        middle = tlx.reuse_group(b,
+                                 inner,
+                                 group_type=tlx.reuse_group_type.distinct)
 
         a = _make_test_buffered_tensor()
-        outer = tlx.reuse_group(a, middle, group_type=tlx.reuse_group_type.shared)
+        outer = tlx.reuse_group(a,
+                                middle,
+                                group_type=tlx.reuse_group_type.shared)
 
         assert outer.group_type == tlx.reuse_group_type.shared
         assert outer.args[1].group_type == tlx.reuse_group_type.distinct
@@ -233,7 +243,9 @@ class TestReuseGroup:
 
     def test_group_size(self):
         elem = _make_test_buffered_tensor()
-        group = tlx.reuse_group(elem, group_type=tlx.reuse_group_type.shared, group_size=2)
+        group = tlx.reuse_group(elem,
+                                group_type=tlx.reuse_group_type.shared,
+                                group_size=2)
         assert group.group_size == 2
 
     def test_empty_args_raises(self):
@@ -241,13 +253,15 @@ class TestReuseGroup:
             tlx.reuse_group(group_type=tlx.reuse_group_type.shared)
 
     def test_invalid_element_type_raises(self):
-        with pytest.raises(TypeError, match="must be buffered_tensor or reuse_group"):
+        with pytest.raises(TypeError,
+                           match="must be buffered_tensor or reuse_group"):
             tlx.reuse_group("invalid", group_type=tlx.reuse_group_type.shared)
 
 
 # ---------------------------------------------------------------------------
 # buffered_tensor / buffered_tensor_type
 # ---------------------------------------------------------------------------
+
 
 class TestBufferedTensor:
 
@@ -296,6 +310,7 @@ class TestBufferedTensor:
 # Layout encodings
 # ---------------------------------------------------------------------------
 
+
 class TestSwizzledSharedLayoutEncoding:
 
     def test_make_default_rank1(self):
@@ -318,13 +333,15 @@ class TestSwizzledSharedLayoutEncoding:
 class TestNvMmaSharedLayoutEncoding:
 
     def test_make_default(self):
-        layout = tlx.nv_mma_shared_layout_encoding.make_default([64, 64], tl.float16)
+        layout = tlx.nv_mma_shared_layout_encoding.make_default([64, 64],
+                                                                tl.float16)
         assert layout.shape == [64, 64]
         assert layout.elemType == tl.float16
         assert layout.order == [1, 0]
 
     def test_make_permute(self):
-        layout = tlx.nv_mma_shared_layout_encoding.make_default([64, 64], tl.float16)
+        layout = tlx.nv_mma_shared_layout_encoding.make_default([64, 64],
+                                                                tl.float16)
         permuted = layout.make_permute([1, 0])
         assert permuted.order == (0, 1)
 
@@ -342,6 +359,7 @@ class TestTensorMemoryLayoutEncoding:
 # mbarrier type
 # ---------------------------------------------------------------------------
 
+
 class TestMbarrier:
 
     def test_construction(self):
@@ -354,7 +372,10 @@ class TestMbarrier:
 
     def test_warp_barrier(self):
         layout = tlx.swizzled_shared_layout_encoding.make_default(rank=1)
-        bar = tlx.mbarrier(handle=None, num=2, layout=layout, is_warp_barrier=True)
+        bar = tlx.mbarrier(handle=None,
+                           num=2,
+                           layout=layout,
+                           is_warp_barrier=True)
         assert bar.is_warp_barrier is True
 
 
@@ -362,12 +383,14 @@ class TestMbarrier:
 # async_token type
 # ---------------------------------------------------------------------------
 
+
 class TestAsyncToken:
 
     def test_construction(self):
         token = tlx.async_token(handle=None)
         assert token.handle is None
-        assert isinstance(token.type, tlx.async_token.__class__.mro()[0].__mro__[0]
+        assert isinstance(token.type,
+                          tlx.async_token.__class__.mro()[0].__mro__[0]
                           if False else object)  # just check it doesn't crash
 
     def test_mangle(self):

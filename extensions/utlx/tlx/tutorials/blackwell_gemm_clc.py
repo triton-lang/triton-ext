@@ -25,13 +25,8 @@ def get_cuda_autotune_config():
             num_warps=4,
             num_stages=1,
             pre_hook=matmul_tma_set_block_size_hook,
-        )
-        for BM in [128]
-        for BN in [128, 256]
-        for BK in [64, 128]
-        for s in [2, 3, 4]
-        for t in [2, 3]
-        for subtile in [True]
+        ) for BM in [128] for BN in [128, 256] for BK in [64, 128]
+        for s in [2, 3, 4] for t in [2, 3] for subtile in [True]
         for uwb in [False, True]
     ]
 
@@ -64,31 +59,48 @@ def _compute_pid(tile_id, num_pid_in_group, num_pid_m, GROUP_SIZE_M):
     key=["M", "N", "K"],
 )
 @triton.jit
-def matmul_kernel_tma_ws_blackwell_clc(a_desc, b_desc, c_desc, M, N, K, BLOCK_SIZE_M: tl.constexpr,
-                                       BLOCK_SIZE_N: tl.constexpr, BLOCK_SIZE_K: tl.constexpr,  #
-                                       GROUP_SIZE_M: tl.constexpr,  #
-                                       NUM_SMEM_BUFFERS: tl.constexpr,  #
-                                       NUM_TMEM_BUFFERS: tl.constexpr,  #
-                                       NUM_SMS: tl.constexpr,  #
-                                       NUM_CLC_STAGES: tl.constexpr,  #
-                                       EPILOGUE_SUBTILE: tl.constexpr,  #
-                                       USE_WARP_BARRIER: tl.constexpr = False,  #
-                                       ):
+def matmul_kernel_tma_ws_blackwell_clc(
+        a_desc,
+        b_desc,
+        c_desc,
+        M,
+        N,
+        K,
+        BLOCK_SIZE_M: tl.constexpr,
+        BLOCK_SIZE_N: tl.constexpr,
+        BLOCK_SIZE_K: tl.constexpr,  #
+        GROUP_SIZE_M: tl.constexpr,  #
+        NUM_SMEM_BUFFERS: tl.constexpr,  #
+        NUM_TMEM_BUFFERS: tl.constexpr,  #
+        NUM_SMS: tl.constexpr,  #
+        NUM_CLC_STAGES: tl.constexpr,  #
+        EPILOGUE_SUBTILE: tl.constexpr,  #
+        USE_WARP_BARRIER: tl.constexpr = False,  #
+):
     # allocate NUM_SMEM_BUFFERS buffers
-    buffers_A = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_K), tlx.dtype_of(a_desc), NUM_SMEM_BUFFERS)
-    buffers_B = tlx.local_alloc((BLOCK_SIZE_K, BLOCK_SIZE_N), tlx.dtype_of(b_desc), NUM_SMEM_BUFFERS)
+    buffers_A = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_K),
+                                tlx.dtype_of(a_desc), NUM_SMEM_BUFFERS)
+    buffers_B = tlx.local_alloc((BLOCK_SIZE_K, BLOCK_SIZE_N),
+                                tlx.dtype_of(b_desc), NUM_SMEM_BUFFERS)
     # use multiple TMEM buffers to overlap MMA and epilogue
-    tmem_buffers = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_N), tl.float32, NUM_TMEM_BUFFERS, tlx.storage_kind.tmem)
+    tmem_buffers = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_N), tl.float32,
+                                   NUM_TMEM_BUFFERS, tlx.storage_kind.tmem)
 
     # allocate barriers
-    smem_empty_bars = tlx.alloc_barriers(num_barriers=NUM_SMEM_BUFFERS, arrive_count=1)
-    smem_full_bars = tlx.alloc_barriers(num_barriers=NUM_SMEM_BUFFERS, arrive_count=1)
+    smem_empty_bars = tlx.alloc_barriers(num_barriers=NUM_SMEM_BUFFERS,
+                                         arrive_count=1)
+    smem_full_bars = tlx.alloc_barriers(num_barriers=NUM_SMEM_BUFFERS,
+                                        arrive_count=1)
     if USE_WARP_BARRIER:
-        tmem_full_bars = tlx.alloc_warp_barrier(num_barriers=NUM_TMEM_BUFFERS, num_warps=1)
-        tmem_empty_bars = tlx.alloc_warp_barrier(num_barriers=NUM_TMEM_BUFFERS, num_warps=4)
+        tmem_full_bars = tlx.alloc_warp_barrier(num_barriers=NUM_TMEM_BUFFERS,
+                                                num_warps=1)
+        tmem_empty_bars = tlx.alloc_warp_barrier(num_barriers=NUM_TMEM_BUFFERS,
+                                                 num_warps=4)
     else:
-        tmem_full_bars = tlx.alloc_barriers(num_barriers=NUM_TMEM_BUFFERS, arrive_count=1)
-        tmem_empty_bars = tlx.alloc_barriers(num_barriers=NUM_TMEM_BUFFERS, arrive_count=1)
+        tmem_full_bars = tlx.alloc_barriers(num_barriers=NUM_TMEM_BUFFERS,
+                                            arrive_count=1)
+        tmem_empty_bars = tlx.alloc_barriers(num_barriers=NUM_TMEM_BUFFERS,
+                                             arrive_count=1)
 
     clc_context = tlx.clc_create_context(num_consumers=3)
 
@@ -117,25 +129,30 @@ def matmul_kernel_tma_ws_blackwell_clc(a_desc, b_desc, c_desc, M, N, K, BLOCK_SI
                 tlx.clc_producer(clc_context, clc_phase_producer)
                 clc_phase_producer ^= 1
 
-                pid_m, pid_n = _compute_pid(tile_id, num_pid_in_group, num_pid_m, GROUP_SIZE_M)
+                pid_m, pid_n = _compute_pid(tile_id, num_pid_in_group,
+                                            num_pid_m, GROUP_SIZE_M)
                 offs_am = pid_m * BLOCK_SIZE_M
                 offs_bn = pid_n * BLOCK_SIZE_N
 
                 tlx.barrier_wait(tmem_full_bars[cur_tmem_buf], tmem_read_phase)
                 # flip phase at the end of a round of using TMEM barriers
-                tmem_read_phase = tmem_read_phase ^ (cur_tmem_buf == NUM_TMEM_BUFFERS - 1)
+                tmem_read_phase = tmem_read_phase ^ (cur_tmem_buf
+                                                     == NUM_TMEM_BUFFERS - 1)
 
                 # load the result from TMEM to registers
                 acc_tmem = tmem_buffers[cur_tmem_buf]
 
                 if EPILOGUE_SUBTILE:
                     # We load/store the result half by half to reduce SMEM pressure
-                    acc_tmem_subslice1 = tlx.subslice(acc_tmem, 0, BLOCK_SIZE_N // 2)
+                    acc_tmem_subslice1 = tlx.subslice(acc_tmem, 0,
+                                                      BLOCK_SIZE_N // 2)
                     result = tlx.local_load(acc_tmem_subslice1)
                     c = result.to(tlx.dtype_of(c_desc))
                     c_desc.store([offs_am, offs_bn], c)
 
-                    acc_tmem_subslice2 = tlx.subslice(acc_tmem, BLOCK_SIZE_N // 2, BLOCK_SIZE_N // 2)
+                    acc_tmem_subslice2 = tlx.subslice(acc_tmem,
+                                                      BLOCK_SIZE_N // 2,
+                                                      BLOCK_SIZE_N // 2)
                     result = tlx.local_load(acc_tmem_subslice2)
                     c = result.to(tlx.dtype_of(c_desc))
                     c_desc.store([offs_am, offs_bn + BLOCK_SIZE_N // 2], c)
@@ -173,14 +190,17 @@ def matmul_kernel_tma_ws_blackwell_clc(a_desc, b_desc, c_desc, M, N, K, BLOCK_SI
             tile_id = start_pid
             clc_phase_consumer = 0
             while tile_id != -1:
-                pid_m, pid_n = _compute_pid(tile_id, num_pid_in_group, num_pid_m, GROUP_SIZE_M)
+                pid_m, pid_n = _compute_pid(tile_id, num_pid_in_group,
+                                            num_pid_m, GROUP_SIZE_M)
                 offs_am = pid_m * BLOCK_SIZE_M
                 offs_bn = pid_n * BLOCK_SIZE_N
 
                 # wait epilogue consumer to be done with the buffer before reusing it
-                tlx.barrier_wait(tmem_empty_bars[cur_tmem_buf], tmem_write_phase)
+                tlx.barrier_wait(tmem_empty_bars[cur_tmem_buf],
+                                 tmem_write_phase)
                 # flip phase at the end of a round of using TMEM barriers
-                tmem_write_phase = tmem_write_phase ^ (cur_tmem_buf == NUM_TMEM_BUFFERS - 1)
+                tmem_write_phase = tmem_write_phase ^ (cur_tmem_buf
+                                                       == NUM_TMEM_BUFFERS - 1)
 
                 # now iterate along K to compute result for the block
                 for k in range(0, k_tiles):
@@ -189,8 +209,12 @@ def matmul_kernel_tma_ws_blackwell_clc(a_desc, b_desc, c_desc, M, N, K, BLOCK_SI
                     # wait for current phase(round) of load for this buf
                     tlx.barrier_wait(smem_full_bars[buf], dot_phase)
                     # buffer is now ready with loaded data, tlx.async_dot will signal `mBarrier` when done
-                    tlx.async_dot(buffers_A[buf], buffers_B[buf], tmem_buffers[cur_tmem_buf], use_acc=k > 0,
-                                  mBarriers=[smem_empty_bars[buf]], out_dtype=tl.float32)
+                    tlx.async_dot(buffers_A[buf],
+                                  buffers_B[buf],
+                                  tmem_buffers[cur_tmem_buf],
+                                  use_acc=k > 0,
+                                  mBarriers=[smem_empty_bars[buf]],
+                                  out_dtype=tl.float32)
                     # flip phase at the end of a round
                     dot_phase = dot_phase ^ (buf == NUM_SMEM_BUFFERS - 1)
 
@@ -226,7 +250,8 @@ def matmul_kernel_tma_ws_blackwell_clc(a_desc, b_desc, c_desc, M, N, K, BLOCK_SI
             tile_id = start_pid
             clc_phase_consumer = 0
             while tile_id != -1:
-                pid_m, pid_n = _compute_pid(tile_id, num_pid_in_group, num_pid_m, GROUP_SIZE_M)
+                pid_m, pid_n = _compute_pid(tile_id, num_pid_in_group,
+                                            num_pid_m, GROUP_SIZE_M)
                 offs_am = pid_m * BLOCK_SIZE_M
                 offs_bn = pid_n * BLOCK_SIZE_N
 
@@ -237,10 +262,15 @@ def matmul_kernel_tma_ws_blackwell_clc(a_desc, b_desc, c_desc, M, N, K, BLOCK_SI
                     tlx.barrier_wait(smem_empty_bars[buf], load_phase ^ 1)
                     # buffer is now ready to be used again
                     offs_k = k * BLOCK_SIZE_K
-                    tlx.barrier_expect_bytes(smem_full_bars[buf],
-                                             2 * (BLOCK_SIZE_M + BLOCK_SIZE_N) * BLOCK_SIZE_K)  # float16
-                    tlx.async_descriptor_load(a_desc, buffers_A[buf], [offs_am, offs_k], smem_full_bars[buf])
-                    tlx.async_descriptor_load(b_desc, buffers_B[buf], [offs_k, offs_bn], smem_full_bars[buf])
+                    tlx.barrier_expect_bytes(smem_full_bars[buf], 2 *
+                                             (BLOCK_SIZE_M + BLOCK_SIZE_N) *
+                                             BLOCK_SIZE_K)  # float16
+                    tlx.async_descriptor_load(a_desc, buffers_A[buf],
+                                              [offs_am, offs_k],
+                                              smem_full_bars[buf])
+                    tlx.async_descriptor_load(b_desc, buffers_B[buf],
+                                              [offs_k, offs_bn],
+                                              smem_full_bars[buf])
                     # flip phase at the end of a round
                     load_phase = load_phase ^ (buf == NUM_SMEM_BUFFERS - 1)
                 processed_k_iters += k_tiles
@@ -270,11 +300,16 @@ def matmul(a, b, config=None):
         a_desc.block_shape = [config["BLOCK_SIZE_M"], config["BLOCK_SIZE_K"]]
         b_desc.block_shape = [config["BLOCK_SIZE_K"], config["BLOCK_SIZE_N"]]
         if config.get("EPILOGUE_SUBTILE", False):
-            c_desc.block_shape = [config["BLOCK_SIZE_M"], config["BLOCK_SIZE_N"] // 2]
+            c_desc.block_shape = [
+                config["BLOCK_SIZE_M"], config["BLOCK_SIZE_N"] // 2
+            ]
         else:
-            c_desc.block_shape = [config["BLOCK_SIZE_M"], config["BLOCK_SIZE_N"]]
+            c_desc.block_shape = [
+                config["BLOCK_SIZE_M"], config["BLOCK_SIZE_N"]
+            ]
 
-        grid = (triton.cdiv(M, config["BLOCK_SIZE_M"]) * triton.cdiv(N, config["BLOCK_SIZE_N"]), )
+        grid = (triton.cdiv(M, config["BLOCK_SIZE_M"]) *
+                triton.cdiv(N, config["BLOCK_SIZE_N"]), )
         matmul_kernel_tma_ws_blackwell_clc.fn[grid](
             a_desc,
             b_desc,
@@ -287,7 +322,8 @@ def matmul(a, b, config=None):
             **config,
         )
     else:
-        grid = lambda META: (triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.cdiv(N, META["BLOCK_SIZE_N"]), )
+        grid = lambda META: (triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.
+                             cdiv(N, META["BLOCK_SIZE_N"]), )
         matmul_kernel_tma_ws_blackwell_clc[grid](
             a_desc,
             b_desc,

@@ -8,7 +8,8 @@ import triton.language.extra.tlx as tlx
 
 
 @triton.jit
-def _compute_scale_and_quantize(data_block, VEC_SIZE: tl.constexpr, dtype: tl.constexpr):
+def _compute_scale_and_quantize(data_block, VEC_SIZE: tl.constexpr,
+                                dtype: tl.constexpr):
     BLOCK_M: tl.constexpr = data_block.shape[0]
     BLOCK_K: tl.constexpr = data_block.shape[1]
     NUM_SCALES: tl.constexpr = BLOCK_K // VEC_SIZE
@@ -24,7 +25,8 @@ def _compute_scale_and_quantize(data_block, VEC_SIZE: tl.constexpr, dtype: tl.co
     max_abs = tl.max(abs_data, axis=2)
 
     descale = max_abs / FLOAT_MAX
-    descale_exponent = (descale.to(tl.uint32, bitcast=True) + 0x007FFFFF) & 0x7F800000
+    descale_exponent = (descale.to(tl.uint32, bitcast=True) +
+                        0x007FFFFF) & 0x7F800000
     descale_rounded = descale_exponent.to(tl.float32, bitcast=True)
     scale_e8m0 = (descale_exponent >> 23).to(tl.uint8)
 
@@ -40,7 +42,7 @@ def _compute_scale_and_quantize(data_block, VEC_SIZE: tl.constexpr, dtype: tl.co
 
 @triton.jit
 def _to_mxfp8_block(data_input, data_out_tile, scale_out_tile,
-                     VEC_SIZE: tl.constexpr, dtype: tl.constexpr):
+                    VEC_SIZE: tl.constexpr, dtype: tl.constexpr):
     """Convert float32 tensor to MXFP8 format and store results."""
     BLOCK_M: tl.constexpr = data_input.shape[0]
     BLOCK_K: tl.constexpr = data_input.shape[1]
@@ -48,6 +50,7 @@ def _to_mxfp8_block(data_input, data_out_tile, scale_out_tile,
     tl.static_assert(BLOCK_K == 128)
     tl.static_assert(VEC_SIZE == 32)
 
-    scale_e8m0, data_fp8 = _compute_scale_and_quantize(data_input, VEC_SIZE, dtype)
+    scale_e8m0, data_fp8 = _compute_scale_and_quantize(data_input, VEC_SIZE,
+                                                       dtype)
     tlx.local_store(data_out_tile, data_fp8)
     tlx.local_store(scale_out_tile, scale_e8m0)

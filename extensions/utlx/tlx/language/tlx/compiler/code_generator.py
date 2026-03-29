@@ -81,12 +81,14 @@ def _resolve_async_task_stmts(self, stmts):
             cond = _unwrap_if_constexpr(cond)
             active_block = stmt.body if cond else stmt.orelse
             for inner_stmt in active_block:
-                assert _is_async_task(self, inner_stmt), ("Statements inside a constexpr if-guard within async_tasks() "
-                                                          "must be `with tlx.async_task(...)` blocks")
+                assert _is_async_task(self, inner_stmt), (
+                    "Statements inside a constexpr if-guard within async_tasks() "
+                    "must be `with tlx.async_task(...)` blocks")
                 resolved.append(inner_stmt)
         else:
-            assert False, ("Statements inside async_tasks() must be `with tlx.async_task(...)` "
-                           "blocks or constexpr if-guards around them")
+            assert False, (
+                "Statements inside async_tasks() must be `with tlx.async_task(...)` "
+                "blocks or constexpr if-guards around them")
     return resolved
 
 
@@ -133,7 +135,8 @@ def _validate_warp_group_start_ids(
     # Check for overlapping warp ranges between different tasks
     # Build list of (start, end) ranges for each task, considering replicas
     # Each task uses num_warps * replicate warps starting at start_id
-    ranges = [(start_ids[i], start_ids[i] + num_warps[i] * task_replicates[i]) for i in range(len(start_ids))]
+    ranges = [(start_ids[i], start_ids[i] + num_warps[i] * task_replicates[i])
+              for i in range(len(start_ids))]
 
     # Default region uses warps [0, default_num_warps)
     default_range = (0, default_num_warps)
@@ -142,8 +145,10 @@ def _validate_warp_group_start_ids(
     for i, (start_i, end_i) in enumerate(ranges):
         # Two ranges [a, b) and [c, d) overlap if a < d and c < b
         if start_i < default_range[1] and default_range[0] < end_i:
-            assert False, (f"Overlapping warp ranges: task {i} uses warps [{start_i}, {end_i}) "
-                           f"which overlaps with default region warps [{default_range[0]}, {default_range[1]})")
+            assert False, (
+                f"Overlapping warp ranges: task {i} uses warps [{start_i}, {end_i}) "
+                f"which overlaps with default region warps [{default_range[0]}, {default_range[1]})"
+            )
 
     # Check all pairs of non-default tasks for overlap
     for i in range(len(ranges)):
@@ -152,8 +157,9 @@ def _validate_warp_group_start_ids(
             start_j, end_j = ranges[j]
             # Two ranges [a, b) and [c, d) overlap if a < d and c < b
             if start_i < end_j and start_j < end_i:
-                assert False, (f"Overlapping warp ranges: task {i} uses warps [{start_i}, {end_i}) "
-                               f"and task {j} uses warps [{start_j}, {end_j})")
+                assert False, (
+                    f"Overlapping warp ranges: task {i} uses warps [{start_i}, {end_i}) "
+                    f"and task {j} uses warps [{start_j}, {end_j})")
 
 
 @tlx_enter_sub_region()
@@ -223,11 +229,15 @@ def visit_withAsyncTasks(self, node):
                     num_default += 1
                     if task.replicate > 1:
                         taskReplica.append(task.replicate - 1)
-                        taskNumWarps.extend([self.builder.options.num_warps] * (task.replicate - 1))
+                        taskNumWarps.extend([self.builder.options.num_warps] *
+                                            (task.replicate - 1))
                         if task.num_regs:
-                            taskNumRegs.extend([task.num_regs] * (task.replicate - 1))
+                            taskNumRegs.extend([task.num_regs] *
+                                               (task.replicate - 1))
                         if task.warp_group_start_id is not None:
-                            taskWarpGroupStartIds.extend([task.warp_group_start_id] * (task.replicate - 1))
+                            taskWarpGroupStartIds.extend(
+                                [task.warp_group_start_id] *
+                                (task.replicate - 1))
                 else:
                     taskReplica.append(task.replicate)
                     taskNumWarps.extend([task.num_warps] * task.replicate)
@@ -236,7 +246,8 @@ def visit_withAsyncTasks(self, node):
                     if task.warp_group_start_id is not None:
                         # Each replica gets its own start ID, incrementing by num_warps
                         for r in range(task.replicate):
-                            taskWarpGroupStartIds.append(task.warp_group_start_id + r * task.num_warps)
+                            taskWarpGroupStartIds.append(
+                                task.warp_group_start_id + r * task.num_warps)
                         # Collect per-task data for validation
                         perTaskNumWarps.append(task.num_warps)
                         perTaskStartIds.append(task.warp_group_start_id)
@@ -247,11 +258,13 @@ def visit_withAsyncTasks(self, node):
         assert num_default == 1, "Default task must be one and only one"
         block.erase()
 
-        assert len(taskNumRegs) in [0, len(taskNumWarps)
-                                    ], ("Registers are set for either ALL or NONE of non-default tasks")
+        assert len(taskNumRegs) in [
+            0, len(taskNumWarps)
+        ], ("Registers are set for either ALL or NONE of non-default tasks")
         assert len(taskWarpGroupStartIds) in [
             0, len(taskNumWarps)
-        ], ("warp_group_start_id must be set for either ALL or NONE of non-default tasks")
+        ], ("warp_group_start_id must be set for either ALL or NONE of non-default tasks"
+            )
 
         # Validate warp_group_start_ids
         if len(perTaskStartIds) > 0:
@@ -276,7 +289,8 @@ def visit_withAsyncTasks(self, node):
         for stmt in stmts:
             task = _get_async_task(self, stmt)
             assert task.is_explict
-            task_replicate = (task.replicate - 1) if task.is_default else task.replicate
+            task_replicate = (task.replicate -
+                              1) if task.is_default else task.replicate
             if task_replicate > 0:
                 task_body = ws_op.get_partition_region(index)
                 block = self.builder.create_block_with_parent(task_body, [])
@@ -290,7 +304,8 @@ def visit_withAsyncTasks(self, node):
                 block.erase()
 
         # Add captures
-        captures = sorted(v for v in (liveins.keys() & self.used_vars) if not _is_constexpr(liveins[v]))
+        captures = sorted(v for v in (liveins.keys() & self.used_vars)
+                          if not _is_constexpr(liveins[v]))
         for name in captures:
             val = liveins[name]
             if getattr(val, "__triton_aggregate__", False):

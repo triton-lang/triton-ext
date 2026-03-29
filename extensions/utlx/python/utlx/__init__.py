@@ -9,7 +9,8 @@ import os as _os
 import sys as _sys
 
 # Ensure the uTLX plugin python dir is on sys.path so utlx_plugin is importable
-_plugin_python_dir = _os.path.dirname(_os.path.dirname(_os.path.realpath(__file__)))
+_plugin_python_dir = _os.path.dirname(
+    _os.path.dirname(_os.path.realpath(__file__)))
 if _plugin_python_dir not in _sys.path:
     _sys.path.insert(0, _plugin_python_dir)
 
@@ -24,7 +25,8 @@ def __getattr__(name):
     try:
         return getattr(_mod, name)
     except AttributeError:
-        raise AttributeError(f"module 'triton.language.extra.tlx' has no attribute {name!r}")
+        raise AttributeError(
+            f"module 'triton.language.extra.tlx' has no attribute {name!r}")
 
 
 def __dir__():

@@ -15,10 +15,10 @@ import triton.language as tl
 
 from conftest import tlx, is_hopper_or_newer
 
-
 # ---------------------------------------------------------------------------
 # Basic: alloc -> store -> load round-trip
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(not is_hopper_or_newer(), reason="Need Hopper or newer")
 @pytest.mark.parametrize("dtype", [tl.float16, tl.float32, tl.bfloat16])
@@ -29,19 +29,22 @@ def test_local_alloc_store_load_1d(dtype, device="cuda"):
     def kernel(in_ptr, out_ptr, BLOCK: tl.constexpr, DTYPE: tl.constexpr):
         offs = tl.arange(0, BLOCK)
         x = tl.load(in_ptr + offs)
-        buf = tlx.local_alloc((BLOCK,), DTYPE, 1)
+        buf = tlx.local_alloc((BLOCK, ), DTYPE, 1)
         view = tlx.local_view(buf, 0)
         tlx.local_store(view, x)
         y = tlx.local_load(view)
         tl.store(out_ptr + offs, y)
 
     BLOCK = 128
-    torch_dtype = {tl.float16: torch.float16, tl.float32: torch.float32,
-                   tl.bfloat16: torch.bfloat16}[dtype]
+    torch_dtype = {
+        tl.float16: torch.float16,
+        tl.float32: torch.float32,
+        tl.bfloat16: torch.bfloat16
+    }[dtype]
     x = torch.randn(BLOCK, device=device, dtype=torch_dtype)
     out = torch.empty_like(x)
 
-    kernel[(1,)](x, out, BLOCK=BLOCK, DTYPE=dtype)
+    kernel[(1, )](x, out, BLOCK=BLOCK, DTYPE=dtype)
     torch.testing.assert_close(out, x)
 
 
@@ -65,13 +68,14 @@ def test_local_alloc_store_load_2d(device="cuda"):
     x = torch.randn(M, N, device=device, dtype=torch.float16)
     out = torch.empty_like(x)
 
-    kernel[(1,)](x, out, M=M, N=N)
+    kernel[(1, )](x, out, M=M, N=N)
     torch.testing.assert_close(out, x)
 
 
 # ---------------------------------------------------------------------------
 # Multi-buffer: alloc with num > 1
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(not is_hopper_or_newer(), reason="Need Hopper or newer")
 def test_local_alloc_multi_buffer(device="cuda"):
@@ -83,7 +87,7 @@ def test_local_alloc_multi_buffer(device="cuda"):
         a = tl.load(in_ptr_a + offs)
         b = tl.load(in_ptr_b + offs)
 
-        bufs = tlx.local_alloc((BLOCK,), tl.float16, 2)
+        bufs = tlx.local_alloc((BLOCK, ), tl.float16, 2)
 
         view0 = tlx.local_view(bufs, 0)
         view1 = tlx.local_view(bufs, 1)
@@ -101,13 +105,14 @@ def test_local_alloc_multi_buffer(device="cuda"):
     b = torch.randn(BLOCK, device=device, dtype=torch.float16)
     out = torch.empty(BLOCK, device=device, dtype=torch.float16)
 
-    kernel[(1,)](a, b, out, BLOCK=BLOCK)
+    kernel[(1, )](a, b, out, BLOCK=BLOCK)
     torch.testing.assert_close(out, a + b)
 
 
 # ---------------------------------------------------------------------------
 # Multi-buffer 2D: typical GEMM-style double buffering
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(not is_hopper_or_newer(), reason="Need Hopper or newer")
 def test_local_alloc_double_buffer_2d(device="cuda"):
@@ -138,13 +143,14 @@ def test_local_alloc_double_buffer_2d(device="cuda"):
     x = torch.randn(M, K, device=device, dtype=torch.float16)
     out = torch.empty_like(x)
 
-    kernel[(1,)](x, out, M=M, K=K)
+    kernel[(1, )](x, out, M=M, K=K)
     torch.testing.assert_close(out, x)
 
 
 # ---------------------------------------------------------------------------
 # Compile-only: verify IR generation without running on GPU
 # ---------------------------------------------------------------------------
+
 
 def test_local_alloc_compile_only():
     """Verify local_alloc generates valid TTGIR (no GPU required)."""
@@ -153,7 +159,7 @@ def test_local_alloc_compile_only():
     def kernel(ptr, BLOCK: tl.constexpr):
         offs = tl.arange(0, BLOCK)
         x = tl.load(ptr + offs)
-        buf = tlx.local_alloc((BLOCK,), tl.float16, 1)
+        buf = tlx.local_alloc((BLOCK, ), tl.float16, 1)
         view = tlx.local_view(buf, 0)
         tlx.local_store(view, x)
         y = tlx.local_load(view)
@@ -166,7 +172,8 @@ def test_local_alloc_compile_only():
         constexprs={"BLOCK": 128},
     )
     try:
-        ret = triton.compile(src, target=triton.runtime.driver.active.get_current_target())
+        ret = triton.compile(
+            src, target=triton.runtime.driver.active.get_current_target())
     except Exception:
         # If no GPU available, just verify the kernel parses
         pytest.skip("No GPU target available for compilation")

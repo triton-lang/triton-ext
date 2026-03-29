@@ -24,7 +24,8 @@ def _alloc_clc_responses(
         layout.numCTAOrder,
     )
     return tlx.clc_response(
-        _semantic.builder.create_alloc_clc_responses(num_responses, layout_handle),
+        _semantic.builder.create_alloc_clc_responses(num_responses,
+                                                     layout_handle),
         num_responses,
         layout,
     )
@@ -39,7 +40,8 @@ def _clc_issue(
     # Issue an async `clusterlaunchcontrol.try_cancel` request to obtain
     # the CTA ID of an available cluster.
     assert isinstance(clc_response_addr, tlx.clc_response)
-    return _semantic.builder.clc_issue(clc_response_addr.handle, barrier.handle)
+    return _semantic.builder.clc_issue(clc_response_addr.handle,
+                                       barrier.handle)
 
 
 @tl.builtin
@@ -63,20 +65,30 @@ def _clc_query(
 
 
 @tl.builtin
-def clc_create_context(num_consumers, num_stages: tl.tensor = 1, _semantic=None) -> tlx.CLCPipelineContext:
+def clc_create_context(num_consumers,
+                       num_stages: tl.tensor = 1,
+                       _semantic=None) -> tlx.CLCPipelineContext:
     if not isinstance(num_stages, tl.constexpr):
         num_stages = tl.constexpr(num_stages)
     if not isinstance(num_consumers, tl.constexpr):
         num_consumers = tl.constexpr(num_consumers)
     return tlx.CLCPipelineContext(
-        clc_mbars_empty=alloc_barriers(num_barriers=num_stages, arrive_count=num_consumers, _semantic=_semantic),
-        clc_mbars_full=alloc_barriers(num_barriers=num_stages, _semantic=_semantic),
-        clc_responses=_alloc_clc_responses(num_responses=num_stages, _semantic=_semantic),
+        clc_mbars_empty=alloc_barriers(num_barriers=num_stages,
+                                       arrive_count=num_consumers,
+                                       _semantic=_semantic),
+        clc_mbars_full=alloc_barriers(num_barriers=num_stages,
+                                      _semantic=_semantic),
+        clc_responses=_alloc_clc_responses(num_responses=num_stages,
+                                           _semantic=_semantic),
     )
 
 
 @tl.builtin
-def clc_producer(context, p_producer=None, multi_ctas: bool = False, k=0, _semantic=None):
+def clc_producer(context,
+                 p_producer=None,
+                 multi_ctas: bool = False,
+                 k=0,
+                 _semantic=None):
     """
     Issue a CLC try_cancel request from the first CTA in the cluster.
 
@@ -107,7 +119,8 @@ def clc_producer(context, p_producer=None, multi_ctas: bool = False, k=0, _seman
     if multi_ctas:
         cta_rank = cluster_cta_rank(_semantic=_semantic)
         zero = _semantic.builder.get_int32(0)
-        pred_cta0_handle = _semantic.builder.create_icmpEQ(cta_rank.handle, zero)
+        pred_cta0_handle = _semantic.builder.create_icmpEQ(
+            cta_rank.handle, zero)
         pred_cta0 = tl.tensor(pred_cta0_handle, tl.int1)
     else:
         pred_cta0 = None
@@ -129,7 +142,11 @@ def clc_producer(context, p_producer=None, multi_ctas: bool = False, k=0, _seman
 
 
 @tl.builtin
-def clc_consumer(context, p_consumer=None, multi_ctas: bool = False, k=0, _semantic=None):
+def clc_consumer(context,
+                 p_consumer=None,
+                 multi_ctas: bool = False,
+                 k=0,
+                 _semantic=None):
     """
     Decode the tile ID from a CLC response and signal completion.
 

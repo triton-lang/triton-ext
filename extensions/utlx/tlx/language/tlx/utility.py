@@ -53,7 +53,8 @@ def async_task_replica_id(_semantic=None):
 
     region_replica_id_stack = _get_region_replica_id_stack()
     assert len(region_replica_id_stack) > 0, (
-        "async_task_replica_id must be called inside an async region where the stack must be non-empty")
+        "async_task_replica_id must be called inside an async region where the stack must be non-empty"
+    )
     return tl.constexpr(region_replica_id_stack[-1])
 
 
@@ -70,7 +71,9 @@ def dtype_of(v, _semantic=None) -> tl.dtype:
     elif isinstance(v, tl.tensor_descriptor_base):
         return v.dtype
     else:
-        raise ValueError(f"dtype_of only works on tensors and tensor descriptors, but got {v}")
+        raise ValueError(
+            f"dtype_of only works on tensors and tensor descriptors, but got {v}"
+        )
 
 
 @tl.builtin
@@ -79,7 +82,8 @@ def size_of(dtype: tl.dtype, _semantic=None) -> tl.constexpr:
     Returns the size of a given dtype.
     """
     dtype = tl._unwrap_if_constexpr(dtype)
-    assert isinstance(dtype, tl.dtype), f"size_of expects a dtype, but got {type(dtype)}"
+    assert isinstance(
+        dtype, tl.dtype), f"size_of expects a dtype, but got {type(dtype)}"
     return tl.constexpr(dtype.primitive_bitwidth // 8)
 
 
@@ -105,15 +109,18 @@ def get_fp8_format_name(dtype: tl.dtype, _semantic=None) -> tl.constexpr:
     """
     # Unwrap constexpr if needed (when dtype is passed as a tl.constexpr kernel parameter)
     dtype = tl._unwrap_if_constexpr(dtype)
-    assert isinstance(dtype, tl.dtype), f"get_fp8_format_name expects a dtype, but got {type(dtype)}"
+    assert isinstance(
+        dtype, tl.dtype
+    ), f"get_fp8_format_name expects a dtype, but got {type(dtype)}"
     # Only support FP8 types that map to "e5m2" or "e4m3" for scaled MMA operations
     if dtype == tl.float8e5:
         return tl.constexpr("e5m2")
     elif dtype == tl.float8e4nv:
         return tl.constexpr("e4m3")
     else:
-        raise AssertionError(f"get_fp8_format_name only supports tl.float8e5 (e5m2) and tl.float8e4nv (e4m3), "
-                             f"but got {dtype}")
+        raise AssertionError(
+            f"get_fp8_format_name only supports tl.float8e5 (e5m2) and tl.float8e4nv (e4m3), "
+            f"but got {dtype}")
 
 
 @tl.builtin
@@ -164,16 +171,20 @@ def stoch_round(
         Tensor with dtype dst_ty and shape matching src.
     """
     capability = int(cuda_parse_arch(_semantic.builder.options.arch))
-    assert capability >= 100, (f"stoch_round requires compute capability >= 100 (Blackwell GPU), "
-                               f"current capability: {capability}")
+    assert capability >= 100, (
+        f"stoch_round requires compute capability >= 100 (Blackwell GPU), "
+        f"current capability: {capability}")
     src_ty = src.type
     src_sca_ty = src_ty.scalar
 
-    assert src_sca_ty == tl.float32, (f"Stochastic rounding only supports fp32 source, got {src_sca_ty}. "
-                                      f"Source must be float32.")
-    assert dst_ty in [tl.float8e5, tl.float8e4nv, tl.float16, tl.bfloat16
-                      ], (f"Stochastic rounding only supports fp8/fp16/bf16 destination, got {dst_ty}. "
-                          f"Supported types: float8e5 (fp8 E5M2), float8e4nv (fp8 E4M3FN), float16, bfloat16")
+    assert src_sca_ty == tl.float32, (
+        f"Stochastic rounding only supports fp32 source, got {src_sca_ty}. "
+        f"Source must be float32.")
+    assert dst_ty in [
+        tl.float8e5, tl.float8e4nv, tl.float16, tl.bfloat16
+    ], (f"Stochastic rounding only supports fp8/fp16/bf16 destination, got {dst_ty}. "
+        f"Supported types: float8e5 (fp8 E5M2), float8e4nv (fp8 E4M3FN), float16, bfloat16"
+        )
 
     # Verify rbits shape matches src shape
     rbits_ty = rand_bits.type
@@ -183,8 +194,10 @@ def stoch_round(
         # Both are scalars - OK
         pass
     else:
-        raise ValueError(f"src and rand_bits must both be blocks or both be scalars, "
-                         f"got src_ty.is_block()={src_ty.is_block()}, rbits_ty.is_block()={rbits_ty.is_block()}")
+        raise ValueError(
+            f"src and rand_bits must both be blocks or both be scalars, "
+            f"got src_ty.is_block()={src_ty.is_block()}, rbits_ty.is_block()={rbits_ty.is_block()}"
+        )
 
     if src_sca_ty == dst_ty:
         return src
@@ -195,5 +208,6 @@ def stoch_round(
     else:
         result_ty = dst_ty
         dst_ir_ty = dst_ty.to_ir(_semantic.builder)
-    dst = _semantic.builder.create_cvt_rs(src.handle, dst_ir_ty, rand_bits.handle)
+    dst = _semantic.builder.create_cvt_rs(src.handle, dst_ir_ty,
+                                          rand_bits.handle)
     return tl.tensor(dst, result_ty)

@@ -11,9 +11,9 @@ def cluster_barrier(_semantic=None):
 
 @tl.builtin
 def alloc_barriers(
-        num_barriers: tl.constexpr,
-        arrive_count: tl.constexpr = tl.constexpr(1),
-        _semantic=None,
+    num_barriers: tl.constexpr,
+    arrive_count: tl.constexpr = tl.constexpr(1),
+    _semantic=None,
 ) -> tlx.mbarrier:
     """
     Allocates buffer in shared memory and initialize mbarriers with arrive_counts.
@@ -34,7 +34,9 @@ def alloc_barriers(
         layout.numCTAOrder,
     )
     return tlx.mbarrier(
-        _semantic.builder.create_alloc_barriers(num_barriers.value, arrive_count.value, layout_handle),
+        _semantic.builder.create_alloc_barriers(num_barriers.value,
+                                                arrive_count.value,
+                                                layout_handle),
         num_barriers,
         layout,
     )
@@ -42,10 +44,10 @@ def alloc_barriers(
 
 @tl.builtin
 def alloc_warp_barrier(
-        num_barriers: tl.constexpr,
-        num_warps: tl.constexpr = tl.constexpr(1),
-        num_arrivals: tl.constexpr = tl.constexpr(1),
-        _semantic=None,
+    num_barriers: tl.constexpr,
+    num_warps: tl.constexpr = tl.constexpr(1),
+    num_arrivals: tl.constexpr = tl.constexpr(1),
+    _semantic=None,
 ) -> tlx.mbarrier:
     """
     Allocates warp barriers where all threads arrive independently.
@@ -74,7 +76,8 @@ def alloc_warp_barrier(
         layout.numCTAOrder,
     )
     return tlx.mbarrier(
-        _semantic.builder.create_alloc_barriers(num_barriers.value, arrive_count, layout_handle),
+        _semantic.builder.create_alloc_barriers(num_barriers.value,
+                                                arrive_count, layout_handle),
         num_barriers,
         layout,
         is_warp_barrier=True,
@@ -97,7 +100,8 @@ def barrier_expect_bytes(
         pred_handle = _semantic.builder.get_int1(True)
     else:
         pred_handle = pred.handle
-    _semantic.builder.create_barrier_expect(bar.handle, size.value, pred_handle)
+    _semantic.builder.create_barrier_expect(bar.handle, size.value,
+                                            pred_handle)
 
 
 @tl.builtin
@@ -123,21 +127,26 @@ def barrier_wait(
         pred_handle = pred.handle
 
     if isinstance(phase, tl.tensor):
-        _semantic.builder.create_barrier_wait(bar.handle, phase.handle, pred_handle)
-    elif isinstance(phase, tl.constexpr):
-        _semantic.builder.create_barrier_wait(bar.handle,
-                                              _semantic._convert_elem_to_ir_value(phase.value, require_i64=False),
+        _semantic.builder.create_barrier_wait(bar.handle, phase.handle,
                                               pred_handle)
+    elif isinstance(phase, tl.constexpr):
+        _semantic.builder.create_barrier_wait(
+            bar.handle,
+            _semantic._convert_elem_to_ir_value(phase.value,
+                                                require_i64=False),
+            pred_handle)
     else:
-        raise RuntimeError(f"`phase` is in type {type(phase)} (must be either `tl.tensor` or `tl.constexpr`)")
+        raise RuntimeError(
+            f"`phase` is in type {type(phase)} (must be either `tl.tensor` or `tl.constexpr`)"
+        )
 
 
 @tl.builtin
 def barrier_arrive(
-        bar: tlx.buffered_tensor,
-        arrive_count: tl.constexpr = tl.constexpr(1),
-        remote_cta_rank: tl.tensor = None,
-        _semantic=None,
+    bar: tlx.buffered_tensor,
+    arrive_count: tl.constexpr = tl.constexpr(1),
+    remote_cta_rank: tl.tensor = None,
+    _semantic=None,
 ) -> None:
     """
     Perform the arrive operation on an mbarrier.
@@ -151,13 +160,15 @@ def barrier_arrive(
     assert bar.type.storage == tlx.storage_kind.smem, (
         "barrier_arrive does not allow users to pass a remote_view of mbarrier. Remote view is done inside barrier_arrive"
     )
-    assert arrive_count.value == 1 or not is_hip(), "AMD backend currently only supports arrive_count == 1"
+    assert arrive_count.value == 1 or not is_hip(
+    ), "AMD backend currently only supports arrive_count == 1"
 
     if remote_cta_rank is not None:
         bar = remote_view(bar, remote_cta_rank, _semantic=_semantic)
 
     if getattr(bar, 'is_warp_barrier', False):
-        _semantic.builder.create_warp_barrier_arrive(bar.handle, arrive_count.value)
+        _semantic.builder.create_warp_barrier_arrive(bar.handle,
+                                                     arrive_count.value)
     else:
         _semantic.builder.create_barrier_arrive(bar.handle, arrive_count.value)
 
@@ -177,8 +188,10 @@ def named_barrier_wait(
     """
 
     bar_handle = _semantic._convert_elem_to_ir_value(bar, require_i64=False)
-    arrive_count_handle = _semantic._convert_elem_to_ir_value(arrive_count, require_i64=False)
-    _semantic.builder.create_named_barrier_wait(bar_handle, arrive_count_handle)
+    arrive_count_handle = _semantic._convert_elem_to_ir_value(
+        arrive_count, require_i64=False)
+    _semantic.builder.create_named_barrier_wait(bar_handle,
+                                                arrive_count_handle)
 
 
 @tl.builtin
@@ -195,5 +208,7 @@ def named_barrier_arrive(
         count (tl.constexpr): Number of threads arriving at the barrier.
     """
     bar_handle = _semantic._convert_elem_to_ir_value(bar, require_i64=False)
-    arrive_count_handle = _semantic._convert_elem_to_ir_value(arrive_count, require_i64=False)
-    _semantic.builder.create_named_barrier_arrive(bar_handle, arrive_count_handle)
+    arrive_count_handle = _semantic._convert_elem_to_ir_value(
+        arrive_count, require_i64=False)
+    _semantic.builder.create_named_barrier_arrive(bar_handle,
+                                                  arrive_count_handle)

@@ -87,8 +87,9 @@ void LayoutBackwardPropagation::visitWarpSpecRegionArgs(
     if (auto warpSpecializePartitionsOp =
             op->getParentOfType<ttg::WarpSpecializePartitionsOp>()) {
       auto warpSpecializeOp = warpSpecializePartitionsOp.getParentOp();
-      auto blockArgumentLattice = getLatticeElement(
-          warpSpecializeOp.getPartitionOp().getExplicitCaptures()[arg.getArgNumber()]);
+      auto blockArgumentLattice =
+          getLatticeElement(warpSpecializeOp.getPartitionOp()
+                                .getExplicitCaptures()[arg.getArgNumber()]);
       ChangeResult changed = blockArgumentLattice->meet(resultEncoding);
       propagateIfChanged(blockArgumentLattice, changed);
       // Propagate to all the partition regions
@@ -204,7 +205,8 @@ LogicalResult LayoutBackwardPropagation::visitOperation(
       auto ctx = srcType.getContext();
 
       // Build unswizzled NVMMASharedEncodingAttr with default CTA layout
-      auto ctaLayout = ttg::CGAEncodingAttr::get1CTALayout(ctx, srcType.getRank());
+      auto ctaLayout =
+          ttg::CGAEncodingAttr::get1CTALayout(ctx, srcType.getRank());
       auto unswizzledEncoding = ttg::NVMMASharedEncodingAttr::get(
           ctx,
           /*swizzlingByteWidth=*/0,
@@ -253,7 +255,6 @@ void LayoutBackwardPropagation::visitCallOperand(OpOperand &operand) {
 void LayoutBackwardPropagation::setToExitState(LayoutEncodingLattice *lattice) {
 }
 
-
 //===----------------------------------------------------------------------===//
 // LayoutForwardPropagation
 //===----------------------------------------------------------------------===//
@@ -283,7 +284,8 @@ LogicalResult LayoutForwardPropagation::visitOperation(
             operandLayoutEncoding.getLayoutEncoding());
         auto newEncoding = ttng::TensorMemoryEncodingAttr::get(
             op->getContext(), dstEncoding.getBlockM(), dstEncoding.getBlockN(),
-            encoding.getColStride(), encoding.getCGALayout(), encoding.getTwoCTAs());
+            encoding.getColStride(), encoding.getCGALayout(),
+            encoding.getTwoCTAs());
         operandLayoutEncoding = LayoutEncoding(newEncoding);
       }
     }
@@ -349,6 +351,4 @@ LogicalResult LayoutForwardPropagation::visitRegion(Operation *op) {
 void LayoutForwardPropagation::setToEntryState(LayoutEncodingLattice *lattice) {
 }
 
-
 } // namespace mlir::triton::tlx
-

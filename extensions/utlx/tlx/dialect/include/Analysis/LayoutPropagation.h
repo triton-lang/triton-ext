@@ -79,14 +79,11 @@ public:
 
   void setToExitState(LayoutEncodingLattice *lattice) override;
 
-  void visitNonControlFlowArguments(
-      RegionSuccessor &successor,
-      ArrayRef<BlockArgument> arguments) override {
+  void
+  visitNonControlFlowArguments(RegionSuccessor &successor,
+                               ArrayRef<BlockArgument> arguments) override {
     // Default: do nothing
   }
-
-  
-
 
   LogicalResult visitRegionInReverse(Operation *op);
 
@@ -107,7 +104,6 @@ public:
   visitOperation(Operation *op,
                  ArrayRef<const LayoutEncodingLattice *> operands,
                  ArrayRef<LayoutEncodingLattice *> results) override;
-
 
   void setToEntryState(LayoutEncodingLattice *lattice) override;
 

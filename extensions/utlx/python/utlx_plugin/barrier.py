@@ -79,9 +79,7 @@ def barrier_expect_bytes(
     size_val = tl._unwrap_if_constexpr(size)
     size_ir = _semantic.builder.get_int32(int(size_val))
 
-    _semantic.builder.utlx_barrier_expect(
-        [bar.handle, size_ir, pred_handle]
-    )
+    _semantic.builder.utlx_barrier_expect([bar.handle, size_ir, pred_handle])
 
 
 @tl.builtin
@@ -93,8 +91,7 @@ def barrier_wait(
 ) -> None:
     """Wait until the mbarrier phase completes."""
     assert bar.type.storage == tlx.storage_kind.smem, (
-        "barrier_wait does not support remote_view of mbarrier."
-    )
+        "barrier_wait does not support remote_view of mbarrier.")
 
     if pred is None:
         pred_handle = _semantic.builder.get_int1(True)
@@ -104,13 +101,14 @@ def barrier_wait(
     if isinstance(phase, tl.tensor):
         phase_handle = phase.handle
     elif isinstance(phase, tl.constexpr):
-        phase_handle = _semantic._convert_elem_to_ir_value(phase.value, require_i64=False)
+        phase_handle = _semantic._convert_elem_to_ir_value(phase.value,
+                                                           require_i64=False)
     else:
-        raise RuntimeError(f"`phase` must be tl.tensor or tl.constexpr, got {type(phase)}")
+        raise RuntimeError(
+            f"`phase` must be tl.tensor or tl.constexpr, got {type(phase)}")
 
     _semantic.builder.utlx_barrier_wait(
-        [bar.handle, phase_handle, pred_handle]
-    )
+        [bar.handle, phase_handle, pred_handle])
 
 
 @tl.builtin
@@ -123,7 +121,8 @@ def barrier_arrive(
     """Perform the arrive operation on an mbarrier."""
     assert bar.type.storage == tlx.storage_kind.smem
     arrive_count_val = tl._unwrap_if_constexpr(arrive_count)
-    assert arrive_count_val == 1 or not is_hip(), "AMD backend currently only supports arrive_count == 1"
+    assert arrive_count_val == 1 or not is_hip(
+    ), "AMD backend currently only supports arrive_count == 1"
 
     if remote_cta_rank is not None:
         from .mem_ops import remote_view
@@ -131,9 +130,7 @@ def barrier_arrive(
 
     arrive_count_ir = _semantic.builder.get_int32(int(arrive_count_val))
 
-    _semantic.builder.utlx_barrier_arrive(
-        [bar.handle, arrive_count_ir]
-    )
+    _semantic.builder.utlx_barrier_arrive([bar.handle, arrive_count_ir])
 
 
 @tl.builtin
@@ -144,10 +141,10 @@ def named_barrier_wait(
 ) -> None:
     """Wait until arrive_count threads have reached the named barrier."""
     bar_handle = _semantic._convert_elem_to_ir_value(bar, require_i64=False)
-    arrive_count_handle = _semantic._convert_elem_to_ir_value(arrive_count, require_i64=False)
+    arrive_count_handle = _semantic._convert_elem_to_ir_value(
+        arrive_count, require_i64=False)
     _semantic.builder.utlx_named_barrier_wait(
-        [bar_handle, arrive_count_handle]
-    )
+        [bar_handle, arrive_count_handle])
 
 
 @tl.builtin
@@ -158,7 +155,7 @@ def named_barrier_arrive(
 ) -> None:
     """Signal arrival at a named barrier."""
     bar_handle = _semantic._convert_elem_to_ir_value(bar, require_i64=False)
-    arrive_count_handle = _semantic._convert_elem_to_ir_value(arrive_count, require_i64=False)
+    arrive_count_handle = _semantic._convert_elem_to_ir_value(
+        arrive_count, require_i64=False)
     _semantic.builder.utlx_named_barrier_arrive(
-        [bar_handle, arrive_count_handle]
-    )
+        [bar_handle, arrive_count_handle])

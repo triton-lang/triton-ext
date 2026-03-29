@@ -2,14 +2,16 @@
 ///
 /// Two passes:
 ///   1. UTLXPingPongPrep: Groups expensive ops into pingpong regions
-///   2. UTLXPingPongSync: Inserts named barrier arrive/wait for pingpong regions
+///   2. UTLXPingPongSync: Inserts named barrier arrive/wait for pingpong
+///   regions
 ///
-/// Ported from third_party/nvidia/hopper/lib/Transforms/WarpSpecialization/PingPong.cpp
+/// Ported from
+/// third_party/nvidia/hopper/lib/Transforms/WarpSpecialization/PingPong.cpp
 ///
-/// NOTE: The PingPongSync pass requires NamedBarrierArriveOp / NamedBarrierWaitOp
-/// which are only available when the triton-tlx-core-changes patch is applied.
-/// When building against unpatched triton, the sync pass will warn and skip
-/// barrier insertion.
+/// NOTE: The PingPongSync pass requires NamedBarrierArriveOp /
+/// NamedBarrierWaitOp which are only available when the triton-tlx-core-changes
+/// patch is applied. When building against unpatched triton, the sync pass will
+/// warn and skip barrier insertion.
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -17,12 +19,12 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Location.h"
 #include "mlir/Pass/Pass.h"
-#include "llvm/Support/Debug.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/Transforms/PartitionBuilder.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
+#include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "utlx-ping-pong"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -118,10 +120,9 @@ static unsigned getLoopDepth(mlir::Operation *op) {
   return depth;
 }
 
-void getNestedFor(
-    mlir::Region *partition,
-    llvm::DenseMap<unsigned, llvm::SmallVector<mlir::Operation *>>
-        &loopDepthMap) {
+void getNestedFor(mlir::Region *partition,
+                  llvm::DenseMap<unsigned, llvm::SmallVector<mlir::Operation *>>
+                      &loopDepthMap) {
   partition->walk([&](mlir::Operation *subOp) {
     if (mlir::dyn_cast<mlir::scf::ForOp>(subOp)) {
       unsigned tDepth = getLoopDepth(subOp);
@@ -156,8 +157,7 @@ mlir::Operation *findEndOp(CriticalRegionManager &crManager,
       std::swap(curOp, later);
   }
   while (curOp) {
-    if (mlir::isa<mlir::scf::ForOp, mlir::scf::IfOp, mlir::scf::WhileOp>(
-            curOp))
+    if (mlir::isa<mlir::scf::ForOp, mlir::scf::IfOp, mlir::scf::WhileOp>(curOp))
       return nullptr;
     if (!mlir::isMemoryEffectFree(curOp))
       return curOp;
@@ -174,45 +174,44 @@ mlir::Operation *findEndOp(CriticalRegionManager &crManager,
 mlir::Operation *firstOpInBlock(llvm::ArrayRef<mlir::Operation *> ops) {
   if (ops.empty())
     return nullptr;
-  auto it = llvm::min_element(
-      ops, [](mlir::Operation *a, mlir::Operation *b) {
-        return a->isBeforeInBlock(b);
-      });
+  auto it = llvm::min_element(ops, [](mlir::Operation *a, mlir::Operation *b) {
+    return a->isBeforeInBlock(b);
+  });
   return *it;
 }
 
 mlir::Operation *lastOpInBlock(llvm::ArrayRef<mlir::Operation *> ops) {
   if (ops.empty())
     return nullptr;
-  auto it = llvm::max_element(
-      ops, [](mlir::Operation *a, mlir::Operation *b) {
-        return a->isBeforeInBlock(b);
-      });
+  auto it = llvm::max_element(ops, [](mlir::Operation *a, mlir::Operation *b) {
+    return a->isBeforeInBlock(b);
+  });
   return *it;
 }
 
 int arrivesFirst(llvm::ArrayRef<mlir::Operation *> keyOps) {
-  auto it = llvm::min_element(keyOps, [](mlir::Operation *a,
-                                         mlir::Operation *b) {
-    auto scA = ttg::getStageCluster(a);
-    auto scB = ttg::getStageCluster(b);
-    int stageA = scA->first, stageB = scB->first;
-    int clusterA = scA->second, clusterB = scB->second;
-    if (stageA == stageB) {
-      if (clusterA == clusterB)
-        return a->isBeforeInBlock(b);
-      return clusterA < clusterB;
-    }
-    return stageA < stageB;
-  });
+  auto it =
+      llvm::min_element(keyOps, [](mlir::Operation *a, mlir::Operation *b) {
+        auto scA = ttg::getStageCluster(a);
+        auto scB = ttg::getStageCluster(b);
+        int stageA = scA->first, stageB = scB->first;
+        int clusterA = scA->second, clusterB = scB->second;
+        if (stageA == stageB) {
+          if (clusterA == clusterB)
+            return a->isBeforeInBlock(b);
+          return clusterA < clusterB;
+        }
+        return stageA < stageB;
+      });
   return getSingleTaskId(*it);
 }
 
 /// Create a named barrier arrive/wait op by name (runtime lookup).
-/// This avoids compile-time dependency on NamedBarrierArriveOp/NamedBarrierWaitOp.
+/// This avoids compile-time dependency on
+/// NamedBarrierArriveOp/NamedBarrierWaitOp.
 static bool createNamedBarrierOp(mlir::OpBuilder &builder, mlir::Location loc,
-                                  llvm::StringRef opName,
-                                  mlir::Value barrier, mlir::Value numThreads) {
+                                 llvm::StringRef opName, mlir::Value barrier,
+                                 mlir::Value numThreads) {
   auto *ctx = builder.getContext();
   auto registeredOp = mlir::RegisteredOperationName::lookup(opName, ctx);
   if (!registeredOp) {
@@ -300,13 +299,11 @@ static void handleWarpSpec(ttg::WarpSpecializeOp wsOp, int computeCapability) {
       if (partitionId != arrivesFirstPartitionId) {
         crManager.pingpongIdToPingBoundaryOps[pingpongId].push_back(
             unionStartOp);
-        crManager.pingpongIdToPingBoundaryOps[pingpongId].push_back(
-            unionEndOp);
+        crManager.pingpongIdToPingBoundaryOps[pingpongId].push_back(unionEndOp);
       } else {
         crManager.pingpongIdToPongBoundaryOps[pingpongId].push_back(
             unionStartOp);
-        crManager.pingpongIdToPongBoundaryOps[pingpongId].push_back(
-            unionEndOp);
+        crManager.pingpongIdToPongBoundaryOps[pingpongId].push_back(unionEndOp);
       }
       numberOfThreads += numWarps[partitionId] * 32;
     }
@@ -348,8 +345,8 @@ static void handleWarpSpec(ttg::WarpSpecializeOp wsOp, int computeCapability) {
         pingRegionLoc, pingBarrierId, 32);
     mlir::Value pongBarrier = builder.create<mlir::arith::ConstantIntOp>(
         pingRegionLoc, pongBarrierId, 32);
-    mlir::Value pingNumThreads =
-        builder.create<mlir::arith::ConstantIntOp>(pingRegionLoc, numThreads, 32);
+    mlir::Value pingNumThreads = builder.create<mlir::arith::ConstantIntOp>(
+        pingRegionLoc, numThreads, 32);
 
     if (!createNamedBarrierOp(builder, pingRegionLoc, kNamedBarrierArrive,
                               pongBarrier, pingNumThreads)) {
@@ -375,8 +372,8 @@ static void handleWarpSpec(ttg::WarpSpecializeOp wsOp, int computeCapability) {
         pongRegionLoc, pingBarrierId, 32);
     mlir::Value pongBarrier2 = builder2.create<mlir::arith::ConstantIntOp>(
         pongRegionLoc, pongBarrierId, 32);
-    mlir::Value pingNumThreads2 =
-        builder2.create<mlir::arith::ConstantIntOp>(pongRegionLoc, numThreads, 32);
+    mlir::Value pingNumThreads2 = builder2.create<mlir::arith::ConstantIntOp>(
+        pongRegionLoc, numThreads, 32);
 
     builder2.setInsertionPoint(pongStart);
     createNamedBarrierOp(builder2, pongStart->getLoc(), kNamedBarrierWait,
@@ -397,9 +394,7 @@ class UTLXPingPongPrepPass
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(UTLXPingPongPrepPass)
 
-  llvm::StringRef getArgument() const override {
-    return "utlx-ping-pong-prep";
-  }
+  llvm::StringRef getArgument() const override { return "utlx-ping-pong-prep"; }
   llvm::StringRef getDescription() const override {
     return "Group expensive ops into pingpong regions";
   }
@@ -434,8 +429,7 @@ public:
             if (opTaskId == -1 || refTaskId == -1)
               continue;
             if (opTaskId == refTaskId) {
-              bool hasMemEffects =
-                  (findEndOp(crManager, op, refOp) != nullptr);
+              bool hasMemEffects = (findEndOp(crManager, op, refOp) != nullptr);
               if (hasMemEffects)
                 matchType = false;
             }
@@ -461,10 +455,10 @@ public:
         if (partitionIds.size() != 2)
           continue;
         for (auto *op : group) {
-          op->setAttr("pingpong_id",
-                      mlir::IntegerAttr::get(
-                          mlir::IntegerType::get(op->getContext(), 32),
-                          pingpongID));
+          op->setAttr(
+              "pingpong_id",
+              mlir::IntegerAttr::get(
+                  mlir::IntegerType::get(op->getContext(), 32), pingpongID));
         }
         pingpongID++;
       }
@@ -482,9 +476,7 @@ class UTLXPingPongSyncPass
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(UTLXPingPongSyncPass)
 
-  llvm::StringRef getArgument() const override {
-    return "utlx-ping-pong-sync";
-  }
+  llvm::StringRef getArgument() const override { return "utlx-ping-pong-sync"; }
   llvm::StringRef getDescription() const override {
     return "Insert named barrier arrive/wait for pingpong regions";
   }

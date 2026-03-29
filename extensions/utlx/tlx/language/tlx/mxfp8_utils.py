@@ -57,7 +57,8 @@ def _compute_scale_and_quantize(
     # Adding 0x007FFFFF bumps the exponent by 1 unless the mantissa is already zero
     # (i.e., the value is already an exact power of 2). This avoids precision issues
     # with the floating-point log2/ceil approach.
-    descale_exponent = (descale.to(tl.uint32, bitcast=True) + 0x007FFFFF) & 0x7F800000
+    descale_exponent = (descale.to(tl.uint32, bitcast=True) +
+                        0x007FFFFF) & 0x7F800000
     descale_rounded = descale_exponent.to(tl.float32, bitcast=True)
 
     # Extract E8M0 biased exponent: the IEEE 754 exponent field >> 23
@@ -117,7 +118,8 @@ def _to_mxfp8_block(
     tl.static_assert(VEC_SIZE == 32)
 
     # Step 1: Compute scales and quantized data (all in registers)
-    scale_e8m0, data_fp8 = _compute_scale_and_quantize(data_input, VEC_SIZE, dtype)
+    scale_e8m0, data_fp8 = _compute_scale_and_quantize(data_input, VEC_SIZE,
+                                                       dtype)
 
     # Step 2: Store FP8 data to SMEM
     tlx.local_store(data_out_tile, data_fp8)

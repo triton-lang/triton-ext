@@ -16,7 +16,9 @@ class layout_encoding:
         return self.__class__.__name__
 
     def to_ir(self, builder: ir.builder) -> None:
-        raise NotImplementedError(f"{self.__class__.__name__}.to_ir() must be overridden in subclasses")
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.to_ir() must be overridden in subclasses"
+        )
 
 
 class shared_layout_encoding(layout_encoding):
@@ -31,10 +33,14 @@ class shared_layout_encoding(layout_encoding):
 
     @abstractmethod
     def make_permute(self, dims):
-        raise NotImplementedError(f"{self.__class__.__name__}.make_permute() must be overridden in subclasses")
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.make_permute() must be overridden in subclasses"
+        )
 
     def to_ir(self, builder: ir.builder) -> None:
-        raise NotImplementedError(f"{self.__class__.__name__}.to_ir() must be overridden in subclasses")
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.to_ir() must be overridden in subclasses"
+        )
 
 
 class swizzled_shared_layout_encoding(shared_layout_encoding):
@@ -70,7 +76,8 @@ class swizzled_shared_layout_encoding(shared_layout_encoding):
             vectorSize=1,
             perPhase=1,
             maxPhase=1,
-            order=list(reversed(range(rank))),  # e.g, [1, 0] as a row-major order
+            order=list(reversed(
+                range(rank))),  # e.g, [1, 0] as a row-major order
             numCTAs=[1] * rank,
             numCTAsPerCGA=[1] * rank,
             numCTASplit=[1] * rank,
@@ -197,7 +204,8 @@ class nv_mma_shared_layout_encoding(shared_layout_encoding):
         rank = len(shape)
         return cls(
             shape=shape,
-            order=list(reversed(range(rank))),  # e.g, [1, 0] as a row-major order
+            order=list(reversed(
+                range(rank))),  # e.g, [1, 0] as a row-major order
             elemType=elemType,
             numCTAsPerCGA=[1] * rank,
             numCTASplit=[1] * rank,
@@ -239,10 +247,14 @@ class nv_mma_shared_layout_encoding(shared_layout_encoding):
         return f"nv_mma_shared_layout_encoding<{self.shape}, {self.order}, {self.elemType}, {self.numCTAsPerCGA}, {self.numCTASplit}, {self.numCTAOrder}, {self.fp4Padded}, {self.swizzled}>"
 
     def __eq__(self, other) -> bool:
-        return (type(self) is type(other) and self.shape == other.shape and self.order == other.order
-                and self.elemType == other.elemType and self.numCTAsPerCGA == other.numCTAsPerCGA
-                and self.numCTASplit == other.numCTASplit and self.numCTAOrder == other.numCTAOrder
-                and self.fp4Padded == other.fp4Padded and self.swizzled == other.swizzled)
+        return (type(self) is type(other) and self.shape == other.shape
+                and self.order == other.order
+                and self.elemType == other.elemType
+                and self.numCTAsPerCGA == other.numCTAsPerCGA
+                and self.numCTASplit == other.numCTASplit
+                and self.numCTAOrder == other.numCTAOrder
+                and self.fp4Padded == other.fp4Padded
+                and self.swizzled == other.swizzled)
 
 
 class DummyRegisterLayoutEncoding(layout_encoding):
@@ -254,25 +266,31 @@ class DummyRegisterLayoutEncoding(layout_encoding):
     TMEM-compatible register layout suitable for TMEM load/store.
     """
 
-    def __init__(self, shape: List[int], element_type: tl.dtype, tmem_compatible: bool = False):
+    def __init__(self,
+                 shape: List[int],
+                 element_type: tl.dtype,
+                 tmem_compatible: bool = False):
         super().__init__()
         self.shape = shape
         self.element_type = element_type
         self.tmem_compatible = tmem_compatible
 
     def to_ir(self, builder: ir.builder):
-        return builder.make_dummy_register_layout_attr(self.shape, self.element_type.to_ir(builder),
-                                                       self.tmem_compatible)
+        return builder.make_dummy_register_layout_attr(
+            self.shape, self.element_type.to_ir(builder), self.tmem_compatible)
 
     def __repr__(self):
         return f"DummyRegisterLayoutEncoding<{self.shape}, {self.element_type}, tmem_compatible={self.tmem_compatible}>"
 
     def __eq__(self, other):
-        return (isinstance(other, DummyRegisterLayoutEncoding) and self.shape == other.shape
-                and self.element_type == other.element_type and self.tmem_compatible == other.tmem_compatible)
+        return (isinstance(other, DummyRegisterLayoutEncoding)
+                and self.shape == other.shape
+                and self.element_type == other.element_type
+                and self.tmem_compatible == other.tmem_compatible)
 
     def __hash__(self):
-        return hash((tuple(self.shape), self.element_type, self.tmem_compatible))
+        return hash(
+            (tuple(self.shape), self.element_type, self.tmem_compatible))
 
 
 class storage_kind(enum.Enum):
@@ -438,14 +456,16 @@ class reuse_group:
         # Validate group_size
         group_size = tl._unwrap_if_constexpr(group_size)
         if not isinstance(group_size, int) or group_size < 1:
-            raise ValueError(f"group_size must be a positive integer, got {group_size}")
+            raise ValueError(
+                f"group_size must be a positive integer, got {group_size}")
 
         # Validate element types
         args = tuple(tl._unwrap_if_constexpr(elem) for elem in args)
         for elem in args:
             if not isinstance(elem, (reuse_group, buffered_tensor)):
-                raise TypeError(f"reuse_group elements must be buffered_tensor or reuse_group, "
-                                f"got {type(elem).__name__}")
+                raise TypeError(
+                    f"reuse_group elements must be buffered_tensor or reuse_group, "
+                    f"got {type(elem).__name__}")
 
         self._args = args
         self._group_type = group_type
@@ -495,12 +515,14 @@ class reuse_group:
                 # Get the memdesc handle from the buffered_tensor
                 ir_elements.append(elem.handle)
             else:
-                raise TypeError(f"reuse_group element must be buffered_tensor or reuse_group, "
-                                f"got {type(elem).__name__}")
+                raise TypeError(
+                    f"reuse_group element must be buffered_tensor or reuse_group, "
+                    f"got {type(elem).__name__}")
 
         # Create the reuse_group IR operation
         group_kind = self._group_type.value  # "shared" or "distinct"
-        return builder.create_reuse_group(ir_elements, group_kind, self._group_size)
+        return builder.create_reuse_group(ir_elements, group_kind,
+                                          self._group_size)
 
     def __repr__(self):
         if self._group_size == 1:
@@ -530,7 +552,8 @@ class reuse_group_ir_type(tl.base_type):
         return self._group_kind
 
     def __eq__(self, other):
-        return (isinstance(other, reuse_group_ir_type) and self._group_kind == other._group_kind)
+        return (isinstance(other, reuse_group_ir_type)
+                and self._group_kind == other._group_kind)
 
     def __repr__(self) -> str:
         return f"reuse_group_ir_type(group_kind={self._group_kind.value})"
@@ -596,7 +619,8 @@ class storage_alias_spec(tl.base_value):
         """
         super().__init__()
         if storage == storage_kind.smemCluster:
-            raise ValueError("smemCluster storage is not supported for storage_alias_spec")
+            raise ValueError(
+                "smemCluster storage is not supported for storage_alias_spec")
         self._handle = handle
         self._storage = storage
         self._buffer_size_bytes = buffer_size_bytes
@@ -618,7 +642,9 @@ class storage_alias_spec(tl.base_value):
         return self._buffer_size_bytes
 
     @tl.builtin
-    def set_buffer_overlap(self, overlap_def: "reuse_group", _semantic=None) -> None:
+    def set_buffer_overlap(self,
+                           overlap_def: "reuse_group",
+                           _semantic=None) -> None:
         """
         Define the buffer overlap scheme for allocations using this storage alias spec.
 
@@ -664,13 +690,16 @@ class storage_alias_spec(tl.base_value):
         overlap_def = tl._unwrap_if_constexpr(overlap_def)
         # Validate input type
         if not isinstance(overlap_def, reuse_group):
-            raise TypeError(f"overlap_def must be a reuse_group, got {type(overlap_def).__name__}")
+            raise TypeError(
+                f"overlap_def must be a reuse_group, got {type(overlap_def).__name__}"
+            )
 
         # Recursively lower the reuse_group tree to IR
         overlap_def_ir = overlap_def.to_ir(_semantic.builder)
 
         # Create the set_buffer_overlap IR operation
-        _semantic.builder.create_set_buffer_overlap(self._handle, overlap_def_ir)
+        _semantic.builder.create_set_buffer_overlap(self._handle,
+                                                    overlap_def_ir)
 
     def _flatten_ir(self, handles) -> None:
         handles.append(self._handle)
@@ -707,7 +736,8 @@ class storage_alias_spec_type(tl.base_type):
         return self._buffer_size_bytes
 
     def __eq__(self, other):
-        return (isinstance(other, storage_alias_spec_type) and self._storage == other._storage
+        return (isinstance(other, storage_alias_spec_type)
+                and self._storage == other._storage
                 and self._buffer_size_bytes == other._buffer_size_bytes)
 
     def __repr__(self) -> str:
@@ -718,7 +748,8 @@ class storage_alias_spec_type(tl.base_type):
         size_part = f"_{self._buffer_size_bytes}" if self._buffer_size_bytes else ""
         return f"storage_alias_spec_{self._storage.value}{size_part}"
 
-    def _flatten_ir_types(self, builder: ir.builder, out: List[ir.type]) -> None:
+    def _flatten_ir_types(self, builder: ir.builder,
+                          out: List[ir.type]) -> None:
         out.append(self.to_ir(builder))
 
     def to_ir(self, builder: ir.builder):
@@ -727,7 +758,8 @@ class storage_alias_spec_type(tl.base_type):
             self._buffer_size_bytes,
         )
 
-    def _unflatten_ir(self, handles: List[ir.value], cursor: int) -> Tuple["storage_alias_spec", int]:
+    def _unflatten_ir(self, handles: List[ir.value],
+                      cursor: int) -> Tuple["storage_alias_spec", int]:
         value = storage_alias_spec(
             handles[cursor],
             self._storage,
@@ -772,7 +804,8 @@ class buffered_tensor(tl.base_value):
         self.handle = handle
         # Block shape
         self.shape = shape
-        self.type = buffered_tensor_type(element_ty, shape, num, storage, layout)
+        self.type = buffered_tensor_type(element_ty, shape, num, storage,
+                                         layout)
         # Following the practice in pytorch, dtype is scalar type
         self.dtype = element_ty
 
@@ -809,7 +842,8 @@ class buffered_tensor_type(tl.block_type):
         # Buffer number. 0 means a single buffer, 1+ means a buffer array.
         self.num = num
 
-    def _unflatten_ir(self, handles: List[ir.value], cursor: int) -> Tuple[buffered_tensor, int]:
+    def _unflatten_ir(self, handles: List[ir.value],
+                      cursor: int) -> Tuple[buffered_tensor, int]:
         value = buffered_tensor(
             handles[cursor],
             self.scalar,
@@ -831,10 +865,11 @@ class buffered_tensor_type(tl.block_type):
         return f"buffered_tensor_<{self.element_ty}, {self.shape}, {self.layout}, {self.num}>"
 
     def __eq__(self, other) -> bool:
-        return (type(self) is type(other) and self.shape == other.shape and self.layout == other.layout
-                and self.num == other.num)
+        return (type(self) is type(other) and self.shape == other.shape
+                and self.layout == other.layout and self.num == other.num)
 
-    def _flatten_ir_types(self, builder: ir.builder, out: List[ir.type]) -> None:
+    def _flatten_ir_types(self, builder: ir.builder,
+                          out: List[ir.type]) -> None:
         out.append(self.to_ir(builder))
 
     def to_ir(self, builder: ir.builder) -> None:
@@ -885,13 +920,21 @@ class mbarrier(tl.base_value):
 
 class mbarrier_type(buffered_tensor_type):
 
-    def __init__(self, num: int, layout: Optional[swizzled_shared_layout_encoding], storage,
+    def __init__(self,
+                 num: int,
+                 layout: Optional[swizzled_shared_layout_encoding],
+                 storage,
                  is_warp_barrier: bool = False):
         super().__init__(tl.int64, [1], num, storage, layout)
         self.is_warp_barrier = is_warp_barrier
 
-    def _unflatten_ir(self, handles: List[ir.value], cursor: int) -> Tuple[mbarrier, int]:
-        value = mbarrier(handles[cursor], self.num, self.layout, self.storage, is_warp_barrier=self.is_warp_barrier)
+    def _unflatten_ir(self, handles: List[ir.value],
+                      cursor: int) -> Tuple[mbarrier, int]:
+        value = mbarrier(handles[cursor],
+                         self.num,
+                         self.layout,
+                         self.storage,
+                         is_warp_barrier=self.is_warp_barrier)
         return value, cursor + 1
 
     def to_ir(self, builder: ir.builder) -> None:
@@ -938,10 +981,12 @@ class clc_response_type(buffered_tensor_type):
     # since we have two concrete use cases now (mbarrier and clc_response)
     # both of which are opaque objects with fixed size
 
-    def __init__(self, num: int, layout: Optional[swizzled_shared_layout_encoding]):
+    def __init__(self, num: int,
+                 layout: Optional[swizzled_shared_layout_encoding]):
         super().__init__(tl.int64, [1], num, storage_kind.smem, layout)
 
-    def _unflatten_ir(self, handles: List[ir.value], cursor: int) -> Tuple[clc_response, int]:
+    def _unflatten_ir(self, handles: List[ir.value],
+                      cursor: int) -> Tuple[clc_response, int]:
         value = clc_response(handles[cursor], self.num, self.layout)
         return value, cursor + 1
 
@@ -1005,7 +1050,8 @@ class async_token_type(tl.base_type):
     def mangle(self) -> str:
         return repr(self)
 
-    def _flatten_ir_types(self, builder: ir.builder, out: List[ir.type]) -> None:
+    def _flatten_ir_types(self, builder: ir.builder,
+                          out: List[ir.type]) -> None:
         return
 
     def _unflatten_ir(self, handles: List[ir.value], cursor: int):
@@ -1057,7 +1103,9 @@ class tensor_descriptor_ptr_type(tl.pointer_type):
         self.size = size
 
     def __eq__(self, other):
-        return isinstance(other, tensor_descriptor_ptr_type) and self.num == other.num and self.size == other.size
+        return isinstance(
+            other, tensor_descriptor_ptr_type
+        ) and self.num == other.num and self.size == other.size
 
     def __repr__(self) -> str:
         return f"tensor_descriptor_ptr_type(num={self.num}, size={self.size})"
@@ -1068,4 +1116,5 @@ class tensor_descriptor_ptr_type(tl.pointer_type):
         return f"tensor_desc_ptr_{self.size}"
 
     def _unflatten_ir(self, handles: List[ir.value], cursor: int):
-        return tensor_descriptor_ptr(handles[cursor], self.num, self.size), cursor + 1
+        return tensor_descriptor_ptr(handles[cursor], self.num,
+                                     self.size), cursor + 1

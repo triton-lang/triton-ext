@@ -31,16 +31,25 @@ def create_benchmark():
             line_names=["ws_pipelined_persistent_mxfp8"],
             ylabel="TFLOPS",
             plot_name="flash-attention-performance-mxfp8",
-            args={"BATCH": 4, "H": 32, "HEAD_DIM": 64, "causal": False},
+            args={
+                "BATCH": 4,
+                "H": 32,
+                "HEAD_DIM": 64,
+                "causal": False
+            },
         ))
     def benchmark(BATCH, H, N_CTX, HEAD_DIM, causal, provider):
         shape = (BATCH, H, N_CTX, HEAD_DIM)
         sm_scale = 1.3
         quantiles = [0.5, 0.2, 0.8]
         dtype = torch.float8_e4m3fn
-        (q, q_scale, _), (k, k_scale, _), (v, v_scale, _) = generate_attention_inputs(shape, DEVICE, dtype)
+        (q, q_scale,
+         _), (k, k_scale,
+              _), (v, v_scale,
+                   _) = generate_attention_inputs(shape, DEVICE, dtype)
         ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: _attention_ws_pipelined_persistent_mxfp8(q, k, v, q_scale, k_scale, v_scale, sm_scale, causal),
+            lambda: _attention_ws_pipelined_persistent_mxfp8(
+                q, k, v, q_scale, k_scale, v_scale, sm_scale, causal),
             quantiles=quantiles,
             warmup=500,
             rep=500,

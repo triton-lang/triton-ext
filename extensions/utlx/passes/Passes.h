@@ -26,9 +26,9 @@ std::unique_ptr<mlir::Pass> createAMDLowerBarrierOpsPass();
 void registerAMDLowerBarrierOpsPass();
 
 // AMD conversion patterns (not a standalone pass)
-void populateAMDBarrierOpToLLVMPatterns(
-    mlir::LLVMTypeConverter &typeConverter,
-    mlir::RewritePatternSet &patterns, mlir::PatternBenefit benefit);
+void populateAMDBarrierOpToLLVMPatterns(mlir::LLVMTypeConverter &typeConverter,
+                                        mlir::RewritePatternSet &patterns,
+                                        mlir::PatternBenefit benefit);
 
 } // namespace utlx
 

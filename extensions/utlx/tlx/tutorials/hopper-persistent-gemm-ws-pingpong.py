@@ -85,8 +85,10 @@ def matmul_kernel_tlx_ws_persistent(
 
     # Mainloop Barriers: For producer-consumer synchronization on A and B buffers.
     # The producer waits on empty, consumers wait on full.
-    mainloop_empty_bar = tlx.alloc_barriers(num_barriers=NUM_STAGES, arrive_count=1)
-    mainloop_full_bar = tlx.alloc_barriers(num_barriers=NUM_STAGES, arrive_count=1)
+    mainloop_empty_bar = tlx.alloc_barriers(num_barriers=NUM_STAGES,
+                                            arrive_count=1)
+    mainloop_full_bar = tlx.alloc_barriers(num_barriers=NUM_STAGES,
+                                           arrive_count=1)
 
     pingpong_mma_bar = tlx.alloc_barriers(num_barriers=1, arrive_count=1)
     pingpong_epi_bar = tlx.alloc_barriers(num_barriers=1, arrive_count=1)
@@ -106,7 +108,8 @@ def matmul_kernel_tlx_ws_persistent(
                 group_id = tile_id // num_pid_in_group
                 first_pid_m = group_id * GROUP_SIZE_M
                 group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-                pid_m = first_pid_m + ((tile_id % num_pid_in_group) % group_size_m)
+                pid_m = first_pid_m + (
+                    (tile_id % num_pid_in_group) % group_size_m)
                 pid_n = (tile_id % num_pid_in_group) // group_size_m
 
                 offset_am = pid_m * BM
@@ -119,11 +122,14 @@ def matmul_kernel_tlx_ws_persistent(
                     empty = tlx.local_view(mainloop_empty_bar, buf)
                     full = tlx.local_view(mainloop_full_bar, buf)
                     tlx.barrier_wait(bar=empty, phase=p)
-                    tlx.barrier_expect_bytes(full, BM * BK * 2 + BK * BN * 2)  # a and b
+                    tlx.barrier_expect_bytes(full, BM * BK * 2 +
+                                             BK * BN * 2)  # a and b
                     data_a = tlx.local_view(a, buf)
-                    tlx.async_descriptor_load(a_desc, data_a, [offset_am, offset_k], full)
+                    tlx.async_descriptor_load(a_desc, data_a,
+                                              [offset_am, offset_k], full)
                     data_b = tlx.local_view(b, buf)
-                    tlx.async_descriptor_load(b_desc, data_b, [offset_k, offset_bn], full)
+                    tlx.async_descriptor_load(b_desc, data_b,
+                                              [offset_k, offset_bn], full)
 
                     p = p ^ (buf == (NUM_STAGES - 1))
                     buf = (buf + 1) % NUM_STAGES
@@ -160,7 +166,8 @@ def matmul_kernel_tlx_ws_persistent(
                 group_id = tile_id // num_pid_in_group
                 first_pid_m = group_id * GROUP_SIZE_M
                 group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-                pid_m = first_pid_m + ((tile_id % num_pid_in_group) % group_size_m)
+                pid_m = first_pid_m + (
+                    (tile_id % num_pid_in_group) % group_size_m)
                 pid_n = (tile_id % num_pid_in_group) // group_size_m
 
                 offset_am = pid_m * BM
@@ -234,7 +241,8 @@ def matmul_kernel_tlx_ws_persistent(
                     c1 = acc1.to(tlx.dtype_of(c_desc))
                     c_desc.store([offset_cm, offset_bn + BN // 2], c1)
                 else:
-                    c_desc.store([offset_cm, offset_bn], acc.to(tlx.dtype_of(c_desc)))
+                    c_desc.store([offset_cm, offset_bn],
+                                 acc.to(tlx.dtype_of(c_desc)))
 
                 if not USE_NAMED_BARRIER:
                     tlx.barrier_arrive(epi_bar)
@@ -251,9 +259,18 @@ def matmul_tlx_ws_persistent(a, b, profile=False):
     NUM_SMS = torch.cuda.get_device_properties(DEVICE).multi_processor_count
 
     dummy_block = [1, 1]
-    desc_in_1 = TensorDescriptor(a, shape=[M, K], strides=[K, 1], block_shape=dummy_block)
-    desc_in_2 = TensorDescriptor(b, shape=[K, N], strides=[N, 1], block_shape=dummy_block)
-    desc_out = TensorDescriptor(c, shape=[M, N], strides=[N, 1], block_shape=dummy_block)
+    desc_in_1 = TensorDescriptor(a,
+                                 shape=[M, K],
+                                 strides=[K, 1],
+                                 block_shape=dummy_block)
+    desc_in_2 = TensorDescriptor(b,
+                                 shape=[K, N],
+                                 strides=[N, 1],
+                                 block_shape=dummy_block)
+    desc_out = TensorDescriptor(c,
+                                shape=[M, N],
+                                strides=[N, 1],
+                                block_shape=dummy_block)
 
     def grid(META):
         num_m_blocks = triton.cdiv(M, META['BM'])
@@ -310,17 +327,23 @@ for fp8_inputs in [False, True]:
         continue
     configs.append(
         triton.testing.Benchmark(
-            x_names=["M", "N", "K"],  # Argument names to use as an x-axis for the plot
-            x_vals=[128 * i for i in range(2, 33)],  # Different possible values for `x_name`
-            line_arg="provider",  # Argument name whose value corresponds to a different line in the plot
+            x_names=["M", "N",
+                     "K"],  # Argument names to use as an x-axis for the plot
+            x_vals=[128 * i for i in range(2, 33)
+                    ],  # Different possible values for `x_name`
+            line_arg=
+            "provider",  # Argument name whose value corresponds to a different line in the plot
             # Possible values for `line_arg`
             # Don't compare to cublas for fp8 cases as torch.matmul doesn't support fp8 at the moment.
-            line_vals=["triton"] if fp8_inputs else [ref_lib.lower(), "triton"],  # Label name for the lines
-            line_names=["Triton"] if fp8_inputs else [ref_lib, "Triton"],  # Line styles
+            line_vals=["triton"] if fp8_inputs else
+            [ref_lib.lower(), "triton"],  # Label name for the lines
+            line_names=["Triton"]
+            if fp8_inputs else [ref_lib, "Triton"],  # Line styles
             styles=[("green", "-"), ("blue", "-")],
             ylabel="TFLOPS",  # Label name for the y-axis
-            plot_name="matmul-performance-" +
-            ("fp16" if not fp8_inputs else "fp8"),  # Name for the plot, used also as a file name for saving the plot.
+            plot_name="matmul-performance-" + (
+                "fp16" if not fp8_inputs else "fp8"
+            ),  # Name for the plot, used also as a file name for saving the plot.
             args={"fp8_inputs": fp8_inputs},
         ))
 
@@ -335,11 +358,17 @@ def benchmark(M, N, K, provider, fp8_inputs):
         b = b.to(torch.float8_e5m2)
     quantiles = [0.5, 0.2, 0.8]
     if provider == ref_lib.lower():
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: torch.matmul(a, b), quantiles=quantiles, warmup=200,
-                                                     rep=200)
+        ms, min_ms, max_ms = triton.testing.do_bench(
+            lambda: torch.matmul(a, b),
+            quantiles=quantiles,
+            warmup=200,
+            rep=200)
     if provider == 'triton':
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: matmul_tlx_ws_persistent(a, b), quantiles=quantiles,
-                                                     warmup=200, rep=200)
+        ms, min_ms, max_ms = triton.testing.do_bench(
+            lambda: matmul_tlx_ws_persistent(a, b),
+            quantiles=quantiles,
+            warmup=200,
+            rep=200)
     perf = lambda ms: 2 * M * N * K * 1e-12 / (ms * 1e-3)
     return perf(ms), perf(max_ms), perf(min_ms)
 

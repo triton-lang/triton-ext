@@ -7,19 +7,17 @@ import pytest
 import torch
 
 import triton
-import triton.language as tl
 from triton import knobs
 
 # Add the plugin python dir to sys.path
 _plugin_python_dir = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python")
-)
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python"))
 if _plugin_python_dir not in sys.path:
     sys.path.insert(0, _plugin_python_dir)
 
 from utlx_plugin.utility import ensure_plugin_on_path
+
 ensure_plugin_on_path()
-import utlx_plugin as tlx  # noqa: E402
 from utlx_plugin.custom_stages import inspect_stages_hook  # noqa: E402
 
 # Activate the plugin's custom compilation stages
@@ -62,7 +60,7 @@ def is_hip_cdna2():
         return False
     try:
         target = triton.runtime.driver.active.get_current_target()
-        return target.arch in ("gfx90a",)
+        return target.arch in ("gfx90a", )
     except Exception:
         return False
 

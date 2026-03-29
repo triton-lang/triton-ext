@@ -78,15 +78,9 @@ def get_autotune_configs():
             num_warps=4,
             pre_hook=matmul_tma_set_block_size_hook,
             ctas_per_cga=(num_ctas, 1, 1),
-        )
-        for BM in [128, 256]
-        for BN in [128, 256]
-        for BK in [64]
-        for s in [3, 4]
-        for epilogue in [True, False]
-        for g in [1, 8, 64]
-        for num_ctas in [1, 2]
-        for uwb in [False, True]
+        ) for BM in [128, 256] for BN in [128, 256] for BK in [64]
+        for s in [3, 4] for epilogue in [True, False] for g in [1, 8, 64]
+        for num_ctas in [1, 2] for uwb in [False, True]
     ]
 
 
@@ -97,39 +91,53 @@ def get_autotune_configs():
     prune_configs_by={"early_config_prune": preprocess_configs},
 )
 @triton.jit
-def matmul_kernel_tlx_ws(a_desc, b_desc, c_desc,  #
-                         M, N, K,  #
-                         BM: tl.constexpr,  #
-                         BN: tl.constexpr,  #
-                         BK: tl.constexpr,  #
-                         GROUP_SIZE_M: tl.constexpr,  #
-                         NUM_STAGES: tl.constexpr,  #
-                         NUM_MMA_WARPS: tl.constexpr,  #
-                         NUM_MMA_GROUPS: tl.constexpr,  #
-                         EPILOGUE_SUBTILE: tl.constexpr,  #
-                         NUM_CTAS: tl.constexpr,  #
-                         NUM_SMS: tl.constexpr,  #
-                         USE_WARP_BARRIER: tl.constexpr = False,  #
-                         ):
+def matmul_kernel_tlx_ws(
+        a_desc,
+        b_desc,
+        c_desc,  #
+        M,
+        N,
+        K,  #
+        BM: tl.constexpr,  #
+        BN: tl.constexpr,  #
+        BK: tl.constexpr,  #
+        GROUP_SIZE_M: tl.constexpr,  #
+        NUM_STAGES: tl.constexpr,  #
+        NUM_MMA_WARPS: tl.constexpr,  #
+        NUM_MMA_GROUPS: tl.constexpr,  #
+        EPILOGUE_SUBTILE: tl.constexpr,  #
+        NUM_CTAS: tl.constexpr,  #
+        NUM_SMS: tl.constexpr,  #
+        USE_WARP_BARRIER: tl.constexpr = False,  #
+):
     # Descriptor
     BLOCK_M_SPLIT: tl.constexpr = BM // NUM_MMA_GROUPS
 
     # Need NUM_STAGES sets of SMEM buffers for A and B
     # where each set contains two for A and one for B.
     # Split A into two in M-dimension to have two consumer tasks for wgmma
-    a = tlx.local_alloc((BLOCK_M_SPLIT, BK), tlx.dtype_of(a_desc), NUM_STAGES * NUM_MMA_GROUPS)
+    a = tlx.local_alloc((BLOCK_M_SPLIT, BK), tlx.dtype_of(a_desc),
+                        NUM_STAGES * NUM_MMA_GROUPS)
     b = tlx.local_alloc((BK, BN), tlx.dtype_of(b_desc), NUM_STAGES)
 
     # Need NUM_STAGES sets of mbarriers for A and B
     # where each set contains two for A and one for B.
     # Do the above for both empty states and full states respectively.
     if USE_WARP_BARRIER:
-        bars_empty_a = tlx.alloc_warp_barrier(num_barriers=NUM_STAGES * NUM_MMA_GROUPS, num_warps=4)
-        bars_empty_b = tlx.alloc_warp_barrier(num_barriers=NUM_STAGES, num_warps=4, num_arrivals=NUM_MMA_GROUPS)
+        bars_empty_a = tlx.alloc_warp_barrier(num_barriers=NUM_STAGES *
+                                              NUM_MMA_GROUPS,
+                                              num_warps=4)
+        bars_empty_b = tlx.alloc_warp_barrier(num_barriers=NUM_STAGES,
+                                              num_warps=4,
+                                              num_arrivals=NUM_MMA_GROUPS)
     else:
-        bars_empty_a = tlx.alloc_barriers(num_barriers=NUM_STAGES * NUM_MMA_GROUPS, arrive_count=1)
-        bars_empty_b = tlx.alloc_barriers(num_barriers=NUM_STAGES, arrive_count=NUM_MMA_GROUPS)
-    bars_full_a = tlx.alloc_barriers(num_barriers=NUM_STAGES * NUM_MMA_GROUPS, arrive_count=1)
+        bars_empty_a = tlx.alloc_barriers(num_barriers=NUM_STAGES *
+                                          NUM_MMA_GROUPS,
+                                          arrive_count=1)
+        bars_empty_b = tlx.alloc_barriers(num_barriers=NUM_STAGES,
+                                          arrive_count=NUM_MMA_GROUPS)
+    bars_full_a = tlx.alloc_barriers(num_barriers=NUM_STAGES * NUM_MMA_GROUPS,
+                                     arrive_count=1)
     bars_full_b = tlx.alloc_barriers(num_barriers=NUM_STAGES, arrive_count=1)
 
     # Barriers for cross-CTA synchronization before multicast TMA loads
@@ -167,16 +175,22 @@ def matmul_kernel_tlx_ws(a_desc, b_desc, c_desc,  #
                     # Async load to a[buf]
                     empty_a_1st = tlx.local_view(bars_empty_a, buf)  # mbar
                     full_a_1st = tlx.local_view(bars_full_a, buf)  # mbar
-                    tlx.barrier_wait(bar=empty_a_1st, phase=p ^ 1)  # EmptyBar A1 wait
-                    tlx.barrier_expect_bytes(full_a_1st, BLOCK_M_SPLIT * BK * tlx.size_of(tlx.dtype_of(a_desc)))
+                    tlx.barrier_wait(bar=empty_a_1st,
+                                     phase=p ^ 1)  # EmptyBar A1 wait
+                    tlx.barrier_expect_bytes(
+                        full_a_1st,
+                        BLOCK_M_SPLIT * BK * tlx.size_of(tlx.dtype_of(a_desc)))
                     data_a_1st = tlx.local_view(a, buf)  # smem data
-                    tlx.async_descriptor_load(a_desc, data_a_1st, [offset_am, offset_k], full_a_1st)
+                    tlx.async_descriptor_load(a_desc, data_a_1st,
+                                              [offset_am, offset_k],
+                                              full_a_1st)
 
                     # Async load to b[buf]
                     empty_b = tlx.local_view(bars_empty_b, buf)
                     full_b = tlx.local_view(bars_full_b, buf)
                     tlx.barrier_wait(bar=empty_b, phase=p ^ 1)
-                    tlx.barrier_expect_bytes(full_b, BN * BK * tlx.size_of(tlx.dtype_of(a_desc)))
+                    tlx.barrier_expect_bytes(
+                        full_b, BN * BK * tlx.size_of(tlx.dtype_of(a_desc)))
                     data_b = tlx.local_view(b, buf)
 
                     if NUM_CTAS == 2:
@@ -184,14 +198,18 @@ def matmul_kernel_tlx_ws(a_desc, b_desc, c_desc,  #
                         cta_id = tlx.cluster_cta_rank()
                         cta_bar = tlx.local_view(cta_bars, buf)
                         tlx.barrier_arrive(cta_bar, 1)
-                        tlx.barrier_arrive(cta_bar, 1, remote_cta_rank=cta_id ^ 1)
+                        tlx.barrier_arrive(cta_bar,
+                                           1,
+                                           remote_cta_rank=cta_id ^ 1)
                         tlx.barrier_wait(cta_bar, p)
 
                         # Each CTA loads half of B and multicasts to both CTAs
                         if cta_id == 0:
-                            buf_b_slice = tlx.local_slice(data_b, [0, 0], [BK, BN // 2])
+                            buf_b_slice = tlx.local_slice(
+                                data_b, [0, 0], [BK, BN // 2])
                         else:
-                            buf_b_slice = tlx.local_slice(data_b, [0, BN // 2], [BK, BN // 2])
+                            buf_b_slice = tlx.local_slice(
+                                data_b, [0, BN // 2], [BK, BN // 2])
                         tlx.async_descriptor_load(
                             b_desc,
                             buf_b_slice,
@@ -200,16 +218,23 @@ def matmul_kernel_tlx_ws(a_desc, b_desc, c_desc,  #
                             multicast_targets=[cta_id, cta_id ^ 1],
                         )
                     else:
-                        tlx.async_descriptor_load(b_desc, data_b, [offset_k, offset_bn], full_b)
+                        tlx.async_descriptor_load(b_desc, data_b,
+                                                  [offset_k, offset_bn],
+                                                  full_b)
 
                     # Async load to a[buf+NUM_STAGES]
-                    empty_a_2nd = tlx.local_view(bars_empty_a, buf + NUM_STAGES)
+                    empty_a_2nd = tlx.local_view(bars_empty_a,
+                                                 buf + NUM_STAGES)
                     full_a_2nd = tlx.local_view(bars_full_a, buf + NUM_STAGES)
                     tlx.barrier_wait(bar=empty_a_2nd, phase=p ^ 1)
                     tlx.barrier_expect_bytes(bar=full_a_2nd,
-                                             size=BLOCK_M_SPLIT * BK * tlx.size_of(tlx.dtype_of(a_desc)))
-                    data_a_2nd = tlx.local_view(a, buf + NUM_STAGES)  # smem data
-                    tlx.async_descriptor_load(a_desc, data_a_2nd, [offset_am + BLOCK_M_SPLIT, offset_k], full_a_2nd)
+                                             size=BLOCK_M_SPLIT * BK *
+                                             tlx.size_of(tlx.dtype_of(a_desc)))
+                    data_a_2nd = tlx.local_view(a,
+                                                buf + NUM_STAGES)  # smem data
+                    tlx.async_descriptor_load(
+                        a_desc, data_a_2nd,
+                        [offset_am + BLOCK_M_SPLIT, offset_k], full_a_2nd)
 
                     smem_accum_cnt += 1
 
@@ -243,13 +268,17 @@ def matmul_kernel_tlx_ws(a_desc, b_desc, c_desc,  #
                     buf, p = _get_bufidx_phase(smem_accum_cnt, NUM_STAGES)
 
                     # Wait for TMA load
-                    full_a = tlx.local_view(bars_full_a, buf + NUM_STAGES * tlx.async_task_replica_id())  # noqa
+                    full_a = tlx.local_view(
+                        bars_full_a,
+                        buf + NUM_STAGES * tlx.async_task_replica_id())  # noqa
                     full_b = tlx.local_view(bars_full_b, buf)
                     tlx.barrier_wait(bar=full_a, phase=p)
                     tlx.barrier_wait(bar=full_b, phase=p)
 
                     # async_dot
-                    data_a = tlx.local_view(a, buf + NUM_STAGES * tlx.async_task_replica_id())  # noqa
+                    data_a = tlx.local_view(
+                        a,
+                        buf + NUM_STAGES * tlx.async_task_replica_id())  # noqa
                     data_b = tlx.local_view(b, buf)
                     acc = tlx.async_dot(
                         data_a,
@@ -260,14 +289,17 @@ def matmul_kernel_tlx_ws(a_desc, b_desc, c_desc,  #
                     acc = tlx.async_dot_wait(tl.constexpr(0), acc)
 
                     # Release buffers
-                    empty_a = tlx.local_view(bars_empty_a, buf + NUM_STAGES * tlx.async_task_replica_id())  # noqa
+                    empty_a = tlx.local_view(
+                        bars_empty_a,
+                        buf + NUM_STAGES * tlx.async_task_replica_id())  # noqa
                     empty_b = tlx.local_view(bars_empty_b, buf)
                     tlx.barrier_arrive(empty_a)  # EmptyBar A1 arrive
                     tlx.barrier_arrive(empty_b)
 
                     smem_accum_cnt += 1
 
-                offset_cm = offset_am + BLOCK_M_SPLIT * tlx.async_task_replica_id()
+                offset_cm = offset_am + BLOCK_M_SPLIT * tlx.async_task_replica_id(
+                )
                 if EPILOGUE_SUBTILE:
                     acc = tl.reshape(acc, (BLOCK_M_SPLIT, 2, BN // 2))
                     acc = tl.permute(acc, (0, 2, 1))
@@ -277,7 +309,8 @@ def matmul_kernel_tlx_ws(a_desc, b_desc, c_desc,  #
                     c1 = acc1.to(tlx.dtype_of(c_desc))
                     c_desc.store([offset_cm, offset_bn + BN // 2], c1)
                 else:
-                    c_desc.store([offset_cm, offset_bn], acc.to(tlx.dtype_of(c_desc)))  # noqa
+                    c_desc.store([offset_cm, offset_bn],
+                                 acc.to(tlx.dtype_of(c_desc)))  # noqa
 
                 # Move to next tile with stride NUM_SMS
                 tile_id += NUM_SMS
@@ -327,7 +360,9 @@ def matmul(a, b, config=None):
         NUM_MMA_GROUPS = config["NUM_MMA_GROUPS"]
         BLOCK_M_SPLIT = config["BM"] // NUM_MMA_GROUPS
         desc_in_1.block_shape = [BLOCK_M_SPLIT, config["BK"]]
-        desc_in_2.block_shape = [config["BK"], config["BN"] // config.get("NUM_CTAS", 1)]
+        desc_in_2.block_shape = [
+            config["BK"], config["BN"] // config.get("NUM_CTAS", 1)
+        ]
         if config.get("EPILOGUE_SUBTILE", False):
             desc_out.block_shape = [BLOCK_M_SPLIT, config["BN"] // 2]
         else:
@@ -350,7 +385,10 @@ def matmul(a, b, config=None):
         )
     else:
         # Use persistent kernel with min(NUM_SMS, total_tiles) blocks
-        grid = lambda META: (min(NUM_SMS, triton.cdiv(M, META["BM"]) * triton.cdiv(N, META["BN"])), )  # noqa: E731
+        grid = lambda META: (min(
+            NUM_SMS,
+            triton.cdiv(M, META["BM"]) * triton.cdiv(N, META["BN"])),
+                             )  # noqa: E731
         matmul_kernel_tlx_ws[grid](
             desc_in_1,
             desc_in_2,

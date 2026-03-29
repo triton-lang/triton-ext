@@ -34,13 +34,11 @@ namespace tlx = mlir::triton::tlx;
 
 static std::optional<int64_t> extractConstantInt(mlir::Value v) {
   if (auto constIntOp =
-          mlir::dyn_cast_or_null<mlir::arith::ConstantIntOp>(
-              v.getDefiningOp()))
+          mlir::dyn_cast_or_null<mlir::arith::ConstantIntOp>(v.getDefiningOp()))
     return constIntOp.value();
   if (auto constOp =
           mlir::dyn_cast_or_null<mlir::arith::ConstantOp>(v.getDefiningOp())) {
-    if (auto intAttr =
-            mlir::dyn_cast<mlir::IntegerAttr>(constOp.getValue()))
+    if (auto intAttr = mlir::dyn_cast<mlir::IntegerAttr>(constOp.getValue()))
       return intAttr.getInt();
   }
   return std::nullopt;
@@ -52,7 +50,7 @@ static std::optional<int64_t> extractConstantInt(mlir::Value v) {
 
 // --- utlx_local_alloc: SMEM allocation with automatic layout encoding ---
 static void createLocalAllocSmem(TritonOpBuilder &self,
-                                  std::vector<mlir::Value> &operands) {
+                                 std::vector<mlir::Value> &operands) {
   if (operands.size() < 5)
     return;
 
@@ -80,21 +78,21 @@ static void createLocalAllocSmem(TritonOpBuilder &self,
     llvm::SmallVector<unsigned> order;
     for (int i = perBufferRank - 1; i >= 0; --i)
       order.push_back(static_cast<unsigned>(i));
-    encoding = ttg::SwizzledSharedEncodingAttr::get(
-        context, 1, 1, 1, order, cgaLayout);
+    encoding = ttg::SwizzledSharedEncodingAttr::get(context, 1, 1, 1, order,
+                                                    cgaLayout);
   } else {
     llvm::SmallVector<int64_t> perBufferShape(fullShape.begin() + 1,
                                               fullShape.end());
     llvm::SmallVector<unsigned> order;
     for (int i = perBufferRank - 1; i >= 0; --i)
       order.push_back(static_cast<unsigned>(i));
-    encoding = ttg::NVMMASharedEncodingAttr::get(
-        context, perBufferShape, order, cgaLayout, elemType, false);
+    encoding = ttg::NVMMASharedEncodingAttr::get(context, perBufferShape, order,
+                                                 cgaLayout, elemType, false);
   }
 
   auto memorySpace = ttg::SharedMemorySpaceAttr::get(context);
-  auto memDescType = ttg::MemDescType::get(fullShape, elemType, encoding,
-                                           memorySpace, true);
+  auto memDescType =
+      ttg::MemDescType::get(fullShape, elemType, encoding, memorySpace, true);
 
   operands[0] = self.create<ttg::LocalAllocOp>(memDescType);
 }
@@ -105,7 +103,7 @@ static void createLocalAllocSmem(TritonOpBuilder &self,
 // operands[2..N-2] = shape dims (full shape including num buffers)
 // operands[N-1] = layout hint (0 = tensor_memory_layout, 1 = dummy_tmem_layout)
 static void createLocalAllocTmem(TritonOpBuilder &self,
-                                  std::vector<mlir::Value> &operands) {
+                                 std::vector<mlir::Value> &operands) {
   if (operands.size() < 4)
     return;
 
@@ -131,8 +129,10 @@ static void createLocalAllocTmem(TritonOpBuilder &self,
   if (useDummyTmemLayout) {
     encoding = tlx::DummyTMEMLayoutAttr::get(context);
   } else {
-    // TensorMemoryEncodingAttr with blockM=shape[0], blockN=shape[1], colStride=1
-    auto cgaLayout = ttg::CGAEncodingAttr::get1CTALayout(context, perBufferRank);
+    // TensorMemoryEncodingAttr with blockM=shape[0], blockN=shape[1],
+    // colStride=1
+    auto cgaLayout =
+        ttg::CGAEncodingAttr::get1CTALayout(context, perBufferRank);
     llvm::SmallVector<int64_t> perBufferShape(fullShape.begin() + 1,
                                               fullShape.end());
     unsigned blockM = perBufferShape.size() >= 1 ? perBufferShape[0] : 1;
@@ -142,8 +142,8 @@ static void createLocalAllocTmem(TritonOpBuilder &self,
   }
 
   auto memorySpace = ttng::TensorMemorySpaceAttr::get(context);
-  auto memDescType = ttg::MemDescType::get(fullShape, elemType, encoding,
-                                           memorySpace, true);
+  auto memDescType =
+      ttg::MemDescType::get(fullShape, elemType, encoding, memorySpace, true);
 
   operands[0] = self.create<ttng::TMEMAllocOp>(memDescType, nullptr);
 }
@@ -157,8 +157,7 @@ static void createLocalView(TritonOpBuilder &self,
   mlir::Value localAlloc = operands[1];
   mlir::Value bufferIdx = operands[2];
 
-  auto localAllocType =
-      mlir::dyn_cast<ttg::MemDescType>(localAlloc.getType());
+  auto localAllocType = mlir::dyn_cast<ttg::MemDescType>(localAlloc.getType());
   if (!localAllocType)
     return;
 
@@ -167,8 +166,7 @@ static void createLocalView(TritonOpBuilder &self,
   if (localAllocShape.size() == 1) {
     memDescType = ttg::MemDescType::get(
         {1}, localAllocType.getElementType(), localAllocType.getEncoding(),
-        localAllocType.getMemorySpace(),
-        localAllocType.getMutableMemory());
+        localAllocType.getMemorySpace(), localAllocType.getMutableMemory());
   } else {
     memDescType = ttg::MemDescType::get(
         localAllocShape.drop_front(), localAllocType.getElementType(),
@@ -237,23 +235,22 @@ static void createAllocBarriers(TritonOpBuilder &self,
 
   int numCTAs = 1;
   auto cgaLayout = ttg::CGAEncodingAttr::get1DLayout(context, numCTAs);
-  auto encoding = ttg::SwizzledSharedEncodingAttr::get(
-      context, 1, 1, 1, {0}, cgaLayout);
+  auto encoding =
+      ttg::SwizzledSharedEncodingAttr::get(context, 1, 1, 1, {0}, cgaLayout);
 
   auto barriersMemDescType = ttg::MemDescType::get(
       {numBarriers, numCTAs}, i64Type, encoding, memorySpace, true);
 
-  auto singleBarrierMemDescType = ttg::MemDescType::get(
-      {numCTAs}, i64Type, encoding, memorySpace, true);
+  auto singleBarrierMemDescType =
+      ttg::MemDescType::get({numCTAs}, i64Type, encoding, memorySpace, true);
 
-  mlir::Value bufferViews =
-      self.create<ttg::LocalAllocOp>(barriersMemDescType);
+  mlir::Value bufferViews = self.create<ttg::LocalAllocOp>(barriersMemDescType);
 
   for (int64_t i = 0; i < numBarriers; i++) {
     mlir::Value idx = mlir::arith::ConstantIntOp::create(
         self.getBuilder(), bufferViews.getLoc(), i, 32);
-    mlir::Value buf = self.create<ttg::MemDescIndexOp>(
-        singleBarrierMemDescType, bufferViews, idx);
+    mlir::Value buf = self.create<ttg::MemDescIndexOp>(singleBarrierMemDescType,
+                                                       bufferViews, idx);
     self.create<ttng::InitBarrierOp>(buf, arriveCount);
   }
 
@@ -321,15 +318,15 @@ static void createStorageAliasSpec(TritonOpBuilder &self,
     return;
 
   auto *context = self.getBuilder().getContext();
-  auto storageKind = *storageVal == 0 ? tlx::StorageKind::smem
-                                       : tlx::StorageKind::tmem;
+  auto storageKind =
+      *storageVal == 0 ? tlx::StorageKind::smem : tlx::StorageKind::tmem;
 
   std::optional<int64_t> bufferSizeBytes;
   if (sizeVal && *sizeVal >= 0)
     bufferSizeBytes = *sizeVal;
 
-  auto resultType = tlx::StorageAliasSpecType::get(
-      context, storageKind, bufferSizeBytes);
+  auto resultType =
+      tlx::StorageAliasSpecType::get(context, storageKind, bufferSizeBytes);
   auto storageAttr = tlx::StorageKindAttr::get(context, storageKind);
   mlir::IntegerAttr bufferSizeAttr = nullptr;
   if (bufferSizeBytes)
@@ -379,13 +376,14 @@ static void createStorageAliasLocalAlloc(TritonOpBuilder &self,
     encoding = tlx::DummyTMEMLayoutAttr::get(context);
   } else {
     memorySpace = ttg::SharedMemorySpaceAttr::get(context);
-    auto cgaLayout = ttg::CGAEncodingAttr::get1CTALayout(context, perBufferRank);
+    auto cgaLayout =
+        ttg::CGAEncodingAttr::get1CTALayout(context, perBufferRank);
     llvm::SmallVector<unsigned> order;
     for (int i = perBufferRank - 1; i >= 0; --i)
       order.push_back(static_cast<unsigned>(i));
     if (perBufferRank == 1) {
-      encoding = ttg::SwizzledSharedEncodingAttr::get(
-          context, 1, 1, 1, order, cgaLayout);
+      encoding = ttg::SwizzledSharedEncodingAttr::get(context, 1, 1, 1, order,
+                                                      cgaLayout);
     } else {
       llvm::SmallVector<int64_t> perBufferShape(fullShape.begin() + 1,
                                                 fullShape.end());
@@ -394,11 +392,11 @@ static void createStorageAliasLocalAlloc(TritonOpBuilder &self,
     }
   }
 
-  auto memDescType = ttg::MemDescType::get(fullShape, elemType, encoding,
-                                           memorySpace, true);
+  auto memDescType =
+      ttg::MemDescType::get(fullShape, elemType, encoding, memorySpace, true);
 
-  operands[0] = self.create<tlx::StorageAliasLocalAllocOp>(
-      memDescType, storageAlias);
+  operands[0] =
+      self.create<tlx::StorageAliasLocalAllocOp>(memDescType, storageAlias);
 }
 
 // --- utlx_reuse_group: Create a reuse group ---
@@ -418,15 +416,15 @@ static void createReuseGroup(TritonOpBuilder &self,
 
   auto *context = self.getBuilder().getContext();
   auto groupKindEnum = *groupKindVal == 0 ? tlx::ReuseGroupKind::shared
-                                           : tlx::ReuseGroupKind::distinct;
+                                          : tlx::ReuseGroupKind::distinct;
 
   std::vector<mlir::Value> elements(operands.begin() + 3, operands.end());
   auto resultType = tlx::ReuseGroupType::get(context, groupKindEnum);
   auto groupKindAttr = tlx::ReuseGroupKindAttr::get(context, groupKindEnum);
   auto groupSizeAttr = self.getBuilder().getI64IntegerAttr(*groupSizeVal);
 
-  operands[0] = self.create<tlx::ReuseGroupOp>(
-      resultType, elements, groupKindAttr, groupSizeAttr);
+  operands[0] = self.create<tlx::ReuseGroupOp>(resultType, elements,
+                                               groupKindAttr, groupSizeAttr);
 }
 
 // --- utlx_set_buffer_overlap ---
@@ -472,9 +470,8 @@ static void createLocalAlias(TritonOpBuilder &self,
   if (!srcType)
     return;
 
-  auto memDescType = ttg::MemDescType::get(shape, elemType,
-                                           srcType.getEncoding(),
-                                           srcType.getMemorySpace(), true);
+  auto memDescType = ttg::MemDescType::get(
+      shape, elemType, srcType.getEncoding(), srcType.getMemorySpace(), true);
 
   operands[0] = self.create<tlx::LocalAliasOp>(memDescType, src);
 }
@@ -490,7 +487,8 @@ static void createRequireLayout(TritonOpBuilder &self,
     return;
 
   // This custom op just wraps the source — actual layout is set by the
-  // require_layout builder method in Python which calls builder methods directly
+  // require_layout builder method in Python which calls builder methods
+  // directly
   operands[0] = operands[1];
 }
 
@@ -504,8 +502,8 @@ static void createReleaseLayout(TritonOpBuilder &self,
   if (!type)
     return;
 
-  auto newType = mlir::RankedTensorType::get(type.getShape(),
-                                             type.getElementType());
+  auto newType =
+      mlir::RankedTensorType::get(type.getShape(), type.getElementType());
   operands[0] = self.create<tlx::ReleaseLayoutOp>(newType, operands[1]);
 }
 
@@ -536,14 +534,12 @@ static void createAsyncWaitGroup(TritonOpBuilder &self,
   llvm::SmallVector<mlir::Value> tokens;
   for (unsigned i = 2; i < operands.size(); ++i)
     tokens.push_back(operands[i]);
-  self.create<ttg::AsyncWaitOp>(tokens,
-                                static_cast<int>(*pendingsVal));
+  self.create<ttg::AsyncWaitOp>(tokens, static_cast<int>(*pendingsVal));
 }
 
-// --- utlx_warp_group_dot_wait: WarpGroupDotWaitOp with ReleaseLayoutOp unwrap ---
-// operands[0] = result slot
-// operands[1] = input value (possibly wrapped in ReleaseLayoutOp)
-// operands[2] = pendings (i32 constant)
+// --- utlx_warp_group_dot_wait: WarpGroupDotWaitOp with ReleaseLayoutOp unwrap
+// --- operands[0] = result slot operands[1] = input value (possibly wrapped in
+// ReleaseLayoutOp) operands[2] = pendings (i32 constant)
 static void createWarpGroupDotWait(TritonOpBuilder &self,
                                    std::vector<mlir::Value> &operands) {
   if (operands.size() < 3)
@@ -609,9 +605,7 @@ static void addTLXFixupPass(mlir::PassManager *pm,
   pm->addPass(tlx::createTritonTLXFixup(options));
 }
 
-static void registerTLXFixupPass() {
-  tlx::registerPasses();
-}
+static void registerTLXFixupPass() { tlx::registerPasses(); }
 
 static void addPropagateLayoutPass(mlir::PassManager *pm,
                                    const std::vector<std::string> &) {
@@ -651,7 +645,7 @@ static void noopRegister() {}
 
 // --- Ported NVIDIA passes ---
 static void addPruneUnusedBarriersPass(mlir::PassManager *pm,
-                                        const std::vector<std::string> &) {
+                                       const std::vector<std::string> &) {
   pm->addPass(utlx::createPruneUnusedBarriersPass());
 }
 
@@ -660,22 +654,18 @@ static void registerPruneUnusedBarriersPassFn() {
 }
 
 static void addPingPongPrepPass(mlir::PassManager *pm,
-                                 const std::vector<std::string> &) {
+                                const std::vector<std::string> &) {
   pm->addPass(utlx::createPingPongPrepPass());
 }
 
-static void registerPingPongPrepPassFn() {
-  utlx::registerPingPongPrepPass();
-}
+static void registerPingPongPrepPassFn() { utlx::registerPingPongPrepPass(); }
 
 static void addPingPongSyncPass(mlir::PassManager *pm,
-                                 const std::vector<std::string> &) {
+                                const std::vector<std::string> &) {
   pm->addPass(utlx::createPingPongSyncPass());
 }
 
-static void registerPingPongSyncPassFn() {
-  utlx::registerPingPongSyncPass();
-}
+static void registerPingPongSyncPassFn() { utlx::registerPingPongSyncPass(); }
 
 // --- Ported AMD passes ---
 // NOTE: AMD barrier passes are disabled until triton-tlx-core-changes patch
@@ -704,31 +694,30 @@ using namespace mlir::triton;
 
 TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
   static plugin::PassInfo passes[] = {
-      {"utlx_convert_triton_to_tritongpu", "0.1.0",
-       addUTLXConversionPass, registerUTLXConversionPass},
+      {"utlx_convert_triton_to_tritongpu", "0.1.0", addUTLXConversionPass,
+       registerUTLXConversionPass},
       {"utlx_insert_and_propagate_layout", "0.1.0",
        addUTLXInsertAndPropagatePass, registerUTLXInsertAndPropagatePass},
-      {"utlx_fixup", "0.1.0",
-       addTLXFixupPass, registerTLXFixupPass},
-      {"utlx_propagate_layout", "0.1.0",
-       addPropagateLayoutPass, registerPropagateLayoutPass},
-      {"utlx_insert_require_layout", "0.1.0",
-       addInsertRequireLayoutPass, noopRegister},
-      {"utlx_rewrite_local_alias", "0.1.0",
-       addRewriteLocalAliasPass, noopRegister},
+      {"utlx_fixup", "0.1.0", addTLXFixupPass, registerTLXFixupPass},
+      {"utlx_propagate_layout", "0.1.0", addPropagateLayoutPass,
+       registerPropagateLayoutPass},
+      {"utlx_insert_require_layout", "0.1.0", addInsertRequireLayoutPass,
+       noopRegister},
+      {"utlx_rewrite_local_alias", "0.1.0", addRewriteLocalAliasPass,
+       noopRegister},
       {"utlx_resolve_placeholder_layouts", "0.1.0",
        addResolvePlaceholderLayoutsPass, noopRegister},
-      {"utlx_print_ttgir_to_tlx", "0.1.0",
-       addPrintTTGIRToTLXPass, noopRegister},
-      {"utlx_storage_alias_lowering", "0.1.0",
-       addStorageAliasLoweringPass, noopRegister},
+      {"utlx_print_ttgir_to_tlx", "0.1.0", addPrintTTGIRToTLXPass,
+       noopRegister},
+      {"utlx_storage_alias_lowering", "0.1.0", addStorageAliasLoweringPass,
+       noopRegister},
       // Ported NVIDIA passes
-      {"utlx_prune_unused_barriers", "0.1.0",
-       addPruneUnusedBarriersPass, registerPruneUnusedBarriersPassFn},
-      {"utlx_ping_pong_prep", "0.1.0",
-       addPingPongPrepPass, registerPingPongPrepPassFn},
-      {"utlx_ping_pong_sync", "0.1.0",
-       addPingPongSyncPass, registerPingPongSyncPassFn},
+      {"utlx_prune_unused_barriers", "0.1.0", addPruneUnusedBarriersPass,
+       registerPruneUnusedBarriersPassFn},
+      {"utlx_ping_pong_prep", "0.1.0", addPingPongPrepPass,
+       registerPingPongPrepPassFn},
+      {"utlx_ping_pong_sync", "0.1.0", addPingPongSyncPass,
+       registerPingPongSyncPassFn},
       // Ported AMD passes (disabled until patched triton is available)
       // {"utlx_amd_lower_barrier_ops", "0.1.0",
       //  addAMDLowerBarrierOpsPass, registerAMDLowerBarrierOpsPassFn},
@@ -775,18 +764,23 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_read_barrier_phase", utlx::createReadBarrierPhase},
       // Modified ops with extended signatures (runtime op creation)
       {"utlx_fp_to_fp_with_rbits", utlx::createFpToFpWithRbits},
-      {"utlx_make_tensor_desc_with_desc_ptr", utlx::createMakeTensorDescWithDescPtr},
+      {"utlx_make_tensor_desc_with_desc_ptr",
+       utlx::createMakeTensorDescWithDescPtr},
       // Combined require-layout ops (encoding + RequireLayoutOp)
-      {"utlx_require_nv_mma_shared_layout", utlx::createRequireNvMmaSharedLayout},
+      {"utlx_require_nv_mma_shared_layout",
+       utlx::createRequireNvMmaSharedLayout},
       {"utlx_require_nv_mma_layout", utlx::createRequireNvMmaLayout},
       {"utlx_require_dot_operand_layout", utlx::createRequireDotOperandLayout},
-      {"utlx_require_tensor_memory_layout", utlx::createRequireTensorMemoryLayout},
-      {"utlx_require_tensor_memory_scales_layout", utlx::createRequireTensorMemoryScalesLayout},
+      {"utlx_require_tensor_memory_layout",
+       utlx::createRequireTensorMemoryLayout},
+      {"utlx_require_tensor_memory_scales_layout",
+       utlx::createRequireTensorMemoryScalesLayout},
       // Memory ops
       {"utlx_async_load", utlx::createAsyncLoad},
       {"utlx_global_scratch_alloc", utlx::createGlobalScratchAlloc},
       {"utlx_make_dummy_register_layout", utlx::createMakeDummyRegisterLayout},
-      {"utlx_require_with_layout_carrier", utlx::createRequireWithLayoutCarrier},
+      {"utlx_require_with_layout_carrier",
+       utlx::createRequireWithLayoutCarrier},
       {"utlx_alloc_clc_responses", utlx::createAllocClcResponses},
       {"utlx_clc_query", utlx::createClcQuery},
       // Thread/cluster ops
@@ -804,11 +798,11 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       "uTLXPlugin",
       "0.1.0",
       passes,
-      12,     // numPasses
+      12, // numPasses
       dialects,
-      1,      // numDialects
+      1, // numDialects
       ops,
-      48,     // numOps
+      48, // numOps
   };
   return &info;
 }

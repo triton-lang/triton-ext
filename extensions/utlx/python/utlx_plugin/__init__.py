@@ -188,6 +188,7 @@ from .utility import (
 # This must happen before importing mxfp8_utils which does that import.
 import sys as _sys
 import triton.language.extra as _extra
+
 _sys.modules['triton.language.extra.tlx'] = _sys.modules[__name__]
 _extra.tlx = _sys.modules[__name__]
 
@@ -197,6 +198,7 @@ from .warp_ops import vote_ballot_sync
 from . import custom_stages
 
 from triton import knobs
+
 knobs.runtime.add_stages_inspection_hook = custom_stages.inspect_stages_hook
 
 

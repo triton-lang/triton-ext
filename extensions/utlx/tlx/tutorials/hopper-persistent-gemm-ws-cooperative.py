@@ -81,11 +81,15 @@ def matmul_kernel_tlx_ws_persistent(
 ):
     BLOCK_M_SPLIT: tl.constexpr = BM // NUM_MMA_GROUPS
 
-    a = tlx.local_alloc((BLOCK_M_SPLIT, BK), tlx.dtype_of(a_desc), NUM_STAGES * NUM_MMA_GROUPS)
+    a = tlx.local_alloc((BLOCK_M_SPLIT, BK), tlx.dtype_of(a_desc),
+                        NUM_STAGES * NUM_MMA_GROUPS)
     b = tlx.local_alloc((BK, BN), tlx.dtype_of(b_desc), NUM_STAGES)
-    bars_empty_a = tlx.alloc_barriers(num_barriers=NUM_STAGES * NUM_MMA_GROUPS, arrive_count=1)
-    bars_full_a = tlx.alloc_barriers(num_barriers=NUM_STAGES * NUM_MMA_GROUPS, arrive_count=1)
-    bars_empty_b = tlx.alloc_barriers(num_barriers=NUM_STAGES, arrive_count=NUM_MMA_GROUPS)
+    bars_empty_a = tlx.alloc_barriers(num_barriers=NUM_STAGES * NUM_MMA_GROUPS,
+                                      arrive_count=1)
+    bars_full_a = tlx.alloc_barriers(num_barriers=NUM_STAGES * NUM_MMA_GROUPS,
+                                     arrive_count=1)
+    bars_empty_b = tlx.alloc_barriers(num_barriers=NUM_STAGES,
+                                      arrive_count=NUM_MMA_GROUPS)
     bars_full_b = tlx.alloc_barriers(num_barriers=NUM_STAGES, arrive_count=1)
 
     with tlx.async_tasks():
@@ -104,7 +108,8 @@ def matmul_kernel_tlx_ws_persistent(
                 group_id = tile_id // num_pid_in_group
                 first_pid_m = group_id * GROUP_SIZE_M
                 group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-                pid_m = first_pid_m + ((tile_id % num_pid_in_group) % group_size_m)
+                pid_m = first_pid_m + (
+                    (tile_id % num_pid_in_group) % group_size_m)
                 pid_n = (tile_id % num_pid_in_group) // group_size_m
 
                 offset_am = pid_m * BM
@@ -117,9 +122,12 @@ def matmul_kernel_tlx_ws_persistent(
                     empty_a_1st = tlx.local_view(bars_empty_a, buf)
                     full_a_1st = tlx.local_view(bars_full_a, buf)
                     tlx.barrier_wait(bar=empty_a_1st, phase=p)
-                    tlx.barrier_expect_bytes(full_a_1st, BLOCK_M_SPLIT * BK * 2)
+                    tlx.barrier_expect_bytes(full_a_1st,
+                                             BLOCK_M_SPLIT * BK * 2)
                     data_a_1st = tlx.local_view(a, buf)
-                    tlx.async_descriptor_load(a_desc, data_a_1st, [offset_am, offset_k], full_a_1st)
+                    tlx.async_descriptor_load(a_desc, data_a_1st,
+                                              [offset_am, offset_k],
+                                              full_a_1st)
 
                     # Async load to b[buf]
                     empty_b = tlx.local_view(bars_empty_b, buf)
@@ -127,15 +135,20 @@ def matmul_kernel_tlx_ws_persistent(
                     tlx.barrier_wait(bar=empty_b, phase=p)
                     tlx.barrier_expect_bytes(full_b, BN * BK * 2)
                     data_b = tlx.local_view(b, buf)
-                    tlx.async_descriptor_load(b_desc, data_b, [offset_k, offset_bn], full_b)
+                    tlx.async_descriptor_load(b_desc, data_b,
+                                              [offset_k, offset_bn], full_b)
 
                     # Async load to a[buf+NUM_STAGES]
-                    empty_a_2nd = tlx.local_view(bars_empty_a, buf + NUM_STAGES)
+                    empty_a_2nd = tlx.local_view(bars_empty_a,
+                                                 buf + NUM_STAGES)
                     full_a_2nd = tlx.local_view(bars_full_a, buf + NUM_STAGES)
                     tlx.barrier_wait(bar=empty_a_2nd, phase=p)
-                    tlx.barrier_expect_bytes(bar=full_a_2nd, size=BLOCK_M_SPLIT * BK * 2)
+                    tlx.barrier_expect_bytes(bar=full_a_2nd,
+                                             size=BLOCK_M_SPLIT * BK * 2)
                     data_a_2nd = tlx.local_view(a, buf + NUM_STAGES)
-                    tlx.async_descriptor_load(a_desc, data_a_2nd, [offset_am + BLOCK_M_SPLIT, offset_k], full_a_2nd)
+                    tlx.async_descriptor_load(
+                        a_desc, data_a_2nd,
+                        [offset_am + BLOCK_M_SPLIT, offset_k], full_a_2nd)
 
                     p = p ^ (buf == (NUM_STAGES - 1))
                     buf = (buf + 1) % NUM_STAGES
@@ -156,7 +169,8 @@ def matmul_kernel_tlx_ws_persistent(
                 group_id = tile_id // num_pid_in_group
                 first_pid_m = group_id * GROUP_SIZE_M
                 group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-                pid_m = first_pid_m + ((tile_id % num_pid_in_group) % group_size_m)
+                pid_m = first_pid_m + (
+                    (tile_id % num_pid_in_group) % group_size_m)
                 pid_n = (tile_id % num_pid_in_group) // group_size_m
 
                 offset_am = pid_m * BM
@@ -177,7 +191,8 @@ def matmul_kernel_tlx_ws_persistent(
 
                 for k in range(1, tl.cdiv(K, BK)):
 
-                    full_a = tlx.local_view(bars_full_a, buf + NUM_STAGES * cid)
+                    full_a = tlx.local_view(bars_full_a,
+                                            buf + NUM_STAGES * cid)
                     full_b = tlx.local_view(bars_full_b, buf)
                     tlx.barrier_wait(bar=full_a, phase=p)
                     tlx.barrier_wait(bar=full_b, phase=p)
@@ -188,7 +203,8 @@ def matmul_kernel_tlx_ws_persistent(
                     acc = tlx.async_dot(data_a, data_b, acc)
                     acc = tlx.async_dot_wait(1, acc)
 
-                    empty_a = tlx.local_view(bars_empty_a, last_buf + NUM_STAGES * cid)
+                    empty_a = tlx.local_view(bars_empty_a,
+                                             last_buf + NUM_STAGES * cid)
                     empty_b = tlx.local_view(bars_empty_b, last_buf)
                     tlx.barrier_arrive(empty_a)
                     tlx.barrier_arrive(empty_b)
@@ -200,7 +216,8 @@ def matmul_kernel_tlx_ws_persistent(
                 offset_cm = offset_am + BLOCK_M_SPLIT * cid
 
                 acc = tlx.async_dot_wait(0, acc)
-                empty_a = tlx.local_view(bars_empty_a, last_buf + NUM_STAGES * cid)
+                empty_a = tlx.local_view(bars_empty_a,
+                                         last_buf + NUM_STAGES * cid)
                 empty_b = tlx.local_view(bars_empty_b, last_buf)
                 tlx.barrier_arrive(empty_a)
                 tlx.barrier_arrive(empty_b)
@@ -214,7 +231,8 @@ def matmul_kernel_tlx_ws_persistent(
                     c1 = acc1.to(tlx.dtype_of(c_desc))
                     c_desc.store([offset_cm, offset_bn + BN // 2], c1)
                 else:
-                    c_desc.store([offset_cm, offset_bn], acc.to(tlx.dtype_of(c_desc)))
+                    c_desc.store([offset_cm, offset_bn],
+                                 acc.to(tlx.dtype_of(c_desc)))
 
 
 def matmul_tlx_ws_persistent(a, b):
@@ -228,9 +246,18 @@ def matmul_tlx_ws_persistent(a, b):
     NUM_SMS = torch.cuda.get_device_properties(DEVICE).multi_processor_count
 
     dummy_block = [1, 1]
-    desc_in_1 = TensorDescriptor(a, shape=[M, K], strides=[K, 1], block_shape=dummy_block)
-    desc_in_2 = TensorDescriptor(b, shape=[K, N], strides=[N, 1], block_shape=dummy_block)
-    desc_out = TensorDescriptor(c, shape=[M, N], strides=[N, 1], block_shape=dummy_block)
+    desc_in_1 = TensorDescriptor(a,
+                                 shape=[M, K],
+                                 strides=[K, 1],
+                                 block_shape=dummy_block)
+    desc_in_2 = TensorDescriptor(b,
+                                 shape=[K, N],
+                                 strides=[N, 1],
+                                 block_shape=dummy_block)
+    desc_out = TensorDescriptor(c,
+                                shape=[M, N],
+                                strides=[N, 1],
+                                block_shape=dummy_block)
 
     def grid(META):
         num_m_blocks = triton.cdiv(M, META['BM'])
@@ -285,17 +312,23 @@ for fp8_inputs in [False, True]:
         continue
     configs.append(
         triton.testing.Benchmark(
-            x_names=["M", "N", "K"],  # Argument names to use as an x-axis for the plot
-            x_vals=[128 * i for i in range(2, 33)],  # Different possible values for `x_name`
-            line_arg="provider",  # Argument name whose value corresponds to a different line in the plot
+            x_names=["M", "N",
+                     "K"],  # Argument names to use as an x-axis for the plot
+            x_vals=[128 * i for i in range(2, 33)
+                    ],  # Different possible values for `x_name`
+            line_arg=
+            "provider",  # Argument name whose value corresponds to a different line in the plot
             # Possible values for `line_arg`
             # Don't compare to cublas for fp8 cases as torch.matmul doesn't support fp8 at the moment.
-            line_vals=["triton"] if fp8_inputs else [ref_lib.lower(), "triton"],  # Label name for the lines
-            line_names=["Triton"] if fp8_inputs else [ref_lib, "Triton"],  # Line styles
+            line_vals=["triton"] if fp8_inputs else
+            [ref_lib.lower(), "triton"],  # Label name for the lines
+            line_names=["Triton"]
+            if fp8_inputs else [ref_lib, "Triton"],  # Line styles
             styles=[("green", "-"), ("blue", "-")],
             ylabel="TFLOPS",  # Label name for the y-axis
-            plot_name="matmul-performance-" +
-            ("fp16" if not fp8_inputs else "fp8"),  # Name for the plot, used also as a file name for saving the plot.
+            plot_name="matmul-performance-" + (
+                "fp16" if not fp8_inputs else "fp8"
+            ),  # Name for the plot, used also as a file name for saving the plot.
             args={"fp8_inputs": fp8_inputs},
         ))
 
@@ -310,12 +343,18 @@ def benchmark(M, N, K, provider, fp8_inputs):
         b = b.to(torch.float8_e5m2)
     quantiles = [0.5, 0.2, 0.8]
     if provider == ref_lib.lower():
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: torch.matmul(a, b), quantiles=quantiles, warmup=200,
-                                                     rep=200)
+        ms, min_ms, max_ms = triton.testing.do_bench(
+            lambda: torch.matmul(a, b),
+            quantiles=quantiles,
+            warmup=200,
+            rep=200)
     if provider == 'triton':
         _ = matmul_tlx_ws_persistent(a, b)  # run to compile
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: matmul_tlx_ws_persistent(a, b), quantiles=quantiles,
-                                                     warmup=200, rep=200)
+        ms, min_ms, max_ms = triton.testing.do_bench(
+            lambda: matmul_tlx_ws_persistent(a, b),
+            quantiles=quantiles,
+            warmup=200,
+            rep=200)
     perf = lambda ms: 2 * M * N * K * 1e-12 / (ms * 1e-3)
     return perf(ms), perf(max_ms), perf(min_ms)
 

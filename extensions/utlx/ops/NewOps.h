@@ -28,20 +28,27 @@ void createReadBarrierPhase(TritonOpBuilder &, std::vector<mlir::Value> &);
 
 // Modified ops (wrappers for extended signatures)
 void createFpToFpWithRbits(TritonOpBuilder &, std::vector<mlir::Value> &);
-void createMakeTensorDescWithDescPtr(TritonOpBuilder &, std::vector<mlir::Value> &);
+void createMakeTensorDescWithDescPtr(TritonOpBuilder &,
+                                     std::vector<mlir::Value> &);
 
 // Combined require-layout ops (create encoding + RequireLayoutOp in one step)
-void createRequireNvMmaSharedLayout(TritonOpBuilder &, std::vector<mlir::Value> &);
+void createRequireNvMmaSharedLayout(TritonOpBuilder &,
+                                    std::vector<mlir::Value> &);
 void createRequireNvMmaLayout(TritonOpBuilder &, std::vector<mlir::Value> &);
-void createRequireDotOperandLayout(TritonOpBuilder &, std::vector<mlir::Value> &);
-void createRequireTensorMemoryLayout(TritonOpBuilder &, std::vector<mlir::Value> &);
-void createRequireTensorMemoryScalesLayout(TritonOpBuilder &, std::vector<mlir::Value> &);
+void createRequireDotOperandLayout(TritonOpBuilder &,
+                                   std::vector<mlir::Value> &);
+void createRequireTensorMemoryLayout(TritonOpBuilder &,
+                                     std::vector<mlir::Value> &);
+void createRequireTensorMemoryScalesLayout(TritonOpBuilder &,
+                                           std::vector<mlir::Value> &);
 
 // Memory ops
 void createAsyncLoad(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createGlobalScratchAlloc(TritonOpBuilder &, std::vector<mlir::Value> &);
-void createMakeDummyRegisterLayout(TritonOpBuilder &, std::vector<mlir::Value> &);
-void createRequireWithLayoutCarrier(TritonOpBuilder &, std::vector<mlir::Value> &);
+void createMakeDummyRegisterLayout(TritonOpBuilder &,
+                                   std::vector<mlir::Value> &);
+void createRequireWithLayoutCarrier(TritonOpBuilder &,
+                                    std::vector<mlir::Value> &);
 void createAllocClcResponses(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createClcQuery(TritonOpBuilder &, std::vector<mlir::Value> &);
 

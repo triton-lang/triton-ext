@@ -145,7 +145,8 @@ def grouped_matmul_kernel(
             offs_k = tl.arange(0, BLOCK_SIZE_K)
             a_ptrs = a_ptr + offs_am[:, None] * lda + offs_k[None, :]
             b_ptrs = b_ptr + offs_k[:, None] * ldb + offs_bn[None, :]
-            accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+            accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N),
+                                   dtype=tl.float32)
             for kk in range(0, tl.cdiv(k, BLOCK_SIZE_K)):
                 # hint to Triton compiler to do proper loop pipelining
                 tl.multiple_of(a_ptrs, [16, 16])
@@ -217,12 +218,14 @@ def group_gemm_fn(group_A, group_B):
 
 
 tma_configs = [
-    triton.Config({"BLOCK_SIZE_M": BM, "BLOCK_SIZE_N": BN, "BLOCK_SIZE_K": BK}, num_stages=s, num_warps=w)
-    for BM in [128]
-    for BN in [128, 256]
-    for BK in [64, 128]
-    for s in ([3, 4])
-    for w in [4, 8]
+    triton.Config({
+        "BLOCK_SIZE_M": BM,
+        "BLOCK_SIZE_N": BN,
+        "BLOCK_SIZE_K": BK
+    },
+                  num_stages=s,
+                  num_warps=w) for BM in [128] for BN in [128, 256]
+    for BK in [64, 128] for s in ([3, 4]) for w in [4, 8]
 ]
 
 
@@ -306,7 +309,8 @@ def grouped_matmul_tma_kernel(
                 offs_am = tile_m_idx * BLOCK_SIZE_M
                 offs_bn = tile_n_idx * BLOCK_SIZE_N
 
-                accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+                accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N),
+                                       dtype=tl.float32)
                 for kk in range(0, tl.cdiv(k, BLOCK_SIZE_K)):
                     a = a_desc.load([offs_am, kk * BLOCK_SIZE_K])
                     b = b_desc.load([offs_bn, kk * BLOCK_SIZE_K])
@@ -335,18 +339,19 @@ def _get_bufidx_phase(accum_cnt, NUM_BUFFERS_KV):
 tlx_configs = [
     triton.Config(
         {
-            "BLOCK_SIZE_M": BM, "BLOCK_SIZE_N": BN, "BLOCK_SIZE_K": BK, "NUM_SMEM_BUFFERS": s, "NUM_TMEM_BUFFERS": t,
-            "EPILOGUE_SUBTILE": subtile, "NUM_CTAS": cluster_size, "ctas_per_cga": (cluster_size, 1, 1)
+            "BLOCK_SIZE_M": BM,
+            "BLOCK_SIZE_N": BN,
+            "BLOCK_SIZE_K": BK,
+            "NUM_SMEM_BUFFERS": s,
+            "NUM_TMEM_BUFFERS": t,
+            "EPILOGUE_SUBTILE": subtile,
+            "NUM_CTAS": cluster_size,
+            "ctas_per_cga": (cluster_size, 1, 1)
         },
         num_warps=4,
         num_stages=1,
-    )
-    for BM in [128]
-    for BN in [128, 256]
-    for BK in [64, 128]
-    for s in [2, 3, 4]
-    for t in [2]
-    for subtile in [1, 2, 4]
+    ) for BM in [128] for BN in [128, 256] for BK in [64, 128]
+    for s in [2, 3, 4] for t in [2] for subtile in [1, 2, 4]
     for cluster_size in [1, 2]
 ]
 
@@ -390,20 +395,28 @@ def grouped_matmul_tlx_kernel(
         pred_cta0 = cluster_cta_rank == 0
 
         # 2cta specific
-        cta_bars = tlx.alloc_barriers(num_barriers=NUM_SMEM_BUFFERS,
-                                      arrive_count=2)  # CTA0 waits for CTA1's data before mma
+        cta_bars = tlx.alloc_barriers(
+            num_barriers=NUM_SMEM_BUFFERS,
+            arrive_count=2)  # CTA0 waits for CTA1's data before mma
 
     # allocate NUM_SMEM_BUFFERS buffers
-    buffers_A = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_K), dtype, NUM_SMEM_BUFFERS)
-    buffers_B = tlx.local_alloc((BLOCK_SIZE_K, BLOCK_SIZE_N // NUM_CTAS), dtype, NUM_SMEM_BUFFERS)
+    buffers_A = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_K), dtype,
+                                NUM_SMEM_BUFFERS)
+    buffers_B = tlx.local_alloc((BLOCK_SIZE_K, BLOCK_SIZE_N // NUM_CTAS),
+                                dtype, NUM_SMEM_BUFFERS)
     # use multiple TMEM buffers to overlap MMA and epilogue
-    tmem_buffers = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_N), tl.float32, NUM_TMEM_BUFFERS, tlx.storage_kind.tmem)
+    tmem_buffers = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_N), tl.float32,
+                                   NUM_TMEM_BUFFERS, tlx.storage_kind.tmem)
 
     # allocate barriers
-    smem_empty_bars = tlx.alloc_barriers(num_barriers=NUM_SMEM_BUFFERS, arrive_count=1)
-    smem_full_bars = tlx.alloc_barriers(num_barriers=NUM_SMEM_BUFFERS, arrive_count=1)
-    tmem_full_bars = tlx.alloc_barriers(num_barriers=NUM_TMEM_BUFFERS, arrive_count=1)
-    tmem_empty_bars = tlx.alloc_barriers(num_barriers=NUM_TMEM_BUFFERS, arrive_count=1)
+    smem_empty_bars = tlx.alloc_barriers(num_barriers=NUM_SMEM_BUFFERS,
+                                         arrive_count=1)
+    smem_full_bars = tlx.alloc_barriers(num_barriers=NUM_SMEM_BUFFERS,
+                                        arrive_count=1)
+    tmem_full_bars = tlx.alloc_barriers(num_barriers=NUM_TMEM_BUFFERS,
+                                        arrive_count=1)
+    tmem_empty_bars = tlx.alloc_barriers(num_barriers=NUM_TMEM_BUFFERS,
+                                         arrive_count=1)
 
     with tlx.async_tasks():
         with tlx.async_task("default"):  # epilogue consumer
@@ -417,17 +430,21 @@ def grouped_matmul_tlx_kernel(
                 gk = tl.load(group_gemm_sizes + g * 3 + 2)
                 num_m_tiles = tl.cdiv(gm, BLOCK_SIZE_M)
                 if NUM_CTAS == 2:
-                    num_m_tiles = (num_m_tiles + 1) & ~1  # round up to even number
+                    num_m_tiles = (num_m_tiles +
+                                   1) & ~1  # round up to even number
                 num_n_tiles = tl.cdiv(gn, BLOCK_SIZE_N)
                 num_tiles = num_m_tiles * num_n_tiles
                 if tile_idx >= last_problem_end and tile_idx < last_problem_end + num_tiles:
                     ldc = tl.load(g_lds + g * 3 + 2)
-                    c_ptr = tl.load(group_c_ptrs + g).to(tl.pointer_type(dtype))
+                    c_ptr = tl.load(group_c_ptrs + g).to(
+                        tl.pointer_type(dtype))
                     c_desc = tl.make_tensor_descriptor(
                         c_ptr,
                         shape=[gm, gn],
                         strides=[ldc, 1],
-                        block_shape=[BLOCK_SIZE_M, BLOCK_SIZE_N // EPILOGUE_SUBTILE],
+                        block_shape=[
+                            BLOCK_SIZE_M, BLOCK_SIZE_N // EPILOGUE_SUBTILE
+                        ],
                     )
 
                     # iterate through the tiles in the current gemm problem
@@ -437,7 +454,8 @@ def grouped_matmul_tlx_kernel(
                         tile_m_idx = tile_idx_in_gemm % num_m_tiles
                         tile_n_idx = tile_idx_in_gemm // num_m_tiles
 
-                        tmem_buf, tmem_phase = _get_bufidx_phase(accum_cnt_tmem, NUM_TMEM_BUFFERS)
+                        tmem_buf, tmem_phase = _get_bufidx_phase(
+                            accum_cnt_tmem, NUM_TMEM_BUFFERS)
                         tlx.barrier_wait(tmem_full_bars[tmem_buf], tmem_phase)
 
                         # load the result from TMEM to registers
@@ -455,7 +473,8 @@ def grouped_matmul_tlx_kernel(
                             )
                             result = tlx.local_load(acc_slice)
                             c = result.to(tl.float16)
-                            c_desc.store([offs_cm, offs_cn + slice_id * slice_size], c)
+                            c_desc.store(
+                                [offs_cm, offs_cn + slice_id * slice_size], c)
 
                         # done storing this buffer, signal MMA consumer to resume writing to it
                         tlx.barrier_arrive(tmem_empty_bars[tmem_buf], 1)
@@ -478,7 +497,8 @@ def grouped_matmul_tlx_kernel(
                 gk = tl.load(group_gemm_sizes + g * 3 + 2)
                 num_m_tiles = tl.cdiv(gm, BLOCK_SIZE_M)
                 if NUM_CTAS == 2:
-                    num_m_tiles = (num_m_tiles + 1) & ~1  # round up to even number
+                    num_m_tiles = (num_m_tiles +
+                                   1) & ~1  # round up to even number
                 num_n_tiles = tl.cdiv(gn, BLOCK_SIZE_N)
                 num_tiles = num_m_tiles * num_n_tiles
                 if tile_idx >= last_problem_end and tile_idx < last_problem_end + num_tiles:
@@ -487,19 +507,27 @@ def grouped_matmul_tlx_kernel(
                         k = gk
 
                         # do regular gemm here
-                        tmem_buf, tmem_phase = _get_bufidx_phase(accum_cnt_tmem, NUM_TMEM_BUFFERS)
+                        tmem_buf, tmem_phase = _get_bufidx_phase(
+                            accum_cnt_tmem, NUM_TMEM_BUFFERS)
 
                         # wait epilogue consumer to be done with the buffer before reusing it
-                        tlx.barrier_wait(tmem_empty_bars[tmem_buf], tmem_phase ^ 1)
+                        tlx.barrier_wait(tmem_empty_bars[tmem_buf],
+                                         tmem_phase ^ 1)
 
                         for kk in range(0, tl.cdiv(k, BLOCK_SIZE_K)):
-                            smem_buf, smem_phase = _get_bufidx_phase(accum_cnt_smem, NUM_SMEM_BUFFERS)
+                            smem_buf, smem_phase = _get_bufidx_phase(
+                                accum_cnt_smem, NUM_SMEM_BUFFERS)
                             # wait for current phase(round) of load for this buf
-                            tlx.barrier_wait(smem_full_bars[smem_buf], smem_phase)
+                            tlx.barrier_wait(smem_full_bars[smem_buf],
+                                             smem_phase)
                             # buffer is now ready with loaded data, tlx.async_dot will signal `mBarrier` when done
                             if NUM_CTAS == 2:
-                                tlx.barrier_arrive(cta_bars[smem_buf], 1, remote_cta_rank=0)
-                                tlx.barrier_wait(cta_bars[smem_buf], phase=smem_phase, pred=pred_cta0)
+                                tlx.barrier_arrive(cta_bars[smem_buf],
+                                                   1,
+                                                   remote_cta_rank=0)
+                                tlx.barrier_wait(cta_bars[smem_buf],
+                                                 phase=smem_phase,
+                                                 pred=pred_cta0)
 
                             tlx.async_dot(
                                 buffers_A[smem_buf],
@@ -513,7 +541,8 @@ def grouped_matmul_tlx_kernel(
                             accum_cnt_smem += 1
 
                         # done filling this buffer, signal epilogue consumer
-                        tlx.tcgen05_commit(tmem_full_bars[tmem_buf], two_ctas=NUM_CTAS == 2)
+                        tlx.tcgen05_commit(tmem_full_bars[tmem_buf],
+                                           two_ctas=NUM_CTAS == 2)
                         accum_cnt_tmem += 1
                         # go to the next tile by advancing NUM_SM
                         tile_idx += NUM_SM
@@ -532,8 +561,10 @@ def grouped_matmul_tlx_kernel(
             # A load can only be issued after the previous load (NUM_SMEM_BUFFERS stages away) completes.
             # If that previous load used a different descriptor, we need an extra buffer to ensure
             # the next load doesn't overwrite a descriptor that's still in use.
-            desc_a_ptrs = tlx.allocate_tensor_descriptor(num=NUM_SMEM_BUFFERS + 1)
-            desc_b_ptrs = tlx.allocate_tensor_descriptor(num=NUM_SMEM_BUFFERS + 1)
+            desc_a_ptrs = tlx.allocate_tensor_descriptor(num=NUM_SMEM_BUFFERS +
+                                                         1)
+            desc_b_ptrs = tlx.allocate_tensor_descriptor(num=NUM_SMEM_BUFFERS +
+                                                         1)
 
             for g in range(group_size):
                 # get the gemm size of the current problem
@@ -542,7 +573,8 @@ def grouped_matmul_tlx_kernel(
                 gk = tl.load(group_gemm_sizes + g * 3 + 2)
                 num_m_tiles = tl.cdiv(gm, BLOCK_SIZE_M)
                 if NUM_CTAS == 2:
-                    num_m_tiles = (num_m_tiles + 1) & ~1  # round up to even number
+                    num_m_tiles = (num_m_tiles +
+                                   1) & ~1  # round up to even number
                 num_n_tiles = tl.cdiv(gn, BLOCK_SIZE_N)
                 num_k_tiles = tl.cdiv(gk, BLOCK_SIZE_K)
                 num_tiles = num_m_tiles * num_n_tiles
@@ -551,10 +583,13 @@ def grouped_matmul_tlx_kernel(
                     lda = tl.load(g_lds + g * 3)
                     ldb = tl.load(g_lds + g * 3 + 1)
 
-                    a_ptr = tl.load(group_a_ptrs + g).to(tl.pointer_type(dtype))
-                    b_ptr = tl.load(group_b_ptrs + g).to(tl.pointer_type(dtype))
+                    a_ptr = tl.load(group_a_ptrs + g).to(
+                        tl.pointer_type(dtype))
+                    b_ptr = tl.load(group_b_ptrs + g).to(
+                        tl.pointer_type(dtype))
 
-                    desc_buf, _ = _get_bufidx_phase(accum_cnt_outer, NUM_SMEM_BUFFERS + 1)
+                    desc_buf, _ = _get_bufidx_phase(accum_cnt_outer,
+                                                    NUM_SMEM_BUFFERS + 1)
 
                     # Create tensor descriptors in global scratch (for pipelining across problems)
                     tlx.make_tensor_descriptor(
@@ -588,28 +623,38 @@ def grouped_matmul_tlx_kernel(
                         )
                         b_desc = tlx.reinterpret_tensor_descriptor(
                             desc_ptr=desc_b_ptrs[desc_buf],
-                            block_shape=[BLOCK_SIZE_K, BLOCK_SIZE_N // NUM_CTAS],
+                            block_shape=[
+                                BLOCK_SIZE_K, BLOCK_SIZE_N // NUM_CTAS
+                            ],
                             dtype=dtype,
                         )
 
                         # do regular gemm here
                         offs_am = tile_m_idx * BLOCK_SIZE_M
                         if NUM_CTAS == 2:
-                            offs_bn = tile_n_idx * BLOCK_SIZE_N + cluster_cta_rank * (BLOCK_SIZE_N // 2)
+                            offs_bn = tile_n_idx * BLOCK_SIZE_N + cluster_cta_rank * (
+                                BLOCK_SIZE_N // 2)
                         else:
                             offs_bn = tile_n_idx * BLOCK_SIZE_N
 
                         for kk in range(0, num_k_tiles):
-                            buf, phase = _get_bufidx_phase(accum_cnt, NUM_SMEM_BUFFERS)
+                            buf, phase = _get_bufidx_phase(
+                                accum_cnt, NUM_SMEM_BUFFERS)
                             tlx.barrier_wait(smem_empty_bars[buf], phase ^ 1)
                             # todo: we can alternatively check offs_am < gm and omit loading A for the virtual tile
                             tlx.barrier_expect_bytes(
                                 smem_full_bars[buf],
-                                tlx.size_of(dtype) * (BLOCK_SIZE_M + BLOCK_SIZE_N // NUM_CTAS) * BLOCK_SIZE_K)
-                            tlx.async_descriptor_load(a_desc, buffers_A[buf], [offs_am, kk * BLOCK_SIZE_K],
-                                                      smem_full_bars[buf])
-                            tlx.async_descriptor_load(b_desc, buffers_B[buf], [kk * BLOCK_SIZE_K, offs_bn],
-                                                      smem_full_bars[buf])
+                                tlx.size_of(dtype) *
+                                (BLOCK_SIZE_M + BLOCK_SIZE_N // NUM_CTAS) *
+                                BLOCK_SIZE_K)
+                            tlx.async_descriptor_load(
+                                a_desc, buffers_A[buf],
+                                [offs_am, kk * BLOCK_SIZE_K],
+                                smem_full_bars[buf])
+                            tlx.async_descriptor_load(
+                                b_desc, buffers_B[buf],
+                                [kk * BLOCK_SIZE_K, offs_bn],
+                                smem_full_bars[buf])
                             accum_cnt += 1
 
                         # go to the next tile by advancing NUM_SM
@@ -756,7 +801,10 @@ def test_op():
     tri_out = group_gemm_tlx_fn(group_A, group_B)
     ref_out = [torch.matmul(a, b) for a, b in zip(group_A, group_B)]
     for i in range(group_size):
-        torch.testing.assert_close(ref_out[i], tri_out[i], atol=1e-2, rtol=1e-2)
+        torch.testing.assert_close(ref_out[i],
+                                   tri_out[i],
+                                   atol=1e-2,
+                                   rtol=1e-2)
 
 
 # only launch the kernel, no tensor preparation here to remove all overhead
@@ -779,7 +827,13 @@ def triton_tma_perf_fn(a_ptrs, b_ptrs, c_ptrs, sizes, lds, group_size, dtype):
 
     triton.set_allocator(alloc_fn)
     grid = lambda META: (META["NUM_SM"], )
-    grouped_matmul_tma_kernel[grid](a_ptrs, b_ptrs, c_ptrs, sizes, lds, group_size, FP8=torch.float8_e4m3fn == dtype,
+    grouped_matmul_tma_kernel[grid](a_ptrs,
+                                    b_ptrs,
+                                    c_ptrs,
+                                    sizes,
+                                    lds,
+                                    group_size,
+                                    FP8=torch.float8_e4m3fn == dtype,
                                     NUM_SM=num_sms())
 
 
@@ -790,7 +844,13 @@ def triton_tlx_perf_fn(a_ptrs, b_ptrs, c_ptrs, sizes, lds, group_size, dtype):
 
     triton.set_allocator(alloc_fn)
     grid = lambda META: (META["NUM_SM"], )
-    grouped_matmul_tlx_kernel[grid](a_ptrs, b_ptrs, c_ptrs, sizes, lds, group_size, FP8=torch.float8_e4m3fn == dtype,
+    grouped_matmul_tlx_kernel[grid](a_ptrs,
+                                    b_ptrs,
+                                    c_ptrs,
+                                    sizes,
+                                    lds,
+                                    group_size,
+                                    FP8=torch.float8_e4m3fn == dtype,
                                     NUM_SM=num_sms())
 
 
@@ -803,15 +863,19 @@ def torch_perf_fn(group_A, group_B):
     triton.testing.Benchmark(
         # argument names to use as an x-axis for the plot
         x_names=["N"],
-        x_vals=[2**i for i in range(7, 11)],  # different possible values for `x_name`
+        x_vals=[2**i for i in range(7, 11)
+                ],  # different possible values for `x_name`
         line_arg="provider",
         # argument name whose value corresponds to a different line in the plot
         # possible values for `line_arg``
-        line_vals=["cublas", "triton"] + (["triton-tma"] if supports_tma() else []) + ["tlx"],
+        line_vals=["cublas", "triton"] +
+        (["triton-tma"] if supports_tma() else []) + ["tlx"],
         # label name for the lines
-        line_names=["cuBLAS", "Triton"] + (["Triton + TMA"] if supports_tma() else []) + ["TLX"],
+        line_names=["cuBLAS", "Triton"] +
+        (["Triton + TMA"] if supports_tma() else []) + ["TLX"],
         # line styles
-        styles=[("green", "-"), ("blue", "-")] + ([("red", "-")] if supports_tma() else []) + [("orange", "-")],
+        styles=[("green", "-"), ("blue", "-")] +
+        ([("red", "-")] if supports_tma() else []) + [("orange", "-")],
         ylabel="runtime(ms)",  # label name for the y-axis
         plot_name="group-gemm-performance",
         # name for the plot. Used also as a file name for saving the plot.
@@ -854,20 +918,32 @@ def benchmark_square_matrices(N, provider):
 
     quantiles = [0.5, 0.2, 0.8]
     if provider == "cublas":
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: torch_perf_fn(group_A, group_B), quantiles=quantiles)
-    if provider == "triton":
         ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: triton_perf_fn(d_a_ptrs, d_b_ptrs, d_c_ptrs, d_g_sizes, d_g_lds, group_size), quantiles=quantiles)
+            lambda: torch_perf_fn(group_A, group_B), quantiles=quantiles)
+    if provider == "triton":
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: triton_perf_fn(
+            d_a_ptrs, d_b_ptrs, d_c_ptrs, d_g_sizes, d_g_lds, group_size),
+                                                     quantiles=quantiles)
     if provider == "triton-tma":
         ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: triton_tma_perf_fn(d_a_ptrs, d_b_t_ptrs, d_c_ptrs, d_g_sizes, d_g_lds, group_size, dtype=torch.
-                                       float16),
+            lambda: triton_tma_perf_fn(d_a_ptrs,
+                                       d_b_t_ptrs,
+                                       d_c_ptrs,
+                                       d_g_sizes,
+                                       d_g_lds,
+                                       group_size,
+                                       dtype=torch.float16),
             quantiles=quantiles,
         )
     if provider == "tlx":
         ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: triton_tlx_perf_fn(d_a_ptrs, d_b_ptrs, d_c_ptrs, d_g_sizes, d_g_lds, group_size, dtype=torch.float16
-                                       ),
+            lambda: triton_tlx_perf_fn(d_a_ptrs,
+                                       d_b_ptrs,
+                                       d_c_ptrs,
+                                       d_g_sizes,
+                                       d_g_lds,
+                                       group_size,
+                                       dtype=torch.float16),
             quantiles=quantiles,
         )
     # Calculate TFLOPS: group_size * (2 * M * N * K) / (time_in_seconds * 1e12)
@@ -881,15 +957,19 @@ def benchmark_square_matrices(N, provider):
     triton.testing.Benchmark(
         # argument names to use as an x-axis for the plot
         x_names=["M"],
-        x_vals=[2**i for i in range(7, 11)],  # different possible values for `x_name`
+        x_vals=[2**i for i in range(7, 11)
+                ],  # different possible values for `x_name`
         line_arg="provider",
         # argument name whose value corresponds to a different line in the plot
         # possible values for `line_arg``
-        line_vals=["cublas", "triton"] + (["triton-tma"] if supports_tma() else []) + ["tlx"],
+        line_vals=["cublas", "triton"] +
+        (["triton-tma"] if supports_tma() else []) + ["tlx"],
         # label name for the lines
-        line_names=["cuBLAS", "Triton"] + (["Triton + TMA"] if supports_tma() else []) + ["TLX"],
+        line_names=["cuBLAS", "Triton"] +
+        (["Triton + TMA"] if supports_tma() else []) + ["TLX"],
         # line styles
-        styles=[("green", "-"), ("blue", "-")] + ([("red", "-")] if supports_tma() else []) + [("orange", "-")],
+        styles=[("green", "-"), ("blue", "-")] +
+        ([("red", "-")] if supports_tma() else []) + [("orange", "-")],
         ylabel="runtime(ms)",  # label name for the y-axis
         plot_name="group-gemm-performance-m-8192-k-8192",
         # name for the plot. Used also as a file name for saving the plot.
@@ -937,20 +1017,32 @@ def benchmark_batches(M, provider):
 
     quantiles = [0.5, 0.2, 0.8]
     if provider == "cublas":
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: torch_perf_fn(group_A, group_B), quantiles=quantiles)
-    if provider == "triton":
         ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: triton_perf_fn(d_a_ptrs, d_b_ptrs, d_c_ptrs, d_g_sizes, d_g_lds, group_size), quantiles=quantiles)
+            lambda: torch_perf_fn(group_A, group_B), quantiles=quantiles)
+    if provider == "triton":
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: triton_perf_fn(
+            d_a_ptrs, d_b_ptrs, d_c_ptrs, d_g_sizes, d_g_lds, group_size),
+                                                     quantiles=quantiles)
     if provider == "triton-tma":
         ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: triton_tma_perf_fn(d_a_ptrs, d_b_t_ptrs, d_c_ptrs, d_g_sizes, d_g_t_lds, group_size, dtype=torch.
-                                       float16),
+            lambda: triton_tma_perf_fn(d_a_ptrs,
+                                       d_b_t_ptrs,
+                                       d_c_ptrs,
+                                       d_g_sizes,
+                                       d_g_t_lds,
+                                       group_size,
+                                       dtype=torch.float16),
             quantiles=quantiles,
         )
     if provider == "tlx":
         ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: triton_tlx_perf_fn(d_a_ptrs, d_b_ptrs, d_c_ptrs, d_g_sizes, d_g_lds, group_size, dtype=torch.float16
-                                       ),
+            lambda: triton_tlx_perf_fn(d_a_ptrs,
+                                       d_b_ptrs,
+                                       d_c_ptrs,
+                                       d_g_sizes,
+                                       d_g_lds,
+                                       group_size,
+                                       dtype=torch.float16),
             quantiles=quantiles,
         )
     # Calculate TFLOPS: group_size * (2 * M * N * K) / (time_in_seconds * 1e12)

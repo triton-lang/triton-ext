@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 // Includes from TritonToTritonGPUPass.cpp
 // ---------------------------------------------------------------------------
+#include "Dialect/TritonAMDGPU/IR/Dialect.h"
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -21,10 +22,9 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
-#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
-#include "Dialect/TritonAMDGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/Transforms/TritonGPUConversion.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
+#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "triton/Tools/LayoutUtils.h"
 
 // ---------------------------------------------------------------------------
@@ -820,13 +820,12 @@ void populateCFPatterns(TritonGPUTypeConverter &typeConverter,
 // ===========================================================================
 
 class TLXConvertTritonToTritonGPU
-    : public PassWrapper<TLXConvertTritonToTritonGPU,
-                          OperationPass<ModuleOp>> {
+    : public PassWrapper<TLXConvertTritonToTritonGPU, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TLXConvertTritonToTritonGPU)
 
   TLXConvertTritonToTritonGPU(int numWarps, int threadsPerWarp, int numCTAs,
-                               StringRef target)
+                              StringRef target)
       : numWarps(numWarps), threadsPerWarp(threadsPerWarp), numCTAs(numCTAs),
         target(target.str()) {}
 
@@ -881,7 +880,7 @@ public:
       mod.walk([&](triton::nvidia_gpu::InitBarrierOp op) {
         builder.setInsertionPoint(op);
         triton::amdgpu::InitBarrierOp::create(builder, op.getLoc(),
-                                               op.getAlloc(), op.getCount());
+                                              op.getAlloc(), op.getCount());
         op.erase();
       });
     }
@@ -932,8 +931,7 @@ private:
 // ===========================================================================
 
 class TLXInsertAndPropagateLayout
-    : public PassWrapper<TLXInsertAndPropagateLayout,
-                          OperationPass<ModuleOp>> {
+    : public PassWrapper<TLXInsertAndPropagateLayout, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TLXInsertAndPropagateLayout)
 
@@ -947,7 +945,7 @@ public:
   }
 
   void propagateEncodingBackward(Value memDesc, Attribute targetEncoding,
-                                  DenseSet<Value> &visited) {
+                                 DenseSet<Value> &visited) {
     if (!visited.insert(memDesc).second)
       return;
 
@@ -976,8 +974,7 @@ public:
       BackwardSliceOptions options;
       options.inclusive = false;
       options.omitUsesFromAbove = false;
-      if (failed(
-              getBackwardSlice(dotOp.getOperation(), &backwardSet, options)))
+      if (failed(getBackwardSlice(dotOp.getOperation(), &backwardSet, options)))
         return WalkResult::interrupt();
 
       for (Operation *op : backwardSet) {
@@ -1021,7 +1018,7 @@ static std::unique_ptr<Pass> createTLXInsertAndPropagateLayoutPass() {
 // args layout: [target, numWarps, threadsPerWarp, numCTAs]
 // (target is e.g. "hip:gfx950" or "cuda:90")
 void addUTLXConversionPass(mlir::PassManager *pm,
-                          const std::vector<std::string> &args) {
+                           const std::vector<std::string> &args) {
   std::string target = args.size() > 0 ? args[0] : "";
   int numWarps = args.size() > 1 ? std::atoi(args[1].c_str()) : 4;
   int threadsPerWarp = args.size() > 2 ? std::atoi(args[2].c_str()) : 32;

@@ -160,9 +160,10 @@ public:
       // TODO: port getScaleTMEMStoreLinearLayout to upstream
       // // TODO: port getScaleTMEMStoreLinearLayout
       // auto scalesLL = ttg::getScaleTMEMStoreLinearLayout(srcTy, numWarps);
-      // auto newEncoding = ttg::LinearEncodingAttr::get(srcTy.getContext(), scalesLL);
-      // auto newType = RankedTensorType::get(srcTy.getShape(),
-      //                                      srcTy.getElementType(), newEncoding);
+      // auto newEncoding = ttg::LinearEncodingAttr::get(srcTy.getContext(),
+      // scalesLL); auto newType = RankedTensorType::get(srcTy.getShape(),
+      //                                      srcTy.getElementType(),
+      //                                      newEncoding);
       // requireOp->getResult(0).setType(newType);
       return WalkResult::advance();
     });

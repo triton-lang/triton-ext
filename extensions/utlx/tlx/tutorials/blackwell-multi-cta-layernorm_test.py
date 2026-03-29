@@ -36,7 +36,8 @@ def compute_multi_cta_sum(
     num_reduction_ctas: tl.constexpr,
 ):
     dtype_x = tlx.dtype_of(x)
-    local_buff = tlx.local_alloc((BLOCK_SIZE_M, 1), dtype_x, num_reduction_ctas)
+    local_buff = tlx.local_alloc((BLOCK_SIZE_M, 1), dtype_x,
+                                 num_reduction_ctas)
 
     local_partial_sum = tl.sum(x, axis=1, keep_dims=True)
     # store local sum to shmem and read it back in cluster_rank order
@@ -103,7 +104,8 @@ def prune_and_update_configs(configs, named_args, **kwargs):
         # cp.async does not support transfers smaller than 4 bytes per thread
         element_size = 2  # float16
         num_threads = conf.num_warps * 32
-        bytes_per_thread = (block_size_m * blocksize_n * element_size) // num_threads
+        bytes_per_thread = (block_size_m * blocksize_n *
+                            element_size) // num_threads
         if bytes_per_thread < 4:
             continue
 
@@ -144,13 +146,14 @@ def kernel_layernorm_multi_cta(
     COMPUTE_DTYPE = tl.float32
 
     # alloc buffers for staging
-    x_buffer = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_N), X.dtype.element_ty, 1)
+    x_buffer = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_N),
+                               X.dtype.element_ty, 1)
     x_buf = tlx.local_view(x_buffer, 0)
 
     # alloc barriers for synchronizing remote stores
     barriers = tlx.alloc_barriers(num_barriers=2)
-    cross_cta_reduction_expected_bytes: tl.constexpr = (BLOCK_SIZE_M * tlx.size_of(COMPUTE_DTYPE) *
-                                                        (num_reduction_ctas - 1))
+    cross_cta_reduction_expected_bytes: tl.constexpr = (
+        BLOCK_SIZE_M * tlx.size_of(COMPUTE_DTYPE) * (num_reduction_ctas - 1))
     tlx.barrier_expect_bytes(
         barriers[0],
         size=cross_cta_reduction_expected_bytes,
@@ -164,7 +167,8 @@ def kernel_layernorm_multi_cta(
     # offsets
     row_offsets = tl.program_id(0) * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
     col_offsets = tl.program_id(1) * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
-    read_write_offsets = (row_offsets[:, None] * row_stride) + col_offsets[None, :]
+    read_write_offsets = (row_offsets[:, None] *
+                          row_stride) + col_offsets[None, :]
     x_ptrs = X + read_write_offsets
     y_ptrs = Y + read_write_offsets
     w_ptrs = W + col_offsets
@@ -297,9 +301,13 @@ def multi_cta_layernorm(
     return out, mean, rstd
 
 
-def _torch_layernorm_impl(x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5):
+def _torch_layernorm_impl(x: torch.Tensor,
+                          weight: torch.Tensor,
+                          bias: torch.Tensor,
+                          eps: float = 1e-5):
     """Reference PyTorch implementation of layer normalization."""
-    return torch.nn.functional.layer_norm(x, (x.shape[-1], ), weight, bias, eps)
+    return torch.nn.functional.layer_norm(x, (x.shape[-1], ), weight, bias,
+                                          eps)
 
 
 torch_layernorm = torch.compile(_torch_layernorm_impl)
@@ -311,7 +319,8 @@ torch_layernorm = torch.compile(_torch_layernorm_impl)
 )
 @pytest.mark.parametrize(
     "M,N",
-    [(4, 16384), (4, 32768), (4, 65536), (1152, 16384), (1152, 32768), (1152, 65536)],
+    [(4, 16384), (4, 32768), (4, 65536), (1152, 16384), (1152, 32768),
+     (1152, 65536)],
 )
 @pytest.mark.parametrize("dtype", [torch.float16])
 def test_op(M, N, dtype):
@@ -325,7 +334,8 @@ def test_op(M, N, dtype):
     output_torch = torch_layernorm(x, weight, bias, eps)
 
     # TLX implementation
-    output_triton, mean_triton, rstd_triton = multi_cta_layernorm(x, weight, bias, eps)
+    output_triton, mean_triton, rstd_triton = multi_cta_layernorm(
+        x, weight, bias, eps)
 
     # Check output
     rtol = 1e-2 if dtype == torch.float16 else 1e-3
@@ -334,8 +344,9 @@ def test_op(M, N, dtype):
     max_diff = torch.max(torch.abs(output_torch - output_triton)).item()
     print(f"[M={M}, N={N}, dtype={dtype}] Max difference: {max_diff}")
 
-    assert torch.allclose(output_torch, output_triton, rtol=rtol,
-                          atol=atol), (f"Output mismatch: max diff = {max_diff}")
+    assert torch.allclose(
+        output_torch, output_triton, rtol=rtol,
+        atol=atol), (f"Output mismatch: max diff = {max_diff}")
 
 
 # %%
@@ -349,9 +360,11 @@ def test_op(M, N, dtype):
 @triton.testing.perf_report(
     triton.testing.Benchmark(
         x_names=["N"],  # Argument names to use as an x-axis for the plot.
-        x_vals=[2**i for i in range(9, 15)],  # Different possible values for `x_name`.
+        x_vals=[2**i for i in range(9, 15)
+                ],  # Different possible values for `x_name`.
         x_log=True,  # x axis is logarithmic.
-        line_arg="provider",  # Argument name whose value corresponds to a different line in the plot.
+        line_arg=
+        "provider",  # Argument name whose value corresponds to a different line in the plot.
         line_vals=["triton", "torch"],  # Possible values for `line_arg`.
         line_names=["TLX", "PyTorch"],  # Label name for the lines.
         styles=[("blue", "-"), ("red", "-")],  # Line styles.
@@ -367,10 +380,12 @@ def benchmark(M, N, provider):
 
     quantiles = [0.5, 0.2, 0.8]
     if provider == "torch":
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: torch_layernorm(x, weight, bias, eps), quantiles=quantiles)
+        ms, min_ms, max_ms = triton.testing.do_bench(
+            lambda: torch_layernorm(x, weight, bias, eps), quantiles=quantiles)
     elif provider == "triton":
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: multi_cta_layernorm(x, weight, bias, eps),
-                                                     quantiles=quantiles)
+        ms, min_ms, max_ms = triton.testing.do_bench(
+            lambda: multi_cta_layernorm(x, weight, bias, eps),
+            quantiles=quantiles)
 
     # Calculate bandwidth: read x, weight, bias; write output, mean, rstd
     total_bytes = (

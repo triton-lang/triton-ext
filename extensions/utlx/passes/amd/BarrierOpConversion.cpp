@@ -96,8 +96,7 @@ struct UTLXArriveBarrierOpConversion
     dec_rtn(retVal, countBaseAddrArg, resetValArg);
     auto &wait_cnt = *gcnBuilder.create("s_waitcnt lgkmcnt(0)");
     wait_cnt();
-    auto preDecrementCountVal =
-        gcnBuilder.launch(rewriter, loc, i32_ty, true);
+    auto preDecrementCountVal = gcnBuilder.launch(rewriter, loc, i32_ty, true);
 
     MLIRContext *ctx = rewriter.getContext();
     Value zero = b.i32_val(0);
@@ -160,9 +159,9 @@ struct UTLXReadBarrierPhaseOpConversion
 
 namespace utlx {
 
-void populateAMDBarrierOpToLLVMPatterns(
-    mlir::LLVMTypeConverter &typeConverter,
-    mlir::RewritePatternSet &patterns, mlir::PatternBenefit benefit) {
+void populateAMDBarrierOpToLLVMPatterns(mlir::LLVMTypeConverter &typeConverter,
+                                        mlir::RewritePatternSet &patterns,
+                                        mlir::PatternBenefit benefit) {
   patterns.add<UTLXInitBarrierOpConversion>(typeConverter, benefit);
   patterns.add<UTLXArriveBarrierOpConversion>(typeConverter, benefit);
   patterns.add<UTLXReadBarrierPhaseOpConversion>(typeConverter, benefit);

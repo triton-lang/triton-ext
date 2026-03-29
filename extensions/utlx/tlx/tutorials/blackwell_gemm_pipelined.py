@@ -30,13 +30,25 @@ def alloc_fn(size: int, align: int, stream: Optional[int]):
     key=['M', 'N', 'K'],
 )
 @triton.jit
-def matmul_kernel_tma_pipelined_blackwell(a_ptr, b_ptr, c_ptr, M, N, K, stride_am, stride_ak,  #
-                                          stride_bk, stride_bn,  #
-                                          stride_cm, stride_cn, BLOCK_SIZE_M: tl.constexpr, BLOCK_SIZE_N: tl.constexpr,
-                                          BLOCK_SIZE_K: tl.constexpr,  #
-                                          GROUP_SIZE_M: tl.constexpr,  #
-                                          NUM_STAGES: tl.constexpr  #
-                                          ):
+def matmul_kernel_tma_pipelined_blackwell(
+        a_ptr,
+        b_ptr,
+        c_ptr,
+        M,
+        N,
+        K,
+        stride_am,
+        stride_ak,  #
+        stride_bk,
+        stride_bn,  #
+        stride_cm,
+        stride_cn,
+        BLOCK_SIZE_M: tl.constexpr,
+        BLOCK_SIZE_N: tl.constexpr,
+        BLOCK_SIZE_K: tl.constexpr,  #
+        GROUP_SIZE_M: tl.constexpr,  #
+        NUM_STAGES: tl.constexpr  #
+):
     pid = tl.program_id(axis=0)
     num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
     num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
@@ -68,8 +80,10 @@ def matmul_kernel_tma_pipelined_blackwell(a_ptr, b_ptr, c_ptr, M, N, K, stride_a
     )
 
     # allocate NUM_STAGES buffers
-    buffers_A = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_K), tlx.dtype_of(a_ptr), NUM_STAGES)
-    buffers_B = tlx.local_alloc((BLOCK_SIZE_K, BLOCK_SIZE_N), tlx.dtype_of(b_ptr), NUM_STAGES)
+    buffers_A = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_K),
+                                tlx.dtype_of(a_ptr), NUM_STAGES)
+    buffers_B = tlx.local_alloc((BLOCK_SIZE_K, BLOCK_SIZE_N),
+                                tlx.dtype_of(b_ptr), NUM_STAGES)
     # allocate barriers
     dot_bars = tlx.alloc_barriers(num_barriers=NUM_STAGES, arrive_count=1)
     load_bars = tlx.alloc_barriers(num_barriers=NUM_STAGES, arrive_count=1)
@@ -80,14 +94,20 @@ def matmul_kernel_tma_pipelined_blackwell(a_ptr, b_ptr, c_ptr, M, N, K, stride_a
         a = tlx.local_view(buffers_A, i)
         b = tlx.local_view(buffers_B, i)
         load_bar = tlx.local_view(load_bars, i)
-        tlx.barrier_expect_bytes(load_bar, 2 * (BLOCK_SIZE_M + BLOCK_SIZE_N) * BLOCK_SIZE_K)  # float16
-        tlx.async_descriptor_load(desc_a, a, [pid_m * BLOCK_SIZE_M, i * BLOCK_SIZE_K], load_bar)
-        tlx.async_descriptor_load(desc_b, b, [i * BLOCK_SIZE_K, pid_n * BLOCK_SIZE_N], load_bar)
+        tlx.barrier_expect_bytes(load_bar, 2 * (BLOCK_SIZE_M + BLOCK_SIZE_N) *
+                                 BLOCK_SIZE_K)  # float16
+        tlx.async_descriptor_load(desc_a, a,
+                                  [pid_m * BLOCK_SIZE_M, i * BLOCK_SIZE_K],
+                                  load_bar)
+        tlx.async_descriptor_load(desc_b, b,
+                                  [i * BLOCK_SIZE_K, pid_n * BLOCK_SIZE_N],
+                                  load_bar)
 
     # main K loop
     accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
     # init accumulator to 0 (in TMEM)
-    buffers = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_N), tl.float32, tl.constexpr(1), tlx.storage_kind.tmem)
+    buffers = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_N), tl.float32,
+                              tl.constexpr(1), tlx.storage_kind.tmem)
     acc_tmem = tlx.local_view(buffers, 0)
     tlx.local_store(acc_tmem, accumulator)
 
@@ -105,7 +125,11 @@ def matmul_kernel_tma_pipelined_blackwell(a_ptr, b_ptr, c_ptr, M, N, K, stride_a
         # issue the async mma "with `phase`"
         dot_bar = tlx.local_view(dot_bars, buf)
         # mmav5 can take A and B from SMEM, and accumulate result into TMEM
-        tlx.async_dot(a_k, b_k, acc_tmem, mBarriers=[dot_bar], out_dtype=tl.float32)
+        tlx.async_dot(a_k,
+                      b_k,
+                      acc_tmem,
+                      mBarriers=[dot_bar],
+                      out_dtype=tl.float32)
 
         # prefetch for i-th iteration, i.e, NUM_STAGES - 1 ahead
         i = k + NUM_STAGES - 1
@@ -124,9 +148,15 @@ def matmul_kernel_tma_pipelined_blackwell(a_ptr, b_ptr, c_ptr, M, N, K, stride_a
             # prefetch
             # if i % NUM_STAGES == NUM_STAGES - 1, we are prefetching for the buffer with current `phase`
             # otherwise, we are prefetching for the buffer with next phase (`phase ^ 1`)
-            tlx.barrier_expect_bytes(next_load_bar, 2 * (BLOCK_SIZE_M + BLOCK_SIZE_N) * BLOCK_SIZE_K)  # float16
-            tlx.async_descriptor_load(desc_a, a_next, [pid_m * BLOCK_SIZE_M, i * BLOCK_SIZE_K], next_load_bar)
-            tlx.async_descriptor_load(desc_b, b_next, [i * BLOCK_SIZE_K, pid_n * BLOCK_SIZE_N], next_load_bar)
+            tlx.barrier_expect_bytes(next_load_bar,
+                                     2 * (BLOCK_SIZE_M + BLOCK_SIZE_N) *
+                                     BLOCK_SIZE_K)  # float16
+            tlx.async_descriptor_load(desc_a, a_next,
+                                      [pid_m * BLOCK_SIZE_M, i * BLOCK_SIZE_K],
+                                      next_load_bar)
+            tlx.async_descriptor_load(desc_b, b_next,
+                                      [i * BLOCK_SIZE_K, pid_n * BLOCK_SIZE_N],
+                                      next_load_bar)
 
         phase = phase if (buf < NUM_STAGES - 1) else phase ^ 1
 
@@ -141,10 +171,12 @@ def matmul_kernel_tma_pipelined_blackwell(a_ptr, b_ptr, c_ptr, M, N, K, stride_a
     c = result.to(tlx.dtype_of(c_ptr))
 
     # store the result to SMEM to prepare for TMA store (TMEM -> GMEM)
-    c_buffers = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_N), tlx.dtype_of(c_ptr), tl.constexpr(1))
+    c_buffers = tlx.local_alloc((BLOCK_SIZE_M, BLOCK_SIZE_N),
+                                tlx.dtype_of(c_ptr), tl.constexpr(1))
     c_smem = tlx.local_view(c_buffers, 0)
     tlx.local_store(c_smem, c)
-    tlx.async_descriptor_store(desc_c, c_smem, [pid_m * BLOCK_SIZE_M, pid_n * BLOCK_SIZE_N])
+    tlx.async_descriptor_store(desc_c, c_smem,
+                               [pid_m * BLOCK_SIZE_M, pid_n * BLOCK_SIZE_N])
 
 
 def matmul(a, b, config=None):
@@ -161,7 +193,8 @@ def matmul(a, b, config=None):
     triton.set_allocator(alloc_fn)
 
     if config is not None:
-        grid = (triton.cdiv(M, config['BLOCK_SIZE_M']) * triton.cdiv(N, config['BLOCK_SIZE_N']), )
+        grid = (triton.cdiv(M, config['BLOCK_SIZE_M']) *
+                triton.cdiv(N, config['BLOCK_SIZE_N']), )
         matmul_kernel_tma_pipelined_blackwell.fn[grid](
             a,
             b,
@@ -179,7 +212,8 @@ def matmul(a, b, config=None):
         )
     else:
         # 1D launch kernel where each block gets its own program.
-        grid = lambda META: (triton.cdiv(M, META['BLOCK_SIZE_M']) * triton.cdiv(N, META['BLOCK_SIZE_N']), )
+        grid = lambda META: (triton.cdiv(M, META['BLOCK_SIZE_M']) * triton.
+                             cdiv(N, META['BLOCK_SIZE_N']), )
         matmul_kernel_tma_pipelined_blackwell[grid](
             a,
             b,

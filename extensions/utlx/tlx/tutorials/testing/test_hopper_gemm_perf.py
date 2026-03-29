@@ -47,11 +47,16 @@ def create_benchmark(versions):
         b = torch.randn((K, N), device=DEVICE, dtype=torch.float16)
         quantiles = [0.5, 0.2, 0.8]
         if provider == ref_lib.lower():
-            ms, min_ms, max_ms = triton.testing.do_bench(lambda: torch.matmul(a, b), quantiles=quantiles, warmup=2000,
-                                                         rep=2000)
+            ms, min_ms, max_ms = triton.testing.do_bench(
+                lambda: torch.matmul(a, b),
+                quantiles=quantiles,
+                warmup=2000,
+                rep=2000)
         elif provider in MATMUL_METHODS:
             matmul = MATMUL_METHODS[provider]
-            ms, min_ms, max_ms = triton.testing.do_bench(lambda: matmul(a, b), quantiles=quantiles, warmup=2000,
+            ms, min_ms, max_ms = triton.testing.do_bench(lambda: matmul(a, b),
+                                                         quantiles=quantiles,
+                                                         warmup=2000,
                                                          rep=2000)
 
         perf = lambda ms: 2 * M * N * K * 1e-12 / (ms * 1e-3)
@@ -61,18 +66,21 @@ def create_benchmark(versions):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Benchmark TLX Hopper GEMM implementations")
+    parser = argparse.ArgumentParser(
+        description="Benchmark TLX Hopper GEMM implementations")
     parser.add_argument(
         "--version",
         type=str,
         nargs="+",
         choices=list(MATMUL_METHODS.keys()),
-        help=f"Run only the specified version(s). Choices: {list(MATMUL_METHODS.keys())}",
+        help=
+        f"Run only the specified version(s). Choices: {list(MATMUL_METHODS.keys())}",
     )
     args = parser.parse_args()
 
     if is_hopper():
-        versions = args.version if args.version else list(MATMUL_METHODS.keys())
+        versions = args.version if args.version else list(
+            MATMUL_METHODS.keys())
         print(f"Running benchmarks for: {versions}")
         benchmark = create_benchmark(versions)
         benchmark.run(print_data=True)

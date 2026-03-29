@@ -15,11 +15,11 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
-#include "llvm/Support/Debug.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
+#include "llvm/Support/Debug.h"
 
 // AMD dialect includes
 #include "Dialect/TritonAMDGPU/IR/Dialect.h"
@@ -36,10 +36,9 @@ namespace {
 
 static const int THREADS_PER_WAVE = 64;
 
-void lowerInitBarrierOps(
-    mlir::ModuleOp m,
-    std::map<mlir::triton::gpu::LocalAllocOp, int>
-        &localAllocToBarrierExpectedCount) {
+void lowerInitBarrierOps(mlir::ModuleOp m,
+                         std::map<mlir::triton::gpu::LocalAllocOp, int>
+                             &localAllocToBarrierExpectedCount) {
   llvm::SmallVector<mlir::Operation *> eraseOps;
   auto cond = mlir::Value();
   m.walk([&](ttng::InitBarrierOp op) {
@@ -70,10 +69,9 @@ void lowerInitBarrierOps(
     op->erase();
 }
 
-void lowerArriveBarrierOps(
-    mlir::ModuleOp m,
-    const std::map<mlir::triton::gpu::LocalAllocOp, int>
-        &localAllocToBarrierExpectedCount) {
+void lowerArriveBarrierOps(mlir::ModuleOp m,
+                           const std::map<mlir::triton::gpu::LocalAllocOp, int>
+                               &localAllocToBarrierExpectedCount) {
   llvm::SmallVector<mlir::Operation *> eraseOps;
   auto cond = mlir::Value();
   m.walk([&](ttng::ArriveBarrierOp op) {
@@ -119,9 +117,9 @@ void lowerArriveBarrierOps(
 /// Create a ReadBarrierPhaseOp via runtime op lookup, since it may
 /// not exist in unpatched triton.
 static mlir::Value createReadBarrierPhaseOp(mlir::OpBuilder &builder,
-                                             mlir::Location loc,
-                                             mlir::Type resultType,
-                                             mlir::Value alloc) {
+                                            mlir::Location loc,
+                                            mlir::Type resultType,
+                                            mlir::Value alloc) {
   auto *ctx = builder.getContext();
   // Try the AMD-specific op first
   llvm::StringRef opName = "triton_amdgpu.read_barrier_phase";
@@ -145,11 +143,10 @@ void lowerWaitBarrierOps(mlir::ModuleOp m) {
     auto loc = op.getLoc();
     mlir::OpBuilder builder(op);
     auto waitPhase = op.getPhase();
-    auto whileOp = builder.create<mlir::scf::WhileOp>(
-        loc, mlir::TypeRange{}, mlir::ValueRange{});
+    auto whileOp = builder.create<mlir::scf::WhileOp>(loc, mlir::TypeRange{},
+                                                      mlir::ValueRange{});
     // Spin Wait - Before block
-    mlir::Block *beforeBlock =
-        builder.createBlock(&whileOp.getBefore());
+    mlir::Block *beforeBlock = builder.createBlock(&whileOp.getBefore());
     builder.setInsertionPointToEnd(beforeBlock);
     auto i32ty = builder.getIntegerType(32);
 
@@ -165,13 +162,12 @@ void lowerWaitBarrierOps(mlir::ModuleOp m) {
         loc, mlir::arith::CmpIPredicate::eq, barrierPhase, waitPhase);
     builder.create<mlir::scf::ConditionOp>(loc, phaseCond, mlir::ValueRange{});
     // Spin Wait - After block
-    mlir::Block *afterBlock =
-        builder.createBlock(&whileOp.getAfter());
+    mlir::Block *afterBlock = builder.createBlock(&whileOp.getAfter());
     builder.setInsertionPointToEnd(afterBlock);
     auto five = builder.create<mlir::arith::ConstantIntOp>(loc, 5, 32);
     mlir::LLVM::createLLVMIntrinsicCallOp(builder, loc, "llvm.amdgcn.s.sleep",
-                                           mlir::TypeRange{},
-                                           mlir::ValueRange{five});
+                                          mlir::TypeRange{},
+                                          mlir::ValueRange{five});
     builder.create<mlir::scf::YieldOp>(loc, mlir::ValueRange{});
     builder.setInsertionPointAfter(whileOp);
 

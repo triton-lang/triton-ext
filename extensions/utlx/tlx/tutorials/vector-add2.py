@@ -53,7 +53,14 @@ def add2(x: torch.Tensor, y: torch.Tensor, a: torch.Tensor, b: torch.Tensor):
     assert x.device == DEVICE and y.device == DEVICE and output1.device == DEVICE
     n_elements = output1.numel()
     grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]), )
-    add2_kernel[grid](x, y, output1, a, b, output2, n_elements, BLOCK_SIZE=1024)
+    add2_kernel[grid](x,
+                      y,
+                      output1,
+                      a,
+                      b,
+                      output2,
+                      n_elements,
+                      BLOCK_SIZE=1024)
     return output1, output2
 
 
@@ -87,13 +94,21 @@ def add2_warp_specialized_kernel(
             tl.store(c_ptr + offsets, output, mask=mask)
 
 
-def add2_warp_specialized(x: torch.Tensor, y: torch.Tensor, a: torch.Tensor, b: torch.Tensor):
+def add2_warp_specialized(x: torch.Tensor, y: torch.Tensor, a: torch.Tensor,
+                          b: torch.Tensor):
     output1 = torch.empty_like(x)
     output2 = torch.empty_like(a)
     assert x.device == DEVICE and y.device == DEVICE and output1.device == DEVICE
     n_elements = output1.numel()
     grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]), )
-    add2_warp_specialized_kernel[grid](x, y, output1, a, b, output2, n_elements, BLOCK_SIZE=1024)
+    add2_warp_specialized_kernel[grid](x,
+                                       y,
+                                       output1,
+                                       a,
+                                       b,
+                                       output2,
+                                       n_elements,
+                                       BLOCK_SIZE=1024)
     return output1, output2
 
 
@@ -141,14 +156,19 @@ def test_op():
 @triton.testing.perf_report(
     triton.testing.Benchmark(
         x_names=["size"],  # Argument names to use as an x-axis for the plot.
-        x_vals=[2**i for i in range(12, 28, 1)],  # Different possible values for `x_name`.
+        x_vals=[2**i for i in range(12, 28, 1)
+                ],  # Different possible values for `x_name`.
         x_log=True,  # x axis is logarithmic.
-        line_arg="provider",  # Argument name whose value corresponds to a different line in the plot.
-        line_vals=["triton", "triton_ws", "torch"],  # Possible values for `line_arg`.
-        line_names=["Triton", "Triton_WS", "Torch"],  # Label name for the lines.
+        line_arg=
+        "provider",  # Argument name whose value corresponds to a different line in the plot.
+        line_vals=["triton", "triton_ws",
+                   "torch"],  # Possible values for `line_arg`.
+        line_names=["Triton", "Triton_WS",
+                    "Torch"],  # Label name for the lines.
         styles=[("blue", "-"), ("green", "-"), ("red", "-")],  # Line styles.
         ylabel="GB/s",  # Label name for the y-axis.
-        plot_name="vector-add-performance",  # Name for the plot. Used also as a file name for saving the plot.
+        plot_name=
+        "vector-add-performance",  # Name for the plot. Used also as a file name for saving the plot.
         args={},  # Values for function arguments not in `x_names` and `y_name`.
     ))
 def benchmark(size, provider):
@@ -158,11 +178,14 @@ def benchmark(size, provider):
     b = torch.rand(size, device=DEVICE, dtype=torch.float32)
     quantiles = [0.5, 0.2, 0.8]
     if provider == "torch":
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: dual_add(x, y, a, b), quantiles=quantiles)
+        ms, min_ms, max_ms = triton.testing.do_bench(
+            lambda: dual_add(x, y, a, b), quantiles=quantiles)
     if provider == "triton":
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: add2(x, y, a, b), quantiles=quantiles)
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: add2(x, y, a, b),
+                                                     quantiles=quantiles)
     if provider == "triton_ws":
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: add2_warp_specialized(x, y, a, b), quantiles=quantiles)
+        ms, min_ms, max_ms = triton.testing.do_bench(
+            lambda: add2_warp_specialized(x, y, a, b), quantiles=quantiles)
     gbps = lambda ms: 3 * x.numel() * x.element_size() * 1e-9 / (ms * 1e-3)
     return gbps(ms), gbps(max_ms), gbps(min_ms)
 

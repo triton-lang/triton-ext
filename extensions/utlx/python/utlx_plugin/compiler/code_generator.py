@@ -1,9 +1,13 @@
 import ast
 import threading
 from typing import List
+
+
 def _get_tlx():
     import triton.language.extra.tlx as tlx
     return tlx
+
+
 from contextlib import contextmanager
 
 _tlx_state = threading.local()
@@ -97,14 +101,16 @@ def _validate_warp_group_start_ids(
     for i, start_id in enumerate(start_ids):
         assert start_id >= 0, f"warp_group_start_id[{i}] = {start_id} must be non-negative"
 
-    ranges = [(start_ids[i], start_ids[i] + num_warps[i] * task_replicates[i]) for i in range(len(start_ids))]
+    ranges = [(start_ids[i], start_ids[i] + num_warps[i] * task_replicates[i])
+              for i in range(len(start_ids))]
     default_range = (0, default_num_warps)
 
     for i, (start_i, end_i) in enumerate(ranges):
         if start_i < default_range[1] and default_range[0] < end_i:
             assert False, (
                 f"Overlapping warp ranges: task {i} uses warps [{start_i}, {end_i}) "
-                f"which overlaps with default region warps [{default_range[0]}, {default_range[1]})")
+                f"which overlaps with default region warps [{default_range[0]}, {default_range[1]})"
+            )
 
     for i in range(len(ranges)):
         for j in range(i + 1, len(ranges)):
@@ -175,11 +181,15 @@ def visit_withAsyncTasks(self, node):
                     num_default += 1
                     if task.replicate > 1:
                         taskReplica.append(task.replicate - 1)
-                        taskNumWarps.extend([self.builder.options.num_warps] * (task.replicate - 1))
+                        taskNumWarps.extend([self.builder.options.num_warps] *
+                                            (task.replicate - 1))
                         if task.num_regs:
-                            taskNumRegs.extend([task.num_regs] * (task.replicate - 1))
+                            taskNumRegs.extend([task.num_regs] *
+                                               (task.replicate - 1))
                         if task.warp_group_start_id is not None:
-                            taskWarpGroupStartIds.extend([task.warp_group_start_id] * (task.replicate - 1))
+                            taskWarpGroupStartIds.extend(
+                                [task.warp_group_start_id] *
+                                (task.replicate - 1))
                 else:
                     taskReplica.append(task.replicate)
                     taskNumWarps.extend([task.num_warps] * task.replicate)
@@ -187,7 +197,8 @@ def visit_withAsyncTasks(self, node):
                         taskNumRegs.extend([task.num_regs] * task.replicate)
                     if task.warp_group_start_id is not None:
                         for r in range(task.replicate):
-                            taskWarpGroupStartIds.append(task.warp_group_start_id + r * task.num_warps)
+                            taskWarpGroupStartIds.append(
+                                task.warp_group_start_id + r * task.num_warps)
                         perTaskNumWarps.append(task.num_warps)
                         perTaskStartIds.append(task.warp_group_start_id)
                         perTaskReplicates.append(task.replicate)
@@ -201,9 +212,9 @@ def visit_withAsyncTasks(self, node):
         assert len(taskWarpGroupStartIds) in [0, len(taskNumWarps)]
 
         if len(perTaskStartIds) > 0:
-            _validate_warp_group_start_ids(
-                perTaskStartIds, perTaskNumWarps, perTaskReplicates,
-                self.builder.options.num_warps)
+            _validate_warp_group_start_ids(perTaskStartIds, perTaskNumWarps,
+                                           perTaskReplicates,
+                                           self.builder.options.num_warps)
 
         self._set_insertion_point_and_loc(ip, last_loc)
         ws_op = self.builder.create_warp_specialize_op(
@@ -217,7 +228,8 @@ def visit_withAsyncTasks(self, node):
         for stmt in stmts:
             task = _get_async_task(self, stmt)
             assert task.is_explict
-            task_replicate = (task.replicate - 1) if task.is_default else task.replicate
+            task_replicate = (task.replicate -
+                              1) if task.is_default else task.replicate
             if task_replicate > 0:
                 task_body = ws_op.get_partition_region(index)
                 block = self.builder.create_block_with_parent(task_body, [])
@@ -229,7 +241,8 @@ def visit_withAsyncTasks(self, node):
                 index += task_replicate
                 block.erase()
 
-        captures = sorted(v for v in (liveins.keys() & self.used_vars) if not _is_constexpr(liveins[v]))
+        captures = sorted(v for v in (liveins.keys() & self.used_vars)
+                          if not _is_constexpr(liveins[v]))
         for name in captures:
             val = liveins[name]
             if getattr(val, "__triton_aggregate__", False):

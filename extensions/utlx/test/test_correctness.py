@@ -2,8 +2,6 @@ import pytest
 
 import torch
 
-import triton
-
 from conftest import DEVICE, is_blackwell, is_hopper
 
 # Tutorial imports — these modules live in triton-fb's tlx tutorials.
@@ -48,7 +46,8 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(
     not _TUTORIALS_AVAILABLE,
-    reason="TLX tutorial modules not available (requires triton-fb tlx tutorials)",
+    reason=
+    "TLX tutorial modules not available (requires triton-fb tlx tutorials)",
 )
 
 # =============================================================================
@@ -260,14 +259,21 @@ class FlashAttention:
     @staticmethod
     def create_inputs(Z, H, N_CTX, HEAD_DIM, dtype=torch.float16):
         torch.manual_seed(20)
-        q = torch.empty((Z, H, N_CTX, HEAD_DIM), device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
-        k = torch.empty((Z, H, N_CTX, HEAD_DIM), device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
-        v = torch.empty((Z, H, N_CTX, HEAD_DIM), device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+        q = torch.empty((Z, H, N_CTX, HEAD_DIM), device=DEVICE,
+                        dtype=dtype).normal_(mean=0.0,
+                                             std=0.5).requires_grad_()
+        k = torch.empty((Z, H, N_CTX, HEAD_DIM), device=DEVICE,
+                        dtype=dtype).normal_(mean=0.0,
+                                             std=0.5).requires_grad_()
+        v = torch.empty((Z, H, N_CTX, HEAD_DIM), device=DEVICE,
+                        dtype=dtype).normal_(mean=0.0,
+                                             std=0.5).requires_grad_()
         return q, k, v
 
     @staticmethod
     def get_reference(q, k, v, sm_scale, causal):
-        return torch.nn.functional.scaled_dot_product_attention(q, k, v, scale=sm_scale, is_causal=causal)
+        return torch.nn.functional.scaled_dot_product_attention(
+            q, k, v, scale=sm_scale, is_causal=causal)
 
 
 # =============================================================================
@@ -275,40 +281,58 @@ class FlashAttention:
 # =============================================================================
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16], ids=["fp16", "bf16"])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16],
+                         ids=["fp16", "bf16"])
 @pytest.mark.skipif(not is_blackwell(), reason="Requires Blackwell GPU")
 def test_blackwell_gemm_ws(dtype):
-    Gemm.run_test(_blackwell_gemm_ws, Gemm.CONFIGS["blackwell_gemm_ws"], dtype=dtype)
+    Gemm.run_test(_blackwell_gemm_ws,
+                  Gemm.CONFIGS["blackwell_gemm_ws"],
+                  dtype=dtype)
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16], ids=["fp16", "bf16"])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16],
+                         ids=["fp16", "bf16"])
 @pytest.mark.skipif(not is_blackwell(), reason="Requires Blackwell GPU")
 def test_blackwell_gemm_clc(dtype):
-    Gemm.run_test(_blackwell_gemm_clc, Gemm.CONFIGS["blackwell_gemm_clc"], dtype=dtype)
+    Gemm.run_test(_blackwell_gemm_clc,
+                  Gemm.CONFIGS["blackwell_gemm_clc"],
+                  dtype=dtype)
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16], ids=["fp16", "bf16"])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16],
+                         ids=["fp16", "bf16"])
 @pytest.mark.skipif(not is_blackwell(), reason="Requires Blackwell GPU")
 def test_blackwell_gemm_ws_warp_barrier(dtype):
-    Gemm.run_test(_blackwell_gemm_ws, Gemm.CONFIGS["blackwell_gemm_ws_warp_barrier"], dtype=dtype)
+    Gemm.run_test(_blackwell_gemm_ws,
+                  Gemm.CONFIGS["blackwell_gemm_ws_warp_barrier"],
+                  dtype=dtype)
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16], ids=["fp16", "bf16"])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16],
+                         ids=["fp16", "bf16"])
 @pytest.mark.skipif(not is_blackwell(), reason="Requires Blackwell GPU")
 def test_blackwell_gemm_clc_warp_barrier(dtype):
-    Gemm.run_test(_blackwell_gemm_clc, Gemm.CONFIGS["blackwell_gemm_clc_warp_barrier"], dtype=dtype)
+    Gemm.run_test(_blackwell_gemm_clc,
+                  Gemm.CONFIGS["blackwell_gemm_clc_warp_barrier"],
+                  dtype=dtype)
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16], ids=["fp16", "bf16"])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16],
+                         ids=["fp16", "bf16"])
 @pytest.mark.skipif(not is_blackwell(), reason="Requires Blackwell GPU")
 def test_blackwell_gemm_pipelined(dtype):
-    Gemm.run_test(_blackwell_gemm_pipelined, Gemm.CONFIGS["blackwell_gemm_pipelined"], dtype=dtype)
+    Gemm.run_test(_blackwell_gemm_pipelined,
+                  Gemm.CONFIGS["blackwell_gemm_pipelined"],
+                  dtype=dtype)
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16], ids=["fp16", "bf16"])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16],
+                         ids=["fp16", "bf16"])
 @pytest.mark.skipif(not is_blackwell(), reason="Requires Blackwell GPU")
 def test_blackwell_gemm_2cta(dtype):
-    Gemm.run_test(_blackwell_gemm_2cta, Gemm.CONFIGS["blackwell_gemm_2cta"], dtype=dtype)
+    Gemm.run_test(_blackwell_gemm_2cta,
+                  Gemm.CONFIGS["blackwell_gemm_2cta"],
+                  dtype=dtype)
 
 
 # =============================================================================
@@ -336,7 +360,12 @@ def test_blackwell_fa_ws_persistent():
     for Z, H, N_CTX, HEAD_DIM in FlashAttention.SHAPES:
         q, k, v = FlashAttention.create_inputs(Z, H, N_CTX, HEAD_DIM)
         ref_out = FlashAttention.get_reference(q, k, v, sm_scale, causal)
-        tri_out = _blackwell_fa_ws_persistent(q, k, v, sm_scale, causal, config=config)
+        tri_out = _blackwell_fa_ws_persistent(q,
+                                              k,
+                                              v,
+                                              sm_scale,
+                                              causal,
+                                              config=config)
         torch.testing.assert_close(tri_out, ref_out, atol=1e-2, rtol=0)
 
 
@@ -348,7 +377,12 @@ def test_blackwell_fa_ws_pipelined():
     for Z, H, N_CTX, HEAD_DIM in FlashAttention.SHAPES:
         q, k, v = FlashAttention.create_inputs(Z, H, N_CTX, HEAD_DIM)
         ref_out = FlashAttention.get_reference(q, k, v, sm_scale, causal)
-        tri_out = _blackwell_fa_ws_pipelined(q, k, v, sm_scale, causal, config=config)
+        tri_out = _blackwell_fa_ws_pipelined(q,
+                                             k,
+                                             v,
+                                             sm_scale,
+                                             causal,
+                                             config=config)
         torch.testing.assert_close(tri_out, ref_out, atol=1e-2, rtol=0)
 
 
@@ -360,22 +394,39 @@ def test_blackwell_fa_ws_pipelined_persistent():
     for Z, H, N_CTX, HEAD_DIM in FlashAttention.SHAPES:
         q, k, v = FlashAttention.create_inputs(Z, H, N_CTX, HEAD_DIM)
         ref_out = FlashAttention.get_reference(q, k, v, sm_scale, causal)
-        tri_out = _blackwell_fa_ws_pipelined_persistent(q, k, v, sm_scale, causal, 64, 1, config=config)
+        tri_out = _blackwell_fa_ws_pipelined_persistent(q,
+                                                        k,
+                                                        v,
+                                                        sm_scale,
+                                                        causal,
+                                                        64,
+                                                        1,
+                                                        config=config)
         torch.testing.assert_close(tri_out, ref_out, atol=1e-2, rtol=0)
 
 
-@pytest.mark.parametrize("RESCALE_OPT,USE_WHERE", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("RESCALE_OPT,USE_WHERE",
+                         [(False, False), (True, False), (True, True)])
 @pytest.mark.parametrize("causal", [True, False])
 @pytest.mark.skipif(not is_blackwell(), reason="Requires Blackwell GPU")
-def test_blackwell_fa_ws_pipelined_persistent_warp_barrier(causal, RESCALE_OPT, USE_WHERE):
-    config = FlashAttention.CONFIGS["blackwell_fa_ws_pipelined_persistent_warp_barrier"].copy()
+def test_blackwell_fa_ws_pipelined_persistent_warp_barrier(
+        causal, RESCALE_OPT, USE_WHERE):
+    config = FlashAttention.CONFIGS[
+        "blackwell_fa_ws_pipelined_persistent_warp_barrier"].copy()
     config["RESCALE_OPT"] = RESCALE_OPT
     config["USE_WHERE"] = USE_WHERE
     sm_scale = 0.5
     for Z, H, N_CTX, HEAD_DIM in FlashAttention.SHAPES:
         q, k, v = FlashAttention.create_inputs(Z, H, N_CTX, HEAD_DIM)
         ref_out = FlashAttention.get_reference(q, k, v, sm_scale, causal)
-        tri_out = _blackwell_fa_ws_pipelined_persistent(q, k, v, sm_scale, causal, 64, 1, config=config)
+        tri_out = _blackwell_fa_ws_pipelined_persistent(q,
+                                                        k,
+                                                        v,
+                                                        sm_scale,
+                                                        causal,
+                                                        64,
+                                                        1,
+                                                        config=config)
         torch.testing.assert_close(tri_out, ref_out, atol=1e-2, rtol=0)
 
 
@@ -383,18 +434,29 @@ def test_blackwell_fa_ws_pipelined_persistent_warp_barrier(causal, RESCALE_OPT, 
 @pytest.mark.parametrize("causal", [True, False])
 @pytest.mark.skipif(not is_blackwell(), reason="Requires Blackwell GPU")
 def test_blackwell_fa_ws_pipelined_persistent_mxfp8(HEAD_DIM, causal):
-    config = FlashAttention.CONFIGS["blackwell_fa_ws_pipelined_persistent_mxfp8"]
+    config = FlashAttention.CONFIGS[
+        "blackwell_fa_ws_pipelined_persistent_mxfp8"]
     sm_scale = 0.5
     dtype = torch.float8_e4m3fn
     shapes = [(8, 16, 1024)]
     for Z, H, N_CTX in shapes:
         torch.manual_seed(20)
         shape = (Z, H, N_CTX, HEAD_DIM)
-        (q, q_scale, q_ref), (k, k_scale, k_ref), (v, v_scale,
-                                                   v_ref) = _generate_mxfp8_attention_inputs(shape, DEVICE, dtype)
-        ref_out = torch.nn.functional.scaled_dot_product_attention(q_ref, k_ref, v_ref, scale=sm_scale,
-                                                                   is_causal=causal)
-        tri_out = _blackwell_fa_ws_pipelined_persistent_mxfp8(q, k, v, q_scale, k_scale, v_scale, sm_scale, causal,
+        (q, q_scale,
+         q_ref), (k, k_scale,
+                  k_ref), (v, v_scale,
+                           v_ref) = _generate_mxfp8_attention_inputs(
+                               shape, DEVICE, dtype)
+        ref_out = torch.nn.functional.scaled_dot_product_attention(
+            q_ref, k_ref, v_ref, scale=sm_scale, is_causal=causal)
+        tri_out = _blackwell_fa_ws_pipelined_persistent_mxfp8(q,
+                                                              k,
+                                                              v,
+                                                              q_scale,
+                                                              k_scale,
+                                                              v_scale,
+                                                              sm_scale,
+                                                              causal,
                                                               config=config)
         tri_out = tri_out.to(ref_out.dtype)
         if causal:
@@ -423,7 +485,8 @@ def test_blackwell_fa_ws_pipelined_persistent_mxfp8(HEAD_DIM, causal):
 
 @pytest.mark.skipif(not is_hopper(), reason="Requires Hopper GPU")
 def test_hopper_gemm_pipelined():
-    Gemm.run_test(_hopper_gemm_pipelined, Gemm.CONFIGS["hopper_gemm_pipelined"])
+    Gemm.run_test(_hopper_gemm_pipelined,
+                  Gemm.CONFIGS["hopper_gemm_pipelined"])
 
 
 @pytest.mark.skipif(not is_hopper(), reason="Requires Hopper GPU")
@@ -473,17 +536,26 @@ def test_hopper_fa_ws_pipelined_pingpong():
     for Z, H, N_CTX, HEAD_DIM in FlashAttention.SHAPES:
         q, k, v = FlashAttention.create_inputs(Z, H, N_CTX, HEAD_DIM)
         ref_out = FlashAttention.get_reference(q, k, v, sm_scale, causal)
-        tri_out = _hopper_fa_ws_pipelined_pingpong(q, k, v, sm_scale, config=config)
+        tri_out = _hopper_fa_ws_pipelined_pingpong(q,
+                                                   k,
+                                                   v,
+                                                   sm_scale,
+                                                   config=config)
         torch.testing.assert_close(tri_out, ref_out, atol=1e-2, rtol=0)
 
 
 @pytest.mark.skipif(not is_hopper(), reason="Requires Hopper GPU")
 def test_hopper_fa_ws_pipelined_pingpong_persistent():
-    config = FlashAttention.CONFIGS["hopper_fa_ws_pipelined_pingpong_persistent"]
+    config = FlashAttention.CONFIGS[
+        "hopper_fa_ws_pipelined_pingpong_persistent"]
     sm_scale = 0.5
     causal = False
     for Z, H, N_CTX, HEAD_DIM in FlashAttention.SHAPES:
         q, k, v = FlashAttention.create_inputs(Z, H, N_CTX, HEAD_DIM)
         ref_out = FlashAttention.get_reference(q, k, v, sm_scale, causal)
-        tri_out = _hopper_fa_ws_pipelined_pingpong_persistent(q, k, v, sm_scale, config=config)
+        tri_out = _hopper_fa_ws_pipelined_pingpong_persistent(q,
+                                                              k,
+                                                              v,
+                                                              sm_scale,
+                                                              config=config)
         torch.testing.assert_close(tri_out, ref_out, atol=1e-2, rtol=0)

@@ -291,4 +291,3 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     -fno-rtti
     -Wno-deprecated-declarations
 )
-

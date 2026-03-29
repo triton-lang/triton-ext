@@ -10,7 +10,9 @@ import pathlib
 
 
 def is_async_copy_enabled(arch):
-    return (arch in ["gfx950", "gfx1250"]) if knobs.amd.use_async_copy is None else knobs.amd.use_async_copy
+    return (arch in [
+        "gfx950", "gfx1250"
+    ]) if knobs.amd.use_async_copy is None else knobs.amd.use_async_copy
 
 
 def is_pingpong_schedule_enabled(arch, use_async_copy):
@@ -19,7 +21,9 @@ def is_pingpong_schedule_enabled(arch, use_async_copy):
 
 
 def is_in_thread_transpose_enabled(arch):
-    return (arch == "gfx942") if knobs.amd.use_in_thread_transpose is None else knobs.amd.use_in_thread_transpose
+    return (
+        arch == "gfx942"
+    ) if knobs.amd.use_in_thread_transpose is None else knobs.amd.use_in_thread_transpose
 
 
 _cached_key = None
@@ -40,14 +44,19 @@ def get_hash():
     return _cached_hash
 
 
-def inspect_stages_hook(self=None, stages=None, options=None, language=None, capability=None):
+def inspect_stages_hook(self=None,
+                        stages=None,
+                        options=None,
+                        language=None,
+                        capability=None):
     if all(arg is None for arg in (stages, options, language, capability)):
         return get_key(), get_hash()
 
     backend_name = getattr(self, 'name', '') if self else ''
     target = getattr(options, 'arch', '') if options else ''
 
-    if backend_name == 'amd' or (hasattr(options, 'arch') and str(target).startswith('gfx')):
+    if backend_name == 'amd' or (hasattr(options, 'arch')
+                                 and str(target).startswith('gfx')):
         warp_size = getattr(options, 'warp_size', 64)
 
         def make_ttgir_wrapper(mod, metadata):
@@ -55,8 +64,12 @@ def inspect_stages_hook(self=None, stages=None, options=None, language=None, cap
             pm = ir.pass_manager(mod.context)
             pm.enable_debug()
             passes.plugin.utlx_convert_triton_to_tritongpu(
-                pm, [f"hip:{target}", str(options.num_warps),
-                     str(warp_size), str(options.num_ctas)])
+                pm, [
+                    f"hip:{target}",
+                    str(options.num_warps),
+                    str(warp_size),
+                    str(options.num_ctas)
+                ])
             pm.run(mod, 'make_ttgir_early')
 
             # Phase 2: AMD TTGIR pipeline with uTLX layout pass
@@ -97,8 +110,7 @@ def inspect_stages_hook(self=None, stages=None, options=None, language=None, cap
             passes.common.add_canonicalizer(pm)
             if options.schedule_hint.lower() != "none":
                 for hint in options.schedule_hint.split(","):
-                    amd.passes.ttgpuir.insert_instruction_sched_hints(
-                        pm, hint)
+                    amd.passes.ttgpuir.insert_instruction_sched_hints(pm, hint)
             passes.ttgpuir.add_remove_layout_conversions(pm)
             passes.ttgpuir.add_reduce_data_duplication(pm)
             if is_in_thread_transpose_enabled(options.arch):
@@ -131,7 +143,8 @@ def inspect_stages_hook(self=None, stages=None, options=None, language=None, cap
             metadata["tensordesc_meta"] = mod.get_tensordesc_metadata()
             return mod
 
-        stages["ttgir"] = lambda src, metadata: make_ttgir_wrapper(src, metadata)
+        stages["ttgir"] = lambda src, metadata: make_ttgir_wrapper(
+            src, metadata)
     else:
         # NVIDIA/CUDA: replace make_ttir to inject plugin pass after TTIR
         def make_ttir_wrapper(mod, metadata, opt, cap):
@@ -139,8 +152,10 @@ def inspect_stages_hook(self=None, stages=None, options=None, language=None, cap
             pm = ir.pass_manager(mod.context)
             pm.enable_debug()
             passes.plugin.utlx_convert_triton_to_tritongpu(
-                pm, [f"cuda:{cap}", str(opt.num_warps), '32',
-                     str(opt.num_ctas)])
+                pm,
+                [f"cuda:{cap}",
+                 str(opt.num_warps), '32',
+                 str(opt.num_ctas)])
             pm.run(mod, 'utlx_conversion')
             return mod
 

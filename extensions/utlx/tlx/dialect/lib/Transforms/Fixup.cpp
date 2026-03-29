@@ -32,7 +32,8 @@ public:
     // ws should not capture RankedTensorType
     ttg::WarpSpecializeOp invalidWSOp = nullptr;
     auto result = mod.walk([&](ttg::WarpSpecializeOp op) {
-      for (auto argType : op.getPartitionOp().getExplicitCaptures().getTypes()) {
+      for (auto argType :
+           op.getPartitionOp().getExplicitCaptures().getTypes()) {
         if (isa<RankedTensorType>(argType)) {
           invalidWSOp = op;
           return WalkResult::interrupt();
@@ -75,8 +76,8 @@ public:
         }
         isClustered = (clusterDims[0] * clusterDims[1] * clusterDims[2]) > 1;
       }
-      // There should not be a mapa in unclustered mode
-      #if 0
+// There should not be a mapa in unclustered mode
+#if 0
       // (MapToRemoteBufferOp may not exist in all Triton versions)
       if (!isClustered) {
         if (mod.walk([&](ttng::MapToRemoteBufferOp mapaOp) {
@@ -88,7 +89,7 @@ public:
           return failure();
         }
       }
-      #endif
+#endif
     }
     return success();
   }

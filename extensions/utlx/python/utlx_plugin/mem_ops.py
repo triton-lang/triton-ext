@@ -14,7 +14,6 @@ from . import types as tlx
 from .types import storage_kind
 from .utility import cuda_parse_arch
 
-
 # Map triton dtype to builder method name for creating a type-carrier constant
 _DTYPE_TO_BUILDER_METHOD = {
     tl.float16: "get_fp16",
@@ -38,7 +37,8 @@ def _make_type_carrier(builder, dtype):
     if builder_method is None:
         raise ValueError(f"Unsupported dtype: {dtype}")
 
-    if builder_method.startswith("get_fp") or builder_method.startswith("get_bf"):
+    if builder_method.startswith("get_fp") or builder_method.startswith(
+            "get_bf"):
         return getattr(builder, builder_method)(0.0)
     else:
         return getattr(builder, builder_method)(0)
@@ -55,7 +55,8 @@ def _assert_blackwell_for_tmem(arch):
     assert capability >= 100, "tmem is only available on Blackwell"
 
 
-def _create_tmem_compatible_tensor_layout(builder, tensor: tlx.buffered_tensor):
+def _create_tmem_compatible_tensor_layout(builder,
+                                          tensor: tlx.buffered_tensor):
     """Create a DummyRegisterLayout encoding for TMEM-compatible register layout."""
     return builder.utlx_make_dummy_register_layout(
         [builder.get_int32(int(s)) for s in tensor.shape] +
@@ -64,11 +65,14 @@ def _create_tmem_compatible_tensor_layout(builder, tensor: tlx.buffered_tensor):
 
 
 def _get_remote_cta_rank_handle(remote_cta_rank, _semantic):
-    if isinstance(remote_cta_rank, tl.constexpr) or isinstance(remote_cta_rank, int):
-        return _semantic._convert_elem_to_ir_value(tl._unwrap_if_constexpr(remote_cta_rank), require_i64=False)
+    if isinstance(remote_cta_rank, tl.constexpr) or isinstance(
+            remote_cta_rank, int):
+        return _semantic._convert_elem_to_ir_value(
+            tl._unwrap_if_constexpr(remote_cta_rank), require_i64=False)
     else:
         assert isinstance(remote_cta_rank, tl.tensor), (
-            f"`remote_cta_rank` must be tl.tensor or tl.constexpr, got {type(remote_cta_rank)}")
+            f"`remote_cta_rank` must be tl.tensor or tl.constexpr, got {type(remote_cta_rank)}"
+        )
         return remote_cta_rank.handle
 
 
@@ -87,9 +91,7 @@ def storage_alias_spec(
         size_val = tl._unwrap_if_constexpr(buffer_size_bytes)
     size_ir = _semantic.builder.get_int64(size_val)
 
-    handle = _semantic.builder.utlx_storage_alias_spec(
-        [storage_ir, size_ir]
-    )
+    handle = _semantic.builder.utlx_storage_alias_spec([storage_ir, size_ir])
 
     return tlx.storage_alias_spec(
         handle,
@@ -116,23 +118,23 @@ def local_alloc(
 
     # If reuse is a storage_alias_spec, use storage_alias_local_alloc
     if reuse is not None and isinstance(reuse, tlx.storage_alias_spec):
-        return _local_alloc_with_storage_alias(
-            _semantic, reuse, dtype, full_shape, unwrapped_shape, unwrapped_num, storage
-        )
+        return _local_alloc_with_storage_alias(_semantic, reuse, dtype,
+                                               full_shape, unwrapped_shape,
+                                               unwrapped_num, storage)
 
     # If reuse is a buffered_tensor, use local_alias (share memory with existing buffer)
     if reuse is not None and isinstance(reuse, tlx.buffered_tensor):
-        return _local_alloc_with_alias(
-            _semantic, reuse, dtype, full_shape, unwrapped_shape, unwrapped_num, storage
-        )
+        return _local_alloc_with_alias(_semantic, reuse, dtype, full_shape,
+                                       unwrapped_shape, unwrapped_num, storage)
 
     if storage == tlx.storage_kind.tmem:
-        return _local_alloc_tmem(
-            _semantic, dtype, full_shape, unwrapped_shape, unwrapped_num
-        )
+        return _local_alloc_tmem(_semantic, dtype, full_shape, unwrapped_shape,
+                                 unwrapped_num)
 
     type_carrier = _make_type_carrier(_semantic.builder, dtype)
-    shape_values = [_semantic.builder.get_int32(int(dim)) for dim in full_shape]
+    shape_values = [
+        _semantic.builder.get_int32(int(dim)) for dim in full_shape
+    ]
     is_amd = _detect_amd(_semantic.builder)
     target_hint = _semantic.builder.get_int32(1 if is_amd else 0)
 
@@ -141,16 +143,13 @@ def local_alloc(
 
     if len(unwrapped_shape) == 1 or is_amd:
         py_layout = tlx.swizzled_shared_layout_encoding.make_default(
-            rank=len(unwrapped_shape)
-        )
+            rank=len(unwrapped_shape))
     else:
         py_layout = tlx.nv_mma_shared_layout_encoding.make_default(
-            unwrapped_shape, dtype
-        )
+            unwrapped_shape, dtype)
 
-    return tlx.buffered_tensor(
-        tensor_handle, dtype, unwrapped_shape, unwrapped_num, storage, py_layout
-    )
+    return tlx.buffered_tensor(tensor_handle, dtype, unwrapped_shape,
+                               unwrapped_num, storage, py_layout)
 
 
 def _local_alloc_with_storage_alias(semantic, spec, dtype, full_shape,
@@ -165,22 +164,21 @@ def _local_alloc_with_storage_alias(semantic, spec, dtype, full_shape,
     tensor_handle = semantic.builder.utlx_storage_alias_local_alloc(args)
 
     if is_tmem:
-        py_layout = tlx.tensor_memory_layout_encoding.make_default(unwrapped_shape)
+        py_layout = tlx.tensor_memory_layout_encoding.make_default(
+            unwrapped_shape)
     elif len(unwrapped_shape) == 1 or _detect_amd(semantic.builder):
         py_layout = tlx.swizzled_shared_layout_encoding.make_default(
-            rank=len(unwrapped_shape)
-        )
+            rank=len(unwrapped_shape))
     else:
         py_layout = tlx.nv_mma_shared_layout_encoding.make_default(
-            unwrapped_shape, dtype
-        )
+            unwrapped_shape, dtype)
 
-    return tlx.buffered_tensor(
-        tensor_handle, dtype, unwrapped_shape, unwrapped_num, storage, py_layout
-    )
+    return tlx.buffered_tensor(tensor_handle, dtype, unwrapped_shape,
+                               unwrapped_num, storage, py_layout)
 
 
-def _local_alloc_tmem(semantic, dtype, full_shape, unwrapped_shape, unwrapped_num):
+def _local_alloc_tmem(semantic, dtype, full_shape, unwrapped_shape,
+                      unwrapped_num):
     """Allocate standalone TMEM (without storage_alias_spec)."""
     type_carrier = _make_type_carrier(semantic.builder, dtype)
     shape_values = [semantic.builder.get_int32(int(dim)) for dim in full_shape]
@@ -188,7 +186,8 @@ def _local_alloc_tmem(semantic, dtype, full_shape, unwrapped_shape, unwrapped_nu
     # Use DummyTMEMLayoutEncoding for sub-16-bit types (int8/uint8 for scales)
     use_dummy = dtype.primitive_bitwidth < 16
     if use_dummy and dtype not in (tl.uint8, tl.int8):
-        raise NotImplementedError(f"TMEM layouts not supported for {dtype} yet")
+        raise NotImplementedError(
+            f"TMEM layouts not supported for {dtype} yet")
     layout_hint = semantic.builder.get_int32(1 if use_dummy else 0)
 
     args = [type_carrier] + shape_values + [layout_hint]
@@ -197,22 +196,20 @@ def _local_alloc_tmem(semantic, dtype, full_shape, unwrapped_shape, unwrapped_nu
     if use_dummy:
         py_layout = tlx.DummyTMEMLayoutEncoding()
     else:
-        py_layout = tlx.tensor_memory_layout_encoding.make_default(unwrapped_shape)
+        py_layout = tlx.tensor_memory_layout_encoding.make_default(
+            unwrapped_shape)
 
-    return tlx.buffered_tensor(
-        tensor_handle, dtype, unwrapped_shape, unwrapped_num,
-        storage_kind.tmem, py_layout
-    )
+    return tlx.buffered_tensor(tensor_handle, dtype, unwrapped_shape,
+                               unwrapped_num, storage_kind.tmem, py_layout)
 
 
 def _local_alloc_with_alias(semantic, reuse_tensor, dtype, full_shape,
-                             unwrapped_shape, unwrapped_num, storage):
+                            unwrapped_shape, unwrapped_num, storage):
     """Allocate via utlx_local_alias (share memory with existing buffered_tensor)."""
     if reuse_tensor.type.storage != storage:
         raise ValueError(
             f"reuse tensor has storage {reuse_tensor.type.storage} but "
-            f"allocation requests {storage}"
-        )
+            f"allocation requests {storage}")
     type_carrier = _make_type_carrier(semantic.builder, dtype)
     shape_values = [semantic.builder.get_int32(int(dim)) for dim in full_shape]
     is_tmem = storage == storage_kind.tmem
@@ -222,19 +219,17 @@ def _local_alloc_with_alias(semantic, reuse_tensor, dtype, full_shape,
     tensor_handle = semantic.builder.utlx_local_alias(args)
 
     if is_tmem:
-        py_layout = tlx.tensor_memory_layout_encoding.make_default(unwrapped_shape)
+        py_layout = tlx.tensor_memory_layout_encoding.make_default(
+            unwrapped_shape)
     elif len(unwrapped_shape) == 1 or _detect_amd(semantic.builder):
         py_layout = tlx.swizzled_shared_layout_encoding.make_default(
-            rank=len(unwrapped_shape)
-        )
+            rank=len(unwrapped_shape))
     else:
         py_layout = tlx.nv_mma_shared_layout_encoding.make_default(
-            unwrapped_shape, dtype
-        )
+            unwrapped_shape, dtype)
 
-    return tlx.buffered_tensor(
-        tensor_handle, dtype, unwrapped_shape, unwrapped_num, storage, py_layout
-    )
+    return tlx.buffered_tensor(tensor_handle, dtype, unwrapped_shape,
+                               unwrapped_num, storage, py_layout)
 
 
 @tl.builtin
@@ -244,16 +239,20 @@ def local_view(
     _semantic=None,
 ):
     """Returns a subview of the buffer at the given index."""
-    buffer_idx = _semantic._convert_elem_to_ir_value(buffer_idx, require_i64=False)
+    buffer_idx = _semantic._convert_elem_to_ir_value(buffer_idx,
+                                                     require_i64=False)
     view_handle = _semantic.builder.utlx_local_view(
-        [local_allocated_buffers.handle, buffer_idx]
-    )
+        [local_allocated_buffers.handle, buffer_idx])
 
     if isinstance(local_allocated_buffers, tlx.mbarrier):
-        return tlx.mbarrier(view_handle, 0, local_allocated_buffers.type.layout,
-                            is_warp_barrier=local_allocated_buffers.is_warp_barrier)
+        return tlx.mbarrier(
+            view_handle,
+            0,
+            local_allocated_buffers.type.layout,
+            is_warp_barrier=local_allocated_buffers.is_warp_barrier)
     elif isinstance(local_allocated_buffers, tlx.clc_response):
-        return tlx.clc_response(view_handle, 0, local_allocated_buffers.type.layout)
+        return tlx.clc_response(view_handle, 0,
+                                local_allocated_buffers.type.layout)
     else:
         original_shape = local_allocated_buffers.shape
         if local_allocated_buffers.type.num == 0:
@@ -281,13 +280,17 @@ def remote_view(
     _semantic=None,
 ) -> tlx.mbarrier:
     """Returns a remote view of the buffer in another CTA."""
-    assert isinstance(local_allocated_buffer, tlx.mbarrier), "remote_view only supports barrier for now"
+    assert isinstance(
+        local_allocated_buffer,
+        tlx.mbarrier), "remote_view only supports barrier for now"
     assert local_allocated_buffer.type.storage == storage_kind.smem, "remote_view requires local smem as input"
-    remote_cta_rank_handle = _get_remote_cta_rank_handle(remote_cta_rank, _semantic)
+    remote_cta_rank_handle = _get_remote_cta_rank_handle(
+        remote_cta_rank, _semantic)
     remote_buf_handle = _semantic.builder.utlx_map_to_remote_buffer(
         [local_allocated_buffer.handle, remote_cta_rank_handle])
-    return tlx.mbarrier(
-        remote_buf_handle, 0, local_allocated_buffer.type.layout, storage_kind.smemCluster)
+    return tlx.mbarrier(remote_buf_handle, 0,
+                        local_allocated_buffer.type.layout,
+                        storage_kind.smemCluster)
 
 
 @tl.builtin
@@ -300,7 +303,8 @@ def remote_shmem_store(
     """Store a distributed tensor into remote shared memory."""
     assert dst.type.storage == tlx.storage_kind.smem
     assert remote_cta_rank is not None
-    remote_cta_rank_handle = _get_remote_cta_rank_handle(remote_cta_rank, _semantic)
+    remote_cta_rank_handle = _get_remote_cta_rank_handle(
+        remote_cta_rank, _semantic)
     _semantic.builder.utlx_remote_shmem_store(
         [src.handle, dst.handle, remote_cta_rank_handle])
     return tl.tensor(src.handle, tl.void)
@@ -318,7 +322,8 @@ def async_remote_shmem_store(
     assert dst.type.storage == tlx.storage_kind.smem
     assert remote_cta_rank is not None
     assert barrier is not None
-    remote_cta_rank_handle = _get_remote_cta_rank_handle(remote_cta_rank, _semantic)
+    remote_cta_rank_handle = _get_remote_cta_rank_handle(
+        remote_cta_rank, _semantic)
     _semantic.builder.utlx_async_remote_shmem_store(
         [src.handle, dst.handle, remote_cta_rank_handle, barrier.handle])
     return tl.tensor(src.handle, tl.void)
@@ -333,9 +338,11 @@ def subslice(
 ) -> tlx.buffered_tensor:
     """Returns a subslice of the buffer (in TMEM) along the innermost dimension."""
     assert local_allocated_buffer.type.storage == tlx.storage_kind.tmem, "subslice is only supported for tmem"
-    subslice_shape = [dim for dim in local_allocated_buffer.type.shape[:-1]] + [size]
+    subslice_shape = [dim for dim in local_allocated_buffer.type.shape[:-1]
+                      ] + [size]
     return tlx.buffered_tensor(
-        _semantic.builder.create_tmem_subslice(local_allocated_buffer.handle, offset, size),
+        _semantic.builder.create_tmem_subslice(local_allocated_buffer.handle,
+                                               offset, size),
         local_allocated_buffer.type.element_ty,
         subslice_shape,
         local_allocated_buffer.type.num,
@@ -358,7 +365,8 @@ def local_slice(
         assert shape[0] == buffer.type.shape[0]
         return subslice(buffer, offset[1], shape[1], _semantic=_semantic)
     else:
-        slice_handle = _semantic.builder.create_memdesc_subslice(buffer.handle, offset, shape)
+        slice_handle = _semantic.builder.create_memdesc_subslice(
+            buffer.handle, offset, shape)
         return tlx.buffered_tensor(
             slice_handle,
             buffer.type.scalar,
@@ -370,14 +378,21 @@ def local_slice(
 
 
 @tl.builtin
-def local_trans(input: tlx.buffered_tensor, dims: Tuple[int] = (1, 0), _semantic=None) -> tlx.buffered_tensor:
+def local_trans(input: tlx.buffered_tensor,
+                dims: Tuple[int] = (1, 0),
+                _semantic=None) -> tlx.buffered_tensor:
     """Permutes the dimensions of a buffered tensor."""
     if len(input.type.shape) != len(dims):
-        raise ValueError("permute dims must have the same length as input shape")
-    if sorted(tl._unwrap_if_constexpr(d) for d in dims) != list(range(len(dims))):
-        raise ValueError(f"permute dims must be a permutation of 0, 1, ..., n-1, but were {dims}")
+        raise ValueError(
+            "permute dims must have the same length as input shape")
+    if sorted(tl._unwrap_if_constexpr(d)
+              for d in dims) != list(range(len(dims))):
+        raise ValueError(
+            f"permute dims must be a permutation of 0, 1, ..., n-1, but were {dims}"
+        )
 
-    permuted_handle = _semantic.builder.create_memdesc_trans(input.handle, dims)
+    permuted_handle = _semantic.builder.create_memdesc_trans(
+        input.handle, dims)
     return input.make_permute(permuted_handle, dims)
 
 
@@ -392,13 +407,15 @@ def local_reinterpret(
     if shape is None:
         shape = src.type.shape
     else:
-        assert isinstance(src, tlx.buffered_tensor) and src.type.storage == tlx.storage_kind.smem, (
+        assert isinstance(
+            src, tlx.buffered_tensor
+        ) and src.type.storage == tlx.storage_kind.smem, (
             "TLX local_reinterpret with reshaping only supports SMEM")
 
     reinterpreted_value_handle = _semantic.builder.create_memdesc_reinterpret(
         src.handle, dtype.to_ir(_semantic.builder), shape)
-    return tlx.buffered_tensor(
-        reinterpreted_value_handle, dtype, shape, src.type.num, src.type.storage, src.type.layout)
+    return tlx.buffered_tensor(reinterpreted_value_handle, dtype, shape,
+                               src.type.num, src.type.storage, src.type.layout)
 
 
 @tl.builtin
@@ -419,11 +436,13 @@ def async_load(
     bulk = tl._unwrap_if_constexpr(bulk)
 
     if bulk:
-        assert len(result.type.shape) == 1, "bulk async_load requires a 1D result buffer"
+        assert len(result.type.shape
+                   ) == 1, "bulk async_load requires a 1D result buffer"
         assert barrier is not None, "bulk async_load requires a barrier"
         assert mask is None and other is None
 
-        dest_bytes = result.type.shape[0] * (result.type.element_ty.primitive_bitwidth // 8)
+        dest_bytes = result.type.shape[0] * (
+            result.type.element_ty.primitive_bitwidth // 8)
         if bulk_size is None:
             bulk_size = dest_bytes
 
@@ -438,13 +457,15 @@ def async_load(
             bulk_size_handle = _semantic.builder.get_int32(int(bulk_size))
         if const_bulk_size is not None:
             assert const_bulk_size <= dest_bytes, (
-                f"bulk_size ({const_bulk_size}) exceeds destination buffer size ({dest_bytes} bytes)")
+                f"bulk_size ({const_bulk_size}) exceeds destination buffer size ({dest_bytes} bytes)"
+            )
 
         cache = _semantic._str_to_load_cache_modifier(cache_modifier)
         eviction = _semantic._str_to_eviction_policy(eviction_policy)
-        token = _semantic.builder.utlx_async_load(
-            [src.handle, result.handle, bulk_size_handle, barrier.handle,
-             _semantic.builder.get_int32(1)])  # useBulk=1
+        token = _semantic.builder.utlx_async_load([
+            src.handle, result.handle, bulk_size_handle, barrier.handle,
+            _semantic.builder.get_int32(1)
+        ])  # useBulk=1
         return tlx.async_token(token)
 
     assert bulk_size is None, "bulk_size requires bulk=True"
@@ -458,9 +479,11 @@ def async_load(
         other = _semantic.to_tensor(other)
 
     if src.type.is_ptr() and src.type.element_ty.is_block():
-        raise NotImplementedError("async_load by block pointer is not supported yet")
+        raise NotImplementedError(
+            "async_load by block pointer is not supported yet")
     else:
-        _, src, mask, other, _ = _semantic._prepare_legacy_load(src, mask, other, None, None)
+        _, src, mask, other, _ = _semantic._prepare_legacy_load(
+            src, mask, other, None, None)
 
     cache = _semantic._str_to_load_cache_modifier(cache_modifier)
     eviction = _semantic._str_to_eviction_policy(eviction_policy)
@@ -483,7 +506,9 @@ def async_load_commit_group(
     """Commits all prior async_load ops into an async group."""
     if tokens is None:
         tokens = []
-    handles = [t.handle for t in tokens if t is not None and t.handle is not None]
+    handles = [
+        t.handle for t in tokens if t is not None and t.handle is not None
+    ]
     result = _semantic.builder.utlx_async_commit_group(handles)
     return tlx.async_token(result)
 
@@ -498,7 +523,9 @@ def async_load_wait_group(
     pendings = tl._unwrap_if_constexpr(pendings)
     if tokens is None:
         tokens = []
-    handles = [t.handle for t in tokens if t is not None and t.handle is not None]
+    handles = [
+        t.handle for t in tokens if t is not None and t.handle is not None
+    ]
     args = [_semantic.builder.get_int32(pendings)] + handles
     _semantic.builder.utlx_async_wait_group(args)
     return tlx.async_token(None)
@@ -515,7 +542,8 @@ def local_load(
     storage = src.type.storage
     if storage == tlx.storage_kind.tmem:
         _assert_blackwell_for_tmem(_semantic.builder.options.arch)
-        tmem_layout = _create_tmem_compatible_tensor_layout(_semantic.builder, src)
+        tmem_layout = _create_tmem_compatible_tensor_layout(
+            _semantic.builder, src)
         load_handle = _semantic.builder.create_tmem_load(
             src.handle, tmem_layout, token.handle if token else None)
         output = _semantic.builder.utlx_release_layout([load_handle])
@@ -538,10 +566,13 @@ def local_store(
     storage = dst.type.storage
     if storage == tlx.storage_kind.tmem:
         _assert_blackwell_for_tmem(_semantic.builder.options.arch)
-        tmem_layout = _create_tmem_compatible_tensor_layout(_semantic.builder, dst)
+        tmem_layout = _create_tmem_compatible_tensor_layout(
+            _semantic.builder, dst)
         src_handle = _semantic.builder.utlx_require_with_layout_carrier(
             [src.handle, tmem_layout])
-        return tl.tensor(_semantic.builder.create_tmem_store(dst.handle, src_handle), tl.void)
+        return tl.tensor(
+            _semantic.builder.create_tmem_store(dst.handle, src_handle),
+            tl.void)
 
     _semantic.builder.utlx_local_store([dst.handle, src.handle])
     return tl.tensor(src.handle, tl.void)
@@ -554,8 +585,10 @@ def tmem_copy(
     _semantic=None,
 ) -> None:
     """Asynchronous copy from shared memory to tensor memory (tcgen05.cp)."""
-    assert isinstance(src, tlx.buffered_tensor), "source must be a buffered tensor"
-    assert isinstance(dst, tlx.buffered_tensor), "destination must be a buffered tensor"
+    assert isinstance(src,
+                      tlx.buffered_tensor), "source must be a buffered tensor"
+    assert isinstance(
+        dst, tlx.buffered_tensor), "destination must be a buffered tensor"
     assert src.type.storage == tlx.storage_kind.smem, "source must be in shared memory"
     assert dst.type.storage == tlx.storage_kind.tmem, "destination must be in tensor memory"
     _assert_blackwell_for_tmem(_semantic.builder.options.arch)
@@ -571,11 +604,13 @@ def async_store(
 ) -> None:
     """Asynchronously copy from shared memory to global memory."""
     if isinstance(size, tl.constexpr):
-        size_handle = _semantic._convert_elem_to_ir_value(size.value, require_i64=False)
+        size_handle = _semantic._convert_elem_to_ir_value(size.value,
+                                                          require_i64=False)
     elif isinstance(size, tl.tensor):
         size_handle = size.handle
     else:
-        size_handle = _semantic._convert_elem_to_ir_value(size, require_i64=False)
+        size_handle = _semantic._convert_elem_to_ir_value(size,
+                                                          require_i64=False)
     _semantic.builder.utlx_async_store(
         [src_smem.handle, dst_global_ptr.handle, size_handle])
 
@@ -590,7 +625,9 @@ def fence(scope: tl.constexpr, _semantic=None) -> None:
         scope_val = 0 if scope == "gpu" else 1
         _semantic.builder.utlx_fence([_semantic.builder.get_int32(scope_val)])
     else:
-        raise ValueError(f"fence scope must be 'gpu', 'sys', or 'async_shared', got '{scope}'")
+        raise ValueError(
+            f"fence scope must be 'gpu', 'sys', or 'async_shared', got '{scope}'"
+        )
 
 
 @tl.builtin
@@ -613,10 +650,12 @@ def allocate_tensor_descriptor(
     nbytes = descriptor_size * unwrapped_num
     alignment = 128
 
-    tensor_handle = _semantic.builder.utlx_global_scratch_alloc(
-        [_semantic.builder.get_int32(nbytes),
-         _semantic.builder.get_int32(alignment)])
-    return tlx.tensor_descriptor_ptr(tensor_handle, unwrapped_num, descriptor_size)
+    tensor_handle = _semantic.builder.utlx_global_scratch_alloc([
+        _semantic.builder.get_int32(nbytes),
+        _semantic.builder.get_int32(alignment)
+    ])
+    return tlx.tensor_descriptor_ptr(tensor_handle, unwrapped_num,
+                                     descriptor_size)
 
 
 @tl.builtin
@@ -630,15 +669,20 @@ def make_tensor_descriptor(
     _semantic=None,
 ) -> tl.tensor_descriptor_base:
     """Create a TMA descriptor on device."""
-    if desc_ptr is not None and not isinstance(desc_ptr, tlx.tensor_descriptor_ptr):
-        raise TypeError(f"desc_ptr must be None or tlx.tensor_descriptor_ptr, got {type(desc_ptr)}")
+    if desc_ptr is not None and not isinstance(desc_ptr,
+                                               tlx.tensor_descriptor_ptr):
+        raise TypeError(
+            f"desc_ptr must be None or tlx.tensor_descriptor_ptr, got {type(desc_ptr)}"
+        )
     ndim = len(shape)
     if not (1 <= ndim <= 5):
         raise ValueError(f"Expected 1 <= ndim <= 5 but got {ndim} dimensions")
     if len(strides) != ndim:
         raise ValueError(f"Expected {ndim} strides but got {len(strides)}")
     if len(block_shape) != ndim:
-        raise ValueError(f"Expected block_shape to have {ndim} dimensions but got {len(block_shape)}")
+        raise ValueError(
+            f"Expected block_shape to have {ndim} dimensions but got {len(block_shape)}"
+        )
     assert isinstance(base.dtype, tl.pointer_type)
 
     elem_size = base.dtype.element_ty.primitive_bitwidth // 8
@@ -646,13 +690,19 @@ def make_tensor_descriptor(
     if contig_dim_size * elem_size < 16:
         raise ValueError(
             f"Descriptor block shape must have at least 16 bytes in the last dimension, "
-            f"but got {contig_dim_size} * {elem_size} = {contig_dim_size * elem_size} bytes")
+            f"but got {contig_dim_size} * {elem_size} = {contig_dim_size * elem_size} bytes"
+        )
     last_stride = tl._unwrap_if_constexpr(strides[-1])
     if last_stride != 1:
-        raise ValueError(f"Tensor descriptor last dim stride must be 1 but got {last_stride}")
+        raise ValueError(
+            f"Tensor descriptor last dim stride must be 1 but got {last_stride}"
+        )
 
     shape = [_semantic.make_scalar(x, tl.int32) for x in shape]
-    strides = [_semantic.make_scalar(tl._unwrap_if_constexpr(x), tl.int64) for x in strides]
+    strides = [
+        _semantic.make_scalar(tl._unwrap_if_constexpr(x), tl.int64)
+        for x in strides
+    ]
     block_shape = tl._unwrap_shape(block_shape)
 
     assert isinstance(base.type, tl.pointer_type)
@@ -662,17 +712,19 @@ def make_tensor_descriptor(
     padding = _semantic._str_to_padding_option(padding_option)
 
     if base.type.element_ty.is_int() and padding == ir.PADDING_OPTION.PAD_NAN:
-        raise ValueError("Padding option `nan` is not supported for integer blocks")
+        raise ValueError(
+            "Padding option `nan` is not supported for integer blocks")
 
     desc_handle = desc_ptr.handle if desc_ptr is not None else None
     if desc_handle:
         handle = _semantic.builder.create_make_tensor_descriptor(
-            base_handle, [s.handle for s in shape], [s.handle for s in strides],
-            desc_handle, block_shape, is_signed_int, padding)
+            base_handle, [s.handle for s in shape],
+            [s.handle for s in strides], desc_handle, block_shape,
+            is_signed_int, padding)
     else:
         handle = _semantic.builder.create_make_tensor_descriptor(
-            base_handle, [s.handle for s in shape], [s.handle for s in strides],
-            block_shape, is_signed_int, padding)
+            base_handle, [s.handle for s in shape],
+            [s.handle for s in strides], block_shape, is_signed_int, padding)
     return tl.tensor_descriptor(handle, shape, strides, block_type)
 
 
@@ -685,7 +737,9 @@ def reinterpret_tensor_descriptor(
 ) -> tl.tensor_descriptor_base:
     """Reinterpret a tensor descriptor pointer as a TMA-backed tensor descriptor."""
     if not isinstance(desc_ptr, tlx.tensor_descriptor_ptr):
-        raise TypeError(f"desc_ptr must be tlx.tensor_descriptor_ptr, got {type(desc_ptr)}")
+        raise TypeError(
+            f"desc_ptr must be tlx.tensor_descriptor_ptr, got {type(desc_ptr)}"
+        )
 
     ptr_type = tl.pointer_type(tl.int8)
     tensor_wrapper = tl.tensor(desc_ptr.handle, ptr_type)
@@ -715,7 +769,8 @@ def async_descriptor_load(
     assert isinstance(desc, tl.tensor_descriptor_base)
     ndim = len(desc.block_shape)
     assert len(offsets) == ndim
-    result_handle = require_nv_mma_shared_layout(result, True, _semantic.builder)
+    result_handle = require_nv_mma_shared_layout(result, True,
+                                                 _semantic.builder)
     offsets = _semantic._convert_to_ir_values(offsets, require_i64=False)
     if pred is None:
         pred_handle = _semantic.builder.get_int1(True)
@@ -724,8 +779,8 @@ def async_descriptor_load(
     multicast = len(multicast_targets) > 0
     # Use gluon: create_async_tma_copy_global_to_local(desc, coord, barrier, result, pred, multicast, offsets)
     _semantic.builder.create_async_tma_copy_global_to_local(
-        desc.handle, offsets, barrier.handle, result_handle,
-        pred_handle, multicast, None)
+        desc.handle, offsets, barrier.handle, result_handle, pred_handle,
+        multicast, None)
 
 
 @tl.builtin
@@ -749,8 +804,8 @@ def async_descriptor_prefetch_tensor(
         pred_handle = _semantic.builder.get_int1(True)
     else:
         pred_handle = pred.handle
-    _semantic.builder.utlx_async_tma_prefetch(
-        [desc.handle] + offsets + [pred_handle])
+    _semantic.builder.utlx_async_tma_prefetch([desc.handle] + offsets +
+                                              [pred_handle])
 
 
 @tl.builtin
@@ -774,7 +829,8 @@ def async_descriptor_store(
 
     ndim = len(desc.block_shape)
     assert len(offsets) == ndim
-    source_handle = require_nv_mma_shared_layout(source, True, _semantic.builder)
+    source_handle = require_nv_mma_shared_layout(source, True,
+                                                 _semantic.builder)
     offsets = _semantic._convert_to_ir_values(offsets, require_i64=False)
 
     if store_reduce == "":
@@ -792,7 +848,8 @@ def async_descriptor_store(
         }
         reduce_kind = reduce_kind_map[store_reduce]
         # Use gluon: create_async_tma_reduce(kind, desc, coord, src)
-        _semantic.builder.create_async_tma_reduce(reduce_kind, desc.handle, offsets, source_handle)
+        _semantic.builder.create_async_tma_reduce(reduce_kind, desc.handle,
+                                                  offsets, source_handle)
 
 
 @tl.builtin
@@ -821,11 +878,13 @@ def _tensor_descriptor_ptr_getitem(self, index, _semantic=None):
         index_val = tl._unwrap_if_constexpr(index)
         index_handle = _semantic.builder.get_int32(index_val)
     else:
-        raise TypeError(f"Index must be int, constexpr, or tensor, got {type(index)}")
+        raise TypeError(
+            f"Index must be int, constexpr, or tensor, got {type(index)}")
 
     size_handle = _semantic.builder.get_int32(descriptor_size)
     offset_handle = _semantic.builder.create_mul(index_handle, size_handle)
-    indexed_handle = _semantic.builder.create_addptr(self.handle, offset_handle)
+    indexed_handle = _semantic.builder.create_addptr(self.handle,
+                                                     offset_handle)
     return tlx.tensor_descriptor_ptr(indexed_handle, self.num, descriptor_size)
 
 

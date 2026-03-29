@@ -19,7 +19,8 @@ def vote_ballot_sync(
         mask_val = mask
 
     mask_handle = _semantic.builder.get_int32(mask_val)
-    result = _semantic.builder.utlx_vote_ballot_sync([mask_handle, pred.handle])
+    result = _semantic.builder.utlx_vote_ballot_sync(
+        [mask_handle, pred.handle])
 
     if pred.type.is_block():
         shape = [s.value if hasattr(s, "value") else s for s in pred.shape]

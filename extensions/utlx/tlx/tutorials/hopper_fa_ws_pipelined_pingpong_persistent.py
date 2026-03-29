@@ -50,7 +50,8 @@ def _get_bufidx_phase(accum_cnt, NUM_BUFFERS):
 
 
 @triton.jit
-def _compute_offsets(tile_idx, H, num_pid_n, num_pid_in_group, N_CTX, BLOCK_M: tl.constexpr):
+def _compute_offsets(tile_idx, H, num_pid_n, num_pid_in_group, N_CTX,
+                     BLOCK_M: tl.constexpr):
     group_id = tile_idx // num_pid_in_group
     first_pid_n = group_id
     start_m = tile_idx % num_pid_in_group
@@ -66,17 +67,25 @@ def _compute_offsets(tile_idx, H, num_pid_n, num_pid_in_group, N_CTX, BLOCK_M: t
 
 @triton.autotune(configs=configs, key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT"])
 @triton.jit
-def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
-                                               Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #
-                                               HEAD_DIM: tl.constexpr,  #
-                                               BLOCK_M: tl.constexpr,  #
-                                               BLOCK_N: tl.constexpr,  #
-                                               FP8_OUTPUT: tl.constexpr,  #
-                                               NUM_BUFFERS_Q: tl.constexpr,  #
-                                               NUM_BUFFERS_KV: tl.constexpr,  #
-                                               NUM_MMA_WARPS: tl.constexpr,  #
-                                               NUM_MMA_GROUPS: tl.constexpr,  #
-                                               ):
+def _attn_fwd_ws_pipelined_pingpong_persistent(
+        sm_scale,
+        M,  #
+        Z,
+        H,
+        desc_q,
+        desc_k,
+        desc_v,
+        desc_o,
+        N_CTX,  #
+        HEAD_DIM: tl.constexpr,  #
+        BLOCK_M: tl.constexpr,  #
+        BLOCK_N: tl.constexpr,  #
+        FP8_OUTPUT: tl.constexpr,  #
+        NUM_BUFFERS_Q: tl.constexpr,  #
+        NUM_BUFFERS_KV: tl.constexpr,  #
+        NUM_MMA_WARPS: tl.constexpr,  #
+        NUM_MMA_GROUPS: tl.constexpr,  #
+):
     BLOCK_M_SPLIT: tl.constexpr = BLOCK_M // NUM_MMA_GROUPS
 
     # Compute bytes per element for each tensor type
@@ -99,16 +108,23 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
     tile_idx = prog_id
 
     # allocate buffers
-    q_tiles = tlx.local_alloc((BLOCK_M_SPLIT, HEAD_DIM), tlx.dtype_of(desc_q), NUM_MMA_GROUPS * NUM_BUFFERS_Q)
-    k_tiles = tlx.local_alloc((BLOCK_N, HEAD_DIM), tlx.dtype_of(desc_k), NUM_BUFFERS_KV)
-    v_tiles = tlx.local_alloc((BLOCK_N, HEAD_DIM), tlx.dtype_of(desc_v), NUM_BUFFERS_KV)
+    q_tiles = tlx.local_alloc((BLOCK_M_SPLIT, HEAD_DIM), tlx.dtype_of(desc_q),
+                              NUM_MMA_GROUPS * NUM_BUFFERS_Q)
+    k_tiles = tlx.local_alloc((BLOCK_N, HEAD_DIM), tlx.dtype_of(desc_k),
+                              NUM_BUFFERS_KV)
+    v_tiles = tlx.local_alloc((BLOCK_N, HEAD_DIM), tlx.dtype_of(desc_v),
+                              NUM_BUFFERS_KV)
 
     # allocate barriers
-    q_fulls = tlx.alloc_barriers(num_barriers=NUM_MMA_GROUPS * NUM_BUFFERS_Q, arrive_count=1)
-    q_empties = tlx.alloc_barriers(num_barriers=NUM_MMA_GROUPS * NUM_BUFFERS_Q, arrive_count=1)
-    k_empties = tlx.alloc_barriers(num_barriers=NUM_BUFFERS_KV, arrive_count=NUM_MMA_GROUPS)
+    q_fulls = tlx.alloc_barriers(num_barriers=NUM_MMA_GROUPS * NUM_BUFFERS_Q,
+                                 arrive_count=1)
+    q_empties = tlx.alloc_barriers(num_barriers=NUM_MMA_GROUPS * NUM_BUFFERS_Q,
+                                   arrive_count=1)
+    k_empties = tlx.alloc_barriers(num_barriers=NUM_BUFFERS_KV,
+                                   arrive_count=NUM_MMA_GROUPS)
     k_fulls = tlx.alloc_barriers(num_barriers=NUM_BUFFERS_KV, arrive_count=1)
-    v_empties = tlx.alloc_barriers(num_barriers=NUM_BUFFERS_KV, arrive_count=NUM_MMA_GROUPS)
+    v_empties = tlx.alloc_barriers(num_barriers=NUM_BUFFERS_KV,
+                                   arrive_count=NUM_MMA_GROUPS)
     v_fulls = tlx.alloc_barriers(num_barriers=NUM_BUFFERS_KV, arrive_count=1)
 
     with tlx.async_tasks():
@@ -124,45 +140,67 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
                 # load q0
                 q_bufIdx, q_phase = _get_bufidx_phase(i, NUM_BUFFERS_Q)
                 tlx.barrier_wait(q_empties[q_bufIdx], q_phase ^ 1)
-                tlx.barrier_expect_bytes(q_fulls[q_bufIdx], Q_BYTES_PER_ELEM * BLOCK_M_SPLIT * HEAD_DIM)
+                tlx.barrier_expect_bytes(
+                    q_fulls[q_bufIdx],
+                    Q_BYTES_PER_ELEM * BLOCK_M_SPLIT * HEAD_DIM)
                 qo_offset_y_split = qo_offset_y
-                tlx.async_descriptor_load(desc_q, q_tiles[q_bufIdx], [qo_offset_y_split, 0], q_fulls[q_bufIdx])
+                tlx.async_descriptor_load(desc_q, q_tiles[q_bufIdx],
+                                          [qo_offset_y_split, 0],
+                                          q_fulls[q_bufIdx])
 
                 kv_offset = kv_offset_y + lo
-                kv_bufIdx, kv_phase = _get_bufidx_phase(accum_cnt_kv, NUM_BUFFERS_KV)
+                kv_bufIdx, kv_phase = _get_bufidx_phase(
+                    accum_cnt_kv, NUM_BUFFERS_KV)
 
                 # load K
                 tlx.barrier_wait(k_empties[kv_bufIdx], kv_phase ^ 1)
-                tlx.barrier_expect_bytes(k_fulls[kv_bufIdx], K_BYTES_PER_ELEM * BLOCK_N * HEAD_DIM)
-                tlx.async_descriptor_load(desc_k, k_tiles[kv_bufIdx], [kv_offset, 0], k_fulls[kv_bufIdx])
+                tlx.barrier_expect_bytes(k_fulls[kv_bufIdx],
+                                         K_BYTES_PER_ELEM * BLOCK_N * HEAD_DIM)
+                tlx.async_descriptor_load(desc_k, k_tiles[kv_bufIdx],
+                                          [kv_offset, 0], k_fulls[kv_bufIdx])
 
                 # load q1
                 q_bufIdx_1 = q_bufIdx + NUM_BUFFERS_Q
                 tlx.barrier_wait(q_empties[q_bufIdx_1], q_phase ^ 1)
-                tlx.barrier_expect_bytes(q_fulls[q_bufIdx_1], Q_BYTES_PER_ELEM * BLOCK_M_SPLIT * HEAD_DIM)
+                tlx.barrier_expect_bytes(
+                    q_fulls[q_bufIdx_1],
+                    Q_BYTES_PER_ELEM * BLOCK_M_SPLIT * HEAD_DIM)
                 qo_offset_y_split = qo_offset_y + BLOCK_M_SPLIT
-                tlx.async_descriptor_load(desc_q, q_tiles[q_bufIdx_1], [qo_offset_y_split, 0], q_fulls[q_bufIdx_1])
+                tlx.async_descriptor_load(desc_q, q_tiles[q_bufIdx_1],
+                                          [qo_offset_y_split, 0],
+                                          q_fulls[q_bufIdx_1])
 
                 # load V
                 tlx.barrier_wait(v_empties[kv_bufIdx], kv_phase ^ 1)
-                tlx.barrier_expect_bytes(v_fulls[kv_bufIdx], V_BYTES_PER_ELEM * BLOCK_N * HEAD_DIM)
-                tlx.async_descriptor_load(desc_v, v_tiles[kv_bufIdx], [kv_offset, 0], v_fulls[kv_bufIdx])
+                tlx.barrier_expect_bytes(v_fulls[kv_bufIdx],
+                                         V_BYTES_PER_ELEM * BLOCK_N * HEAD_DIM)
+                tlx.async_descriptor_load(desc_v, v_tiles[kv_bufIdx],
+                                          [kv_offset, 0], v_fulls[kv_bufIdx])
                 accum_cnt_kv += 1
 
                 # loop over K, V tiles
                 for kv_idx in tl.range(lo + BLOCK_N, hi, BLOCK_N):
                     kv_offset = kv_offset_y + kv_idx
-                    kv_bufIdx, kv_phase = _get_bufidx_phase(accum_cnt_kv, NUM_BUFFERS_KV)
+                    kv_bufIdx, kv_phase = _get_bufidx_phase(
+                        accum_cnt_kv, NUM_BUFFERS_KV)
 
                     # load K
                     tlx.barrier_wait(k_empties[kv_bufIdx], kv_phase ^ 1)
-                    tlx.barrier_expect_bytes(k_fulls[kv_bufIdx], K_BYTES_PER_ELEM * BLOCK_N * HEAD_DIM)
-                    tlx.async_descriptor_load(desc_k, k_tiles[kv_bufIdx], [kv_offset, 0], k_fulls[kv_bufIdx])
+                    tlx.barrier_expect_bytes(
+                        k_fulls[kv_bufIdx],
+                        K_BYTES_PER_ELEM * BLOCK_N * HEAD_DIM)
+                    tlx.async_descriptor_load(desc_k, k_tiles[kv_bufIdx],
+                                              [kv_offset, 0],
+                                              k_fulls[kv_bufIdx])
 
                     # load V
                     tlx.barrier_wait(v_empties[kv_bufIdx], kv_phase ^ 1)
-                    tlx.barrier_expect_bytes(v_fulls[kv_bufIdx], V_BYTES_PER_ELEM * BLOCK_N * HEAD_DIM)
-                    tlx.async_descriptor_load(desc_v, v_tiles[kv_bufIdx], [kv_offset, 0], v_fulls[kv_bufIdx])
+                    tlx.barrier_expect_bytes(
+                        v_fulls[kv_bufIdx],
+                        V_BYTES_PER_ELEM * BLOCK_N * HEAD_DIM)
+                    tlx.async_descriptor_load(desc_v, v_tiles[kv_bufIdx],
+                                              [kv_offset, 0],
+                                              v_fulls[kv_bufIdx])
 
                     accum_cnt_kv += 1
 
@@ -189,7 +227,9 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
         # The 256 in barrier arrive/wait represents the number of threads participating
         # (8 warps * 32 threads = 256).
         #
-        with tlx.async_task(num_warps=NUM_MMA_WARPS // NUM_MMA_GROUPS, registers=232, replicate=NUM_MMA_GROUPS):
+        with tlx.async_task(num_warps=NUM_MMA_WARPS // NUM_MMA_GROUPS,
+                            registers=232,
+                            replicate=NUM_MMA_GROUPS):
             accum_cnt_kv = 0
             cid: tl.constexpr = tlx.async_task_replica_id()
 
@@ -204,7 +244,8 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
                     tile_idx, H, num_pid_n, num_pid_in_group, N_CTX, BLOCK_M)
 
                 # initialize pointer to m and l
-                m_i = tl.zeros([BLOCK_M_SPLIT], dtype=tl.float32) - float("inf")
+                m_i = tl.zeros([BLOCK_M_SPLIT],
+                               dtype=tl.float32) - float("inf")
                 l_i = tl.zeros([BLOCK_M_SPLIT], dtype=tl.float32) + 1.0
                 acc = tl.zeros([BLOCK_M_SPLIT, HEAD_DIM], dtype=tl.float32)
 
@@ -214,9 +255,11 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
 
                 # wait for the Q buffer to be populated by the producer
                 q_bufIdx, q_phase = _get_bufidx_phase(i, NUM_BUFFERS_Q)
-                tlx.barrier_wait(q_fulls[q_bufIdx + cid * NUM_BUFFERS_Q], q_phase)
+                tlx.barrier_wait(q_fulls[q_bufIdx + cid * NUM_BUFFERS_Q],
+                                 q_phase)
 
-                k_bufIdx, k_phase = _get_bufidx_phase(accum_cnt_kv, NUM_BUFFERS_KV)
+                k_bufIdx, k_phase = _get_bufidx_phase(accum_cnt_kv,
+                                                      NUM_BUFFERS_KV)
 
                 # wait for the K[0] buffer to be populated by the producer
                 tlx.barrier_wait(k_fulls[k_bufIdx], k_phase)
@@ -233,7 +276,8 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
                     # Consumer 1 waits for Consumer 0 to finish its async_dot
                     tlx.named_barrier_wait(10, 256)
 
-                qk = tlx.async_dot(q_tiles[q_bufIdx + cid * NUM_BUFFERS_Q], k_tile)
+                qk = tlx.async_dot(q_tiles[q_bufIdx + cid * NUM_BUFFERS_Q],
+                                   k_tile)
 
                 if cid == 0:
                     # Consumer 0 done, signal Consumer 1 to proceed
@@ -261,7 +305,8 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
 
                 # loop over k, v and update accumulator
                 for _ in tl.range(lo + BLOCK_N, hi, BLOCK_N):
-                    k_bufIdx, k_phase = _get_bufidx_phase(accum_cnt_kv, NUM_BUFFERS_KV)
+                    k_bufIdx, k_phase = _get_bufidx_phase(
+                        accum_cnt_kv, NUM_BUFFERS_KV)
 
                     # wait for the K buffer to be populated by the producer
                     tlx.barrier_wait(k_fulls[k_bufIdx], k_phase)
@@ -278,7 +323,8 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
                         # Consumer 1 waits for Consumer 0 to finish its async_dot
                         tlx.named_barrier_wait(10, 256)
 
-                    qk = tlx.async_dot(q_tiles[q_bufIdx + cid * NUM_BUFFERS_Q], k_tile)
+                    qk = tlx.async_dot(q_tiles[q_bufIdx + cid * NUM_BUFFERS_Q],
+                                       k_tile)
 
                     if cid == 0:
                         # Consumer 0 done, signal Consumer 1 to proceed
@@ -289,7 +335,8 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
 
                     # compute pv from the previous iteration
                     # wait for the previous V buffer to be populated by the producer
-                    v_bufIdx, v_phase = _get_bufidx_phase(accum_cnt_kv - 1, NUM_BUFFERS_KV)
+                    v_bufIdx, v_phase = _get_bufidx_phase(
+                        accum_cnt_kv - 1, NUM_BUFFERS_KV)
                     tlx.barrier_wait(v_fulls[v_bufIdx], v_phase)
                     # prepare p and v for the dot
                     p = p.to(tlx.dtype_of(desc_k))
@@ -321,7 +368,8 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
 
                 # compute pv from the last iteration
                 # wait for the V buffer to be populated by the producer
-                v_bufIdx, v_phase = _get_bufidx_phase(accum_cnt_kv - 1, NUM_BUFFERS_KV)
+                v_bufIdx, v_phase = _get_bufidx_phase(accum_cnt_kv - 1,
+                                                      NUM_BUFFERS_KV)
                 tlx.barrier_wait(v_fulls[v_bufIdx], v_phase)
                 # prepare p and v for the dot
                 p = p.to(tlx.dtype_of(desc_k))
@@ -329,7 +377,8 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
 
                 # signal Q empty
                 acc = tlx.async_dot_wait(1, acc)
-                tlx.barrier_arrive(q_empties[q_bufIdx + cid * NUM_BUFFERS_Q], 1)
+                tlx.barrier_arrive(q_empties[q_bufIdx + cid * NUM_BUFFERS_Q],
+                                   1)
 
                 # wait for the MMA using to complete
                 acc = tlx.async_dot_wait(0, acc)
@@ -340,10 +389,12 @@ def _attn_fwd_ws_pipelined_pingpong_persistent(sm_scale, M,  #
                 qo_offset_y_split = qo_offset_y + cid * BLOCK_M_SPLIT
                 m_i += tl.math.log2(l_i)
                 acc = acc / l_i[:, None]
-                offs_m = start_m * BLOCK_M + cid * BLOCK_M_SPLIT + tl.arange(0, BLOCK_M_SPLIT)
+                offs_m = start_m * BLOCK_M + cid * BLOCK_M_SPLIT + tl.arange(
+                    0, BLOCK_M_SPLIT)
                 m_ptrs = M + off_hz * N_CTX + offs_m
                 tl.store(m_ptrs, m_i)
-                desc_o.store([qo_offset_y_split, 0], acc.to(tlx.dtype_of(desc_o)))
+                desc_o.store([qo_offset_y_split, 0],
+                             acc.to(tlx.dtype_of(desc_o)))
 
                 tile_idx += num_progs
 
@@ -361,34 +412,60 @@ class _attention(torch.autograd.Function):
         o = torch.empty_like(q)
         extra_kern_args = {}
 
-        M = torch.empty((q.shape[0], q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        M = torch.empty((q.shape[0], q.shape[1], q.shape[2]),
+                        device=q.device,
+                        dtype=torch.float32)
         # Note that on Hopper we cannot perform a FP8 dot with a non-transposed second tensor
         y_dim = q.shape[0] * q.shape[1] * q.shape[2]
 
         dummy_block = [1, 1]
-        desc_q = TensorDescriptor(q, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
+        desc_q = TensorDescriptor(q,
+                                  shape=[y_dim, HEAD_DIM_K],
+                                  strides=[HEAD_DIM_K, 1],
+                                  block_shape=dummy_block)
         if q.dtype == torch.float8_e5m2:
-            desc_v = TensorDescriptor(v, shape=[HEAD_DIM_K, y_dim], strides=[q.shape[2], 1], block_shape=dummy_block)
+            desc_v = TensorDescriptor(v,
+                                      shape=[HEAD_DIM_K, y_dim],
+                                      strides=[q.shape[2], 1],
+                                      block_shape=dummy_block)
         else:
-            desc_v = TensorDescriptor(v, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
-        desc_k = TensorDescriptor(k, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
-        desc_o = TensorDescriptor(o, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
+            desc_v = TensorDescriptor(v,
+                                      shape=[y_dim, HEAD_DIM_K],
+                                      strides=[HEAD_DIM_K, 1],
+                                      block_shape=dummy_block)
+        desc_k = TensorDescriptor(k,
+                                  shape=[y_dim, HEAD_DIM_K],
+                                  strides=[HEAD_DIM_K, 1],
+                                  block_shape=dummy_block)
+        desc_o = TensorDescriptor(o,
+                                  shape=[y_dim, HEAD_DIM_K],
+                                  strides=[HEAD_DIM_K, 1],
+                                  block_shape=dummy_block)
 
         def alloc_fn(size: int, align: int, _):
             return torch.empty(size, dtype=torch.int8, device="cuda")
 
         triton.set_allocator(alloc_fn)
 
-        NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
+        NUM_SMS = torch.cuda.get_device_properties(
+            "cuda").multi_processor_count
 
         def grid(META):
-            return (min(NUM_SMS, triton.cdiv(q.shape[2], META["BLOCK_M"]) * q.shape[0] * q.shape[1]), 1, 1)
+            return (min(
+                NUM_SMS,
+                triton.cdiv(q.shape[2], META["BLOCK_M"]) * q.shape[0] *
+                q.shape[1]), 1, 1)
 
         ctx.grid = grid
         _attn_fwd_ws_pipelined_pingpong_persistent[grid](
-            sm_scale, M,  #
-            q.shape[0], q.shape[1],  #
-            desc_q, desc_k, desc_v, desc_o,  #
+            sm_scale,
+            M,  #
+            q.shape[0],
+            q.shape[1],  #
+            desc_q,
+            desc_k,
+            desc_v,
+            desc_o,  #
             N_CTX=q.shape[2],  #
             HEAD_DIM=HEAD_DIM_K,  #
             FP8_OUTPUT=q.dtype == torch.float8_e5m2,  #
@@ -407,21 +484,42 @@ def attention(q, k, v, sm_scale, config=None):
     # Non-autotuned path with explicit config
     HEAD_DIM_K = q.shape[-1]
     o = torch.empty_like(q)
-    M = torch.empty((q.shape[0], q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+    M = torch.empty((q.shape[0], q.shape[1], q.shape[2]),
+                    device=q.device,
+                    dtype=torch.float32)
     y_dim = q.shape[0] * q.shape[1] * q.shape[2]
 
     dummy_block = [1, 1]
-    desc_q = TensorDescriptor(q, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
+    desc_q = TensorDescriptor(q,
+                              shape=[y_dim, HEAD_DIM_K],
+                              strides=[HEAD_DIM_K, 1],
+                              block_shape=dummy_block)
     if q.dtype == torch.float8_e5m2:
-        desc_v = TensorDescriptor(v, shape=[HEAD_DIM_K, y_dim], strides=[q.shape[2], 1], block_shape=dummy_block)
+        desc_v = TensorDescriptor(v,
+                                  shape=[HEAD_DIM_K, y_dim],
+                                  strides=[q.shape[2], 1],
+                                  block_shape=dummy_block)
     else:
-        desc_v = TensorDescriptor(v, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
-    desc_k = TensorDescriptor(k, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
-    desc_o = TensorDescriptor(o, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
+        desc_v = TensorDescriptor(v,
+                                  shape=[y_dim, HEAD_DIM_K],
+                                  strides=[HEAD_DIM_K, 1],
+                                  block_shape=dummy_block)
+    desc_k = TensorDescriptor(k,
+                              shape=[y_dim, HEAD_DIM_K],
+                              strides=[HEAD_DIM_K, 1],
+                              block_shape=dummy_block)
+    desc_o = TensorDescriptor(o,
+                              shape=[y_dim, HEAD_DIM_K],
+                              strides=[HEAD_DIM_K, 1],
+                              block_shape=dummy_block)
 
     # Apply pre_hook to set block shapes
     nargs = {
-        **config, "HEAD_DIM": HEAD_DIM_K, "desc_q": desc_q, "desc_k": desc_k, "desc_v": desc_v, "desc_o": desc_o,
+        **config, "HEAD_DIM": HEAD_DIM_K,
+        "desc_q": desc_q,
+        "desc_k": desc_k,
+        "desc_v": desc_v,
+        "desc_o": desc_o,
         "FP8_OUTPUT": q.dtype == torch.float8_e5m2
     }
     _host_descriptor_pre_hook(nargs)
@@ -432,7 +530,10 @@ def attention(q, k, v, sm_scale, config=None):
     triton.set_allocator(alloc_fn)
 
     NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
-    grid = (min(NUM_SMS, triton.cdiv(q.shape[2], config["BLOCK_M"]) * q.shape[0] * q.shape[1]), 1, 1)
+    grid = (min(
+        NUM_SMS,
+        triton.cdiv(q.shape[2], config["BLOCK_M"]) * q.shape[0] * q.shape[1]),
+            1, 1)
     _attn_fwd_ws_pipelined_pingpong_persistent.fn[grid](
         sm_scale,
         M,
