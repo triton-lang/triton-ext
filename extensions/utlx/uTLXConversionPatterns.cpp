@@ -12,7 +12,9 @@
 // ---------------------------------------------------------------------------
 // Includes from TritonToTritonGPUPass.cpp
 // ---------------------------------------------------------------------------
+#ifdef UTLX_HAS_AMDGPU
 #include "Dialect/TritonAMDGPU/IR/Dialect.h"
+#endif
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -874,6 +876,11 @@ public:
     // TLX addition: on AMD targets, rewrite ttng.init_barrier →
     // amdg.init_barrier before the conversion, since the AMD backend
     // marks the ttng dialect as illegal and has no lowering for it.
+    // Mark the TritonNvidiaGPU dialect as legal so that ttng ops
+    // (e.g. ttng.init_barrier on NVIDIA) pass through unchanged.
+    // On AMD, we also mark amdg legal for the rewritten ops.
+    convTarget.addLegalDialect<triton::nvidia_gpu::TritonNvidiaGPUDialect>();
+#ifdef UTLX_HAS_AMDGPU
     bool isAMD = target.find("hip:") == 0;
     if (isAMD) {
       OpBuilder builder(context);
@@ -883,14 +890,9 @@ public:
                                               op.getAlloc(), op.getCount());
         op.erase();
       });
-    }
-
-    // Mark the TritonNvidiaGPU dialect as legal so that ttng ops
-    // (e.g. ttng.init_barrier on NVIDIA) pass through unchanged.
-    // On AMD, we also mark amdg legal for the rewritten ops.
-    convTarget.addLegalDialect<triton::nvidia_gpu::TritonNvidiaGPUDialect>();
-    if (isAMD)
       convTarget.addLegalDialect<triton::amdgpu::TritonAMDGPUDialect>();
+    }
+#endif
 
     // --- Rewrite patterns (from TritonToTritonGPUPass.cpp) ---
     RewritePatternSet patterns(context);

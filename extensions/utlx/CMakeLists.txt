@@ -258,6 +258,23 @@ list(APPEND UTLX_INCLUDE_DIRS ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
 target_include_directories(${PROJECT_NAME} PRIVATE ${UTLX_INCLUDE_DIRS})
 
 # ---------------------------------------------------------------------------
+# Optional AMDGPU support (requires third_party headers from triton source)
+# ---------------------------------------------------------------------------
+set(_AMDGPU_HEADER_FOUND FALSE)
+foreach(_dir ${UTLX_INCLUDE_DIRS})
+    if(EXISTS "${_dir}/Dialect/TritonAMDGPU/IR/Dialect.h")
+        set(_AMDGPU_HEADER_FOUND TRUE)
+        break()
+    endif()
+endforeach()
+if(_AMDGPU_HEADER_FOUND)
+    message(STATUS "AMDGPU dialect header found — enabling UTLX_HAS_AMDGPU")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE UTLX_HAS_AMDGPU)
+else()
+    message(STATUS "AMDGPU dialect header not found — AMD support disabled")
+endif()
+
+# ---------------------------------------------------------------------------
 # Link libraries
 # ---------------------------------------------------------------------------
 if(UTLX_TRITON_LIB)
