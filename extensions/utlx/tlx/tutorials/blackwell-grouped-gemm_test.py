@@ -203,8 +203,11 @@ def group_gemm_fn(group_A, group_B):
     d_c_ptrs = torch.tensor(C_addrs, device=DEVICE)
     d_g_sizes = torch.tensor(g_sizes, dtype=torch.int32, device=DEVICE)
     d_g_lds = torch.tensor(g_lds, dtype=torch.int32, device=DEVICE)
+
     # we use a fixed number of CTA, and it's auto-tunable
-    grid = lambda META: (META["NUM_SM"], )
+    def grid(META):
+        return (META["NUM_SM"], )
+
     grouped_matmul_kernel[grid](
         d_a_ptrs,
         d_b_ptrs,
@@ -705,7 +708,9 @@ def group_gemm_tma_fn(group_A, group_B):
 
     triton.set_allocator(alloc_fn)
 
-    grid = lambda META: (META["NUM_SM"], )
+    def grid(META):
+        return (META["NUM_SM"], )
+
     grouped_matmul_tma_kernel[grid](
         d_a_ptrs,
         d_b_ptrs,
@@ -759,7 +764,9 @@ def group_gemm_tlx_fn(group_A, group_B):
 
     triton.set_allocator(alloc_fn)
 
-    grid = lambda META: (META["NUM_SM"], )
+    def grid(META):
+        return (META["NUM_SM"], )
+
     grouped_matmul_tlx_kernel[grid](
         d_a_ptrs,
         d_b_ptrs,
@@ -809,7 +816,10 @@ def test_op():
 
 # only launch the kernel, no tensor preparation here to remove all overhead
 def triton_perf_fn(a_ptrs, b_ptrs, c_ptrs, sizes, lds, group_size):
-    grid = lambda META: (META["NUM_SM"], )
+
+    def grid(META):
+        return (META["NUM_SM"], )
+
     grouped_matmul_kernel[grid](
         a_ptrs,
         b_ptrs,
@@ -826,7 +836,10 @@ def triton_tma_perf_fn(a_ptrs, b_ptrs, c_ptrs, sizes, lds, group_size, dtype):
         return torch.empty(size, device="cuda", dtype=torch.int8)
 
     triton.set_allocator(alloc_fn)
-    grid = lambda META: (META["NUM_SM"], )
+
+    def grid(META):
+        return (META["NUM_SM"], )
+
     grouped_matmul_tma_kernel[grid](a_ptrs,
                                     b_ptrs,
                                     c_ptrs,
@@ -843,7 +856,10 @@ def triton_tlx_perf_fn(a_ptrs, b_ptrs, c_ptrs, sizes, lds, group_size, dtype):
         return torch.empty(size, device="cuda", dtype=torch.int8)
 
     triton.set_allocator(alloc_fn)
-    grid = lambda META: (META["NUM_SM"], )
+
+    def grid(META):
+        return (META["NUM_SM"], )
+
     grouped_matmul_tlx_kernel[grid](a_ptrs,
                                     b_ptrs,
                                     c_ptrs,

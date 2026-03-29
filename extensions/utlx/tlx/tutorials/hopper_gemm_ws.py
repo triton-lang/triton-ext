@@ -385,10 +385,12 @@ def matmul(a, b, config=None):
         )
     else:
         # Use persistent kernel with min(NUM_SMS, total_tiles) blocks
-        grid = lambda META: (min(
-            NUM_SMS,
-            triton.cdiv(M, META["BM"]) * triton.cdiv(N, META["BN"])),
-                             )  # noqa: E731
+        def grid(META):
+            return (min(
+                NUM_SMS,
+                triton.cdiv(M, META["BM"]) * triton.cdiv(N, META["BN"])),
+                    )  # noqa: E731
+
         matmul_kernel_tlx_ws[grid](
             desc_in_1,
             desc_in_2,

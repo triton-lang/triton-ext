@@ -394,7 +394,10 @@ def benchmark(M, N, provider):
         + bias.numel() * bias.element_size()  # read bias
         + M * 4 * 2  # write mean and rstd (float32)
     )
-    gbps = lambda ms: total_bytes * 1e-9 / (ms * 1e-3)
+
+    def gbps(ms):
+        return total_bytes * 1e-9 / (ms * 1e-3)
+
     return gbps(ms), gbps(max_ms), gbps(min_ms)
 
 

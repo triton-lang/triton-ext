@@ -8,7 +8,7 @@ def _get_tlx():
     return tlx
 
 
-from contextlib import contextmanager
+from contextlib import contextmanager  # noqa: E402
 
 _tlx_state = threading.local()
 

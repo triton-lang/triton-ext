@@ -1754,39 +1754,44 @@ def test_op(max_uih_len_kv, max_targets):
         device=torch.device("cuda"),
     ).uniform_(-0.1, 0.1)
 
-    fn = lambda: hstu_cross_mha(
-        max_seq_len=max_seq_len,
-        max_q_len=max_uih_len_q + (max_targets if has_targets else 0),
-        alpha=alpha,
-        q=q,
-        k=k,
-        v=v,
-        seq_offsets=seq_offsets,
-        seq_offsets_q=seq_offsets_q,
-        enable_tma=enable_tma,
-        num_softmax_heads=num_softmax_heads,
-        attn_scale=torch.tensor(1.0 / max_seq_len).to(q.device),
-        variant="triton_dyn_spec",  # triton_dyn_spec or triton
-        causal=causal,
-        num_targets=num_targets if has_targets else None,
-    )
+    def fn():
+        return hstu_cross_mha(
+            max_seq_len=max_seq_len,
+            max_q_len=max_uih_len_q + (max_targets if has_targets else 0),
+            alpha=alpha,
+            q=q,
+            k=k,
+            v=v,
+            seq_offsets=seq_offsets,
+            seq_offsets_q=seq_offsets_q,
+            enable_tma=enable_tma,
+            num_softmax_heads=num_softmax_heads,
+            attn_scale=torch.tensor(1.0 / max_seq_len).to(q.device),
+            variant="triton_dyn_spec",  # triton_dyn_spec or triton
+            causal=causal,
+            num_targets=num_targets if has_targets else None,
+        )
+
     ref_out = fn()
-    fn2 = lambda: hstu_cross_mha(
-        max_seq_len=max_seq_len,
-        max_q_len=max_uih_len_q + (max_targets if has_targets else 0),
-        alpha=alpha,
-        q=q,
-        k=k,
-        v=v,
-        seq_offsets=seq_offsets,
-        seq_offsets_q=seq_offsets_q,
-        enable_tma=enable_tma,
-        num_softmax_heads=num_softmax_heads,
-        attn_scale=torch.tensor(1.0 / max_seq_len).to(q.device),
-        variant="tlx_single_q",
-        causal=causal,
-        num_targets=num_targets if has_targets else None,
-    )
+
+    def fn2():
+        return hstu_cross_mha(
+            max_seq_len=max_seq_len,
+            max_q_len=max_uih_len_q + (max_targets if has_targets else 0),
+            alpha=alpha,
+            q=q,
+            k=k,
+            v=v,
+            seq_offsets=seq_offsets,
+            seq_offsets_q=seq_offsets_q,
+            enable_tma=enable_tma,
+            num_softmax_heads=num_softmax_heads,
+            attn_scale=torch.tensor(1.0 / max_seq_len).to(q.device),
+            variant="tlx_single_q",
+            causal=causal,
+            num_targets=num_targets if has_targets else None,
+        )
+
     tri_out = fn2()
     torch.testing.assert_close(tri_out, ref_out, atol=1e-2, rtol=0)
 
@@ -1896,22 +1901,24 @@ def bench_cross_attention(
         device=torch.device("cuda"),
     ).uniform_(-0.1, 0.1)
 
-    fn = lambda: hstu_cross_mha(
-        max_seq_len=max_seq_len,
-        max_q_len=max_uih_len_q + (max_targets if has_targets else 0),
-        alpha=alpha,
-        q=q,
-        k=k,
-        v=v,
-        seq_offsets=seq_offsets,
-        seq_offsets_q=seq_offsets_q,
-        enable_tma=enable_tma,
-        num_softmax_heads=num_softmax_heads,
-        attn_scale=torch.tensor(1.0 / max_seq_len).to(q.device),
-        variant=provider,
-        causal=causal,
-        num_targets=num_targets if has_targets else None,
-    )
+    def fn():
+        return hstu_cross_mha(
+            max_seq_len=max_seq_len,
+            max_q_len=max_uih_len_q + (max_targets if has_targets else 0),
+            alpha=alpha,
+            q=q,
+            k=k,
+            v=v,
+            seq_offsets=seq_offsets,
+            seq_offsets_q=seq_offsets_q,
+            enable_tma=enable_tma,
+            num_softmax_heads=num_softmax_heads,
+            attn_scale=torch.tensor(1.0 / max_seq_len).to(q.device),
+            variant=provider,
+            causal=causal,
+            num_targets=num_targets if has_targets else None,
+        )
+
     if mode == "bwd":
         o = fn()
         do = torch.randn_like(o)

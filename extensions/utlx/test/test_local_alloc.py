@@ -172,7 +172,7 @@ def test_local_alloc_compile_only():
         constexprs={"BLOCK": 128},
     )
     try:
-        ret = triton.compile(
+        triton.compile(
             src, target=triton.runtime.driver.active.get_current_target())
     except Exception:
         # If no GPU available, just verify the kernel parses

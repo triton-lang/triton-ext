@@ -322,8 +322,11 @@ def matmul(a, b, config=None):
             **config,
         )
     else:
-        grid = lambda META: (triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.
-                             cdiv(N, META["BLOCK_SIZE_N"]), )
+
+        def grid(META):
+            return (triton.cdiv(M, META["BLOCK_SIZE_M"]) *
+                    triton.cdiv(N, META["BLOCK_SIZE_N"]), )
+
         matmul_kernel_tma_ws_blackwell_clc[grid](
             a_desc,
             b_desc,

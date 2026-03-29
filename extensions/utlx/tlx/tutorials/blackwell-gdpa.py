@@ -382,11 +382,11 @@ def gdpa_kernel_tma_ws_blackwell(
                               tlx.storage_kind.tmem)
     qk1_buf = tlx.local_alloc((BLOCK_M // 2, HEAD_DIM), tl.float32, 1,
                               tlx.storage_kind.tmem)
-    p0_buf = tlx.local_alloc((BLOCK_M // 2, HEAD_DIM),
-                             dtype,
-                             1,
-                             tlx.storage_kind.tmem,
-                             reuse=qk0_buf)
+    tlx.local_alloc((BLOCK_M // 2, HEAD_DIM),
+                    dtype,
+                    1,
+                    tlx.storage_kind.tmem,
+                    reuse=qk0_buf)
     p1_buf = tlx.local_alloc((BLOCK_M // 2, HEAD_DIM),
                              dtype,
                              1,
@@ -1814,20 +1814,22 @@ def get_tlx_gdpa_fn(config):
 
     activation = config["activation"]
 
-    fn = lambda: gdpa_forward_tlx(
-        query=jagged_q,
-        key=jagged_k,
-        value=jagged_v,
-        query_offset=jagged_data["q_offsets"],
-        key_offset=jagged_data["k_offsets"],
-        output_offset=jagged_data["output_offsets"],
-        max_seq_len_q=jagged_data["max_seq_len_q"],
-        max_seq_len_kv=jagged_data["max_seq_len_k"],
-        activation=activation,
-        is_causal=False,
-        broadcast_q=jagged_data["broadcast_q"],
-        window_size=jagged_data["window_size"],
-    )
+    def fn():
+        return gdpa_forward_tlx(
+            query=jagged_q,
+            key=jagged_k,
+            value=jagged_v,
+            query_offset=jagged_data["q_offsets"],
+            key_offset=jagged_data["k_offsets"],
+            output_offset=jagged_data["output_offsets"],
+            max_seq_len_q=jagged_data["max_seq_len_q"],
+            max_seq_len_kv=jagged_data["max_seq_len_k"],
+            activation=activation,
+            is_causal=False,
+            broadcast_q=jagged_data["broadcast_q"],
+            window_size=jagged_data["window_size"],
+        )
+
     return fn
 
 

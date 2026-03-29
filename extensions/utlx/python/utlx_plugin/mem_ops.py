@@ -460,8 +460,8 @@ def async_load(
                 f"bulk_size ({const_bulk_size}) exceeds destination buffer size ({dest_bytes} bytes)"
             )
 
-        cache = _semantic._str_to_load_cache_modifier(cache_modifier)
-        eviction = _semantic._str_to_eviction_policy(eviction_policy)
+        _semantic._str_to_load_cache_modifier(cache_modifier)
+        _semantic._str_to_eviction_policy(eviction_policy)
         token = _semantic.builder.utlx_async_load([
             src.handle, result.handle, bulk_size_handle, barrier.handle,
             _semantic.builder.get_int32(1)
@@ -485,8 +485,8 @@ def async_load(
         _, src, mask, other, _ = _semantic._prepare_legacy_load(
             src, mask, other, None, None)
 
-    cache = _semantic._str_to_load_cache_modifier(cache_modifier)
-    eviction = _semantic._str_to_eviction_policy(eviction_policy)
+    _semantic._str_to_load_cache_modifier(cache_modifier)
+    _semantic._str_to_eviction_policy(eviction_policy)
 
     args = [src.handle, result.handle]
     if mask is not None:
@@ -799,7 +799,7 @@ def async_descriptor_prefetch_tensor(
     ndim = len(desc.block_shape)
     assert len(offsets) == ndim
     offsets = _semantic._convert_to_ir_values(offsets, require_i64=False)
-    eviction = _semantic._str_to_eviction_policy(eviction_policy)
+    _semantic._str_to_eviction_policy(eviction_policy)
     if pred is None:
         pred_handle = _semantic.builder.get_int1(True)
     else:

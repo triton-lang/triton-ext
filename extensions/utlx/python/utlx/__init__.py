@@ -17,7 +17,7 @@ if _plugin_python_dir not in _sys.path:
 # Use lazy re-export to avoid circular import during triton bootstrap.
 # utlx_plugin imports triton.language.core, which triggers triton.language.extra
 # to discover and load this package.
-import importlib as _importlib
+import importlib as _importlib  # noqa: E402
 
 
 def __getattr__(name):

@@ -1,4 +1,4 @@
-from . import compiler
+from . import compiler  # noqa: F401
 from .async_task_utils import async_task, async_tasks
 from .barrier import (
     alloc_barriers,
@@ -44,7 +44,7 @@ from .mem_ops import (
     remote_view,
     storage_alias_spec,
     subslice,
-    tmem_copy,
+    tmem_copy,  # noqa: F401
 )
 from .mma_ops import async_dot, async_dot_scaled, async_dot_wait, tcgen05_commit
 from .types import (
@@ -60,7 +60,7 @@ from .types import (
     mbarrier_type,
     nv_mma_shared_layout_encoding,
     reuse_group,
-    reuse_group_ir_type,
+    reuse_group_ir_type,  # noqa: F401
     reuse_group_type,
     storage_alias_spec as storage_alias_spec_type_class,
     storage_alias_spec_type,

@@ -76,11 +76,18 @@ def create_benchmark(versions):
         elif provider in ATTENTION_METHODS:
             attention = ATTENTION_METHODS[provider]
             if provider == "ws_pipelined_persistent":
-                fn = lambda: attention(q, k, v, sm_scale, causal, 64, 1)
+
+                def fn():
+                    return attention(q, k, v, sm_scale, causal, 64, 1)
             elif provider == "ws":
-                fn = lambda: attention(q, k, v, sm_scale)
+
+                def fn():
+                    return attention(q, k, v, sm_scale)
             else:
-                fn = lambda: attention(q, k, v, sm_scale, causal)
+
+                def fn():
+                    return attention(q, k, v, sm_scale, causal)
+
             ms, min_ms, max_ms = triton.testing.do_bench(
                 fn,
                 quantiles=quantiles,
@@ -90,7 +97,10 @@ def create_benchmark(versions):
 
         flops_per_matmul = 2.0 * BATCH * H * N_CTX * N_CTX * HEAD_DIM
         total_flops = 2 * flops_per_matmul
-        perf = lambda ms: total_flops * 1e-12 / (ms * 1e-3)
+
+        def perf(ms):
+            return total_flops * 1e-12 / (ms * 1e-3)
+
         return perf(ms), perf(max_ms), perf(min_ms)
 
     return benchmark

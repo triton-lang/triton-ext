@@ -355,7 +355,10 @@ def benchmark(M, N, K, provider, fp8_inputs):
             quantiles=quantiles,
             warmup=200,
             rep=200)
-    perf = lambda ms: 2 * M * N * K * 1e-12 / (ms * 1e-3)
+
+    def perf(ms):
+        return 2 * M * N * K * 1e-12 / (ms * 1e-3)
+
     return perf(ms), perf(max_ms), perf(min_ms)
 
 

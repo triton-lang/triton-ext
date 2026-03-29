@@ -573,7 +573,7 @@ def _attn_fwd_mxf8_ws(
                 for cid in tl.static_range(0, NUM_MMA_GROUPS):
                     # epilogue
                     tlx.barrier_wait(l_fulls[cid], phase)
-                    l = tlx.local_load(l_tiles[cid])
+                    l = tlx.local_load(l_tiles[cid])  # noqa: E741
                     m = tlx.local_load(m_tiles[cid])
                     tlx.barrier_arrive(l_empties[cid])
                     m += tl.math.log2(l)

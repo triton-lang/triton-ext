@@ -25,7 +25,7 @@ def test_storage_alias_spec_compile_only():
 
     @triton.jit
     def kernel(out_ptr, BLOCK: tl.constexpr):
-        spec = tlx.storage_alias_spec(storage=tlx.storage_kind.smem)
+        tlx.storage_alias_spec(storage=tlx.storage_kind.smem)
         offs = tl.arange(0, BLOCK)
         x = tl.full((BLOCK, ), 1.0, tl.float32)
         tl.store(out_ptr + offs, x)
@@ -135,7 +135,7 @@ def test_local_alloc_two_reuse_same_spec_compile_only():
         constexprs={"BLOCK": 64},
     )
     try:
-        ret = triton.compile(src, target=get_current_target())
+        triton.compile(src, target=get_current_target())
     except Exception:
         pytest.skip("Compilation not supported on this target")
 
@@ -176,7 +176,7 @@ def test_local_alloc_with_spec_multi_buffer_compile_only():
         constexprs={"BLOCK": 64},
     )
     try:
-        ret = triton.compile(src, target=get_current_target())
+        triton.compile(src, target=get_current_target())
     except Exception:
         pytest.skip("Compilation not supported on this target")
 
@@ -219,7 +219,7 @@ def test_storage_alias_spec_with_size_compile_only():
         constexprs={"BLOCK": 64},
     )
     try:
-        ret = triton.compile(src, target=get_current_target())
+        triton.compile(src, target=get_current_target())
     except Exception:
         pytest.skip("Compilation not supported on this target")
 
@@ -262,7 +262,7 @@ def test_set_buffer_overlap_compile_only():
         constexprs={"BLOCK": 64},
     )
     try:
-        ret = triton.compile(src, target=get_current_target())
+        triton.compile(src, target=get_current_target())
     except Exception:
         pytest.skip("Compilation not supported on this target")
 
@@ -300,7 +300,7 @@ def test_set_buffer_overlap_distinct_compile_only():
         constexprs={"BLOCK": 64},
     )
     try:
-        ret = triton.compile(src, target=get_current_target())
+        triton.compile(src, target=get_current_target())
     except Exception:
         pytest.skip("Compilation not supported on this target")
 
@@ -351,7 +351,7 @@ def test_set_buffer_overlap_nested_compile_only():
         constexprs={"BLOCK": 64},
     )
     try:
-        ret = triton.compile(src, target=get_current_target())
+        triton.compile(src, target=get_current_target())
     except Exception:
         pytest.skip("Compilation not supported on this target")
 
@@ -488,7 +488,7 @@ def test_dot_with_storage_alias_spec_compile_only():
         },
     )
     try:
-        ret = triton.compile(src, target=get_current_target())
+        triton.compile(src, target=get_current_target())
     except Exception:
         pytest.skip("Compilation not supported on this target")
 

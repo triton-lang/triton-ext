@@ -52,7 +52,10 @@ def add2(x: torch.Tensor, y: torch.Tensor, a: torch.Tensor, b: torch.Tensor):
     output2 = torch.empty_like(a)
     assert x.device == DEVICE and y.device == DEVICE and output1.device == DEVICE
     n_elements = output1.numel()
-    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]), )
+
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]), )
+
     add2_kernel[grid](x,
                       y,
                       output1,
@@ -100,7 +103,10 @@ def add2_warp_specialized(x: torch.Tensor, y: torch.Tensor, a: torch.Tensor,
     output2 = torch.empty_like(a)
     assert x.device == DEVICE and y.device == DEVICE and output1.device == DEVICE
     n_elements = output1.numel()
-    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]), )
+
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]), )
+
     add2_warp_specialized_kernel[grid](x,
                                        y,
                                        output1,
@@ -186,7 +192,10 @@ def benchmark(size, provider):
     if provider == "triton_ws":
         ms, min_ms, max_ms = triton.testing.do_bench(
             lambda: add2_warp_specialized(x, y, a, b), quantiles=quantiles)
-    gbps = lambda ms: 3 * x.numel() * x.element_size() * 1e-9 / (ms * 1e-3)
+
+    def gbps(ms):
+        return 3 * x.numel() * x.element_size() * 1e-9 / (ms * 1e-3)
+
     return gbps(ms), gbps(max_ms), gbps(min_ms)
 
 

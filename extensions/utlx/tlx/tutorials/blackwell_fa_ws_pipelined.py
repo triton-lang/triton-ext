@@ -314,8 +314,8 @@ def _attn_fwd_ws(
                 tlx.barrier_wait(l_fulls[cid], 0)
                 # Use l[1]/l[1+HEAD_DIM * NUM_BUFFERS_QK] and m[2][2 + HEAD_DIM * NUM_BUFFERS_QK]
                 # to disambigulate from alpha[0]/alpha[HEAD_DIM * NUM_BUFFERS_QK]
-                l = tlx.local_load(l_tiles[cid * HEAD_DIM * NUM_BUFFERS_QK +
-                                           1])
+                l = tlx.local_load(  # noqa: E741
+                    l_tiles[cid * HEAD_DIM * NUM_BUFFERS_QK + 1])
                 m = tlx.local_load(m_tiles[cid * HEAD_DIM * NUM_BUFFERS_QK +
                                            2])
                 m += tl.math.log2(l)

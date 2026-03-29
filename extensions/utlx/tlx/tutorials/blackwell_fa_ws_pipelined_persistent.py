@@ -492,7 +492,7 @@ def _attn_fwd_ws(
                 for cid in tl.static_range(0, NUM_MMA_GROUPS):
                     # epilogue
                     tlx.barrier_wait(l_fulls[cid], phase)
-                    l = tlx.local_load(l_tiles[cid])
+                    l = tlx.local_load(l_tiles[cid])  # noqa: E741
                     m = tlx.local_load(m_tiles[cid])
                     # Signal qk_empties after both l and m loads complete,
                     # since both tiles share the same synchronization group.
@@ -923,7 +923,7 @@ def _attn_fwd_ws(
 
 @triton.jit
 def _attn_bwd_preprocess(
-        O,
+        O,  # noqa: E741
         DO,  #
         Delta,  #
         N_CTX,  #

@@ -25,8 +25,8 @@ def test_alloc_barriers_compile_only():
 
     @triton.jit
     def kernel(Out):
-        bars = tlx.alloc_barriers(num_barriers=tl.constexpr(4),
-                                  arrive_count=tl.constexpr(1))
+        tlx.alloc_barriers(num_barriers=tl.constexpr(4),
+                           arrive_count=tl.constexpr(1))
         pid = tl.program_id(0)
         tl.store(Out + pid, pid)
 
@@ -55,7 +55,7 @@ def test_alloc_warp_barrier_compile_only():
 
     @triton.jit
     def kernel(Out):
-        bars = tlx.alloc_warp_barrier(
+        tlx.alloc_warp_barrier(
             num_barriers=tl.constexpr(2),
             num_warps=tl.constexpr(4),
             num_arrivals=tl.constexpr(1),
@@ -97,8 +97,8 @@ def test_alloc_barriers_on_gpu(device="cuda"):
         x = tl.load(in_ptr + offs)
 
         # Allocate barriers (exercises alloc_barriers plugin op)
-        bars = tlx.alloc_barriers(num_barriers=tl.constexpr(2),
-                                  arrive_count=tl.constexpr(1))
+        tlx.alloc_barriers(num_barriers=tl.constexpr(2),
+                           arrive_count=tl.constexpr(1))
 
         tl.store(out_ptr + offs, x)
 
@@ -117,8 +117,7 @@ def test_alloc_barriers_various_counts(num_barriers, device="cuda"):
 
     @triton.jit
     def kernel(out_ptr, NUM_BARS: tl.constexpr):
-        bars = tlx.alloc_barriers(num_barriers=NUM_BARS,
-                                  arrive_count=tl.constexpr(1))
+        tlx.alloc_barriers(num_barriers=NUM_BARS, arrive_count=tl.constexpr(1))
         pid = tl.program_id(0)
         tl.store(out_ptr + pid, pid)
 
@@ -133,7 +132,7 @@ def test_alloc_warp_barrier_on_gpu(device="cuda"):
 
     @triton.jit
     def kernel(out_ptr):
-        bars = tlx.alloc_warp_barrier(
+        tlx.alloc_warp_barrier(
             num_barriers=tl.constexpr(2),
             num_warps=tl.constexpr(4),
             num_arrivals=tl.constexpr(1),

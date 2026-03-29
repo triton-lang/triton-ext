@@ -128,7 +128,7 @@ def async_dot(
         assert isinstance(A, tlx.buffered_tensor)
         acc_handle = require_tmem_layout_col_stride(acc, 1, _semantic.builder)
         handles = [t.handle for t in mBarriers]
-        is_async = force_async or len(handles) > 0
+        force_async or len(handles) > 0
         use_acc_handle = None
         if use_acc is not None:
             if isinstance(use_acc, tl.tensor):

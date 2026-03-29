@@ -29,8 +29,8 @@ def test_alloc_barriers_compile_only():
 
     @triton.jit
     def kernel(Out):
-        bars = tlx.alloc_barriers(num_barriers=tl.constexpr(4),
-                                  arrive_count=tl.constexpr(1))
+        tlx.alloc_barriers(num_barriers=tl.constexpr(4),
+                           arrive_count=tl.constexpr(1))
         pid = tl.program_id(0)
         tl.store(Out + pid, pid)
 
@@ -54,7 +54,7 @@ def test_alloc_warp_barrier_compile_only():
 
     @triton.jit
     def kernel(Out):
-        bars = tlx.alloc_warp_barrier(
+        tlx.alloc_warp_barrier(
             num_barriers=tl.constexpr(2),
             num_warps=tl.constexpr(4),
             num_arrivals=tl.constexpr(1),
@@ -90,8 +90,8 @@ def test_alloc_barriers_on_gpu():
     def kernel(in_ptr, out_ptr, BLOCK: tl.constexpr):
         offs = tl.arange(0, BLOCK)
         x = tl.load(in_ptr + offs)
-        bars = tlx.alloc_barriers(num_barriers=tl.constexpr(2),
-                                  arrive_count=tl.constexpr(1))
+        tlx.alloc_barriers(num_barriers=tl.constexpr(2),
+                           arrive_count=tl.constexpr(1))
         tl.store(out_ptr + offs, x)
 
     BLOCK = 128
@@ -108,8 +108,7 @@ def test_alloc_barriers_various_counts(num_barriers):
 
     @triton.jit
     def kernel(out_ptr, NUM_BARS: tl.constexpr):
-        bars = tlx.alloc_barriers(num_barriers=NUM_BARS,
-                                  arrive_count=tl.constexpr(1))
+        tlx.alloc_barriers(num_barriers=NUM_BARS, arrive_count=tl.constexpr(1))
         pid = tl.program_id(0)
         tl.store(out_ptr + pid, pid)
 
@@ -123,7 +122,7 @@ def test_alloc_warp_barrier_on_gpu():
 
     @triton.jit
     def kernel(out_ptr):
-        bars = tlx.alloc_warp_barrier(
+        tlx.alloc_warp_barrier(
             num_barriers=tl.constexpr(2),
             num_warps=tl.constexpr(4),
             num_arrivals=tl.constexpr(1),
@@ -149,8 +148,8 @@ def test_alloc_barriers_with_smem_ops():
         offs = tl.arange(0, BLOCK)
         x = tl.load(in_ptr + offs)
 
-        bars = tlx.alloc_barriers(num_barriers=tl.constexpr(2),
-                                  arrive_count=tl.constexpr(1))
+        tlx.alloc_barriers(num_barriers=tl.constexpr(2),
+                           arrive_count=tl.constexpr(1))
 
         buf = tlx.local_alloc((BLOCK, ), tl.float16, 1)
         view = tlx.local_view(buf, 0)
@@ -216,8 +215,7 @@ def test_alloc_barriers_large_counts(num_barriers):
     def kernel(in_ptr, out_ptr, BLOCK: tl.constexpr, NUM_BARS: tl.constexpr):
         offs = tl.arange(0, BLOCK)
         x = tl.load(in_ptr + offs)
-        bars = tlx.alloc_barriers(num_barriers=NUM_BARS,
-                                  arrive_count=tl.constexpr(1))
+        tlx.alloc_barriers(num_barriers=NUM_BARS, arrive_count=tl.constexpr(1))
         tl.store(out_ptr + offs, x)
 
     BLOCK = 64
@@ -238,7 +236,7 @@ def test_alloc_barriers_arrive_counts(arrive_count):
 
     @triton.jit
     def kernel(out_ptr, NUM_BARS: tl.constexpr, ARRIVE: tl.constexpr):
-        bars = tlx.alloc_barriers(num_barriers=NUM_BARS, arrive_count=ARRIVE)
+        tlx.alloc_barriers(num_barriers=NUM_BARS, arrive_count=ARRIVE)
         pid = tl.program_id(0)
         tl.store(out_ptr + pid, pid)
 
@@ -258,7 +256,7 @@ def test_alloc_warp_barrier_various_warps(num_warps):
 
     @triton.jit
     def kernel(out_ptr, NUM_WARPS: tl.constexpr):
-        bars = tlx.alloc_warp_barrier(
+        tlx.alloc_warp_barrier(
             num_barriers=tl.constexpr(1),
             num_warps=NUM_WARPS,
             num_arrivals=tl.constexpr(1),
@@ -276,7 +274,7 @@ def test_alloc_warp_barrier_compile_only_arrive_count():
 
     @triton.jit
     def kernel(Out):
-        bars = tlx.alloc_warp_barrier(
+        tlx.alloc_warp_barrier(
             num_barriers=tl.constexpr(1),
             num_warps=tl.constexpr(2),
             num_arrivals=tl.constexpr(3),
@@ -314,8 +312,7 @@ def test_barriers_with_multi_buffer_smem():
         a = tl.load(a_ptr + offs)
         b = tl.load(b_ptr + offs)
 
-        bars = tlx.alloc_barriers(num_barriers=NUM_BUFS,
-                                  arrive_count=tl.constexpr(1))
+        tlx.alloc_barriers(num_barriers=NUM_BUFS, arrive_count=tl.constexpr(1))
 
         bufs = tlx.local_alloc((BLOCK, ), tl.float16, NUM_BUFS)
 
@@ -352,8 +349,8 @@ def test_barriers_multi_block():
         offs = pid * BLOCK + tl.arange(0, BLOCK)
         mask = offs < n_elements
 
-        bars = tlx.alloc_barriers(num_barriers=tl.constexpr(2),
-                                  arrive_count=tl.constexpr(1))
+        tlx.alloc_barriers(num_barriers=tl.constexpr(2),
+                           arrive_count=tl.constexpr(1))
 
         x = tl.load(in_ptr + offs, mask=mask)
         tl.store(out_ptr + offs, x, mask=mask)
@@ -390,8 +387,8 @@ def test_barriers_with_2d_smem_dot():
         BLOCK_N: tl.constexpr,
         BLOCK_K: tl.constexpr,
     ):
-        bars = tlx.alloc_barriers(num_barriers=tl.constexpr(2),
-                                  arrive_count=tl.constexpr(1))
+        tlx.alloc_barriers(num_barriers=tl.constexpr(2),
+                           arrive_count=tl.constexpr(1))
 
         off_m = tl.arange(0, BLOCK_M)
         off_n = tl.arange(0, BLOCK_N)
@@ -461,7 +458,7 @@ def test_alloc_barriers_ir_patterns(num_barriers, arrive_count):
 
     @triton.jit
     def kernel(Out, NUM_BARS: tl.constexpr, ARRIVE: tl.constexpr):
-        bars = tlx.alloc_barriers(num_barriers=NUM_BARS, arrive_count=ARRIVE)
+        tlx.alloc_barriers(num_barriers=NUM_BARS, arrive_count=ARRIVE)
         pid = tl.program_id(0)
         tl.store(Out + pid, pid)
 

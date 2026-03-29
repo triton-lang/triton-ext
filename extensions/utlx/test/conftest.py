@@ -15,7 +15,7 @@ _plugin_python_dir = os.path.normpath(
 if _plugin_python_dir not in sys.path:
     sys.path.insert(0, _plugin_python_dir)
 
-from utlx_plugin.utility import ensure_plugin_on_path
+from utlx_plugin.utility import ensure_plugin_on_path  # noqa: E402
 
 ensure_plugin_on_path()
 from utlx_plugin.custom_stages import inspect_stages_hook  # noqa: E402

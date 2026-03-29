@@ -67,7 +67,9 @@ def create_benchmark(versions, dtype=torch.float16):
                                                          warmup=2000,
                                                          rep=2000)
 
-        perf = lambda ms: 2 * M * N * K * 1e-12 / (ms * 1e-3)
+        def perf(ms):
+            return 2 * M * N * K * 1e-12 / (ms * 1e-3)
+
         return perf(ms), perf(max_ms), perf(min_ms)
 
     return benchmark

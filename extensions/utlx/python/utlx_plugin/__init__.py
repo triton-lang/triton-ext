@@ -192,12 +192,12 @@ import triton.language.extra as _extra
 _sys.modules['triton.language.extra.tlx'] = _sys.modules[__name__]
 _extra.tlx = _sys.modules[__name__]
 
-from .mxfp8_utils import _to_mxfp8_block
-from .warp_ops import vote_ballot_sync
+from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
+from .warp_ops import vote_ballot_sync  # noqa: E402
 
-from . import custom_stages
+from . import custom_stages  # noqa: E402
 
-from triton import knobs
+from triton import knobs  # noqa: E402
 
 knobs.runtime.add_stages_inspection_hook = custom_stages.inspect_stages_hook
 
