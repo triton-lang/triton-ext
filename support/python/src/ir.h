@@ -12,7 +12,8 @@
 #pragma once
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectRegistry.h"
-#include "triton/Tools/Sys/GetEnv.hpp"
+#include <algorithm>
+#include <cstdlib>
 #include <memory>
 #include <string>
 
@@ -102,8 +103,15 @@ public:
 private:
   std::unique_ptr<mlir::OpBuilder> builder;
   std::unique_ptr<mlir::Location> lastLoc;
-  bool lineInfoEnabled =
-      !mlir::triton::tools::getBoolEnv("TRITON_DISABLE_LINE_INFO");
+  bool lineInfoEnabled = [] {
+    const char *s = std::getenv("TRITON_DISABLE_LINE_INFO");
+    if (!s)
+      return true;
+    std::string v(s);
+    std::transform(v.begin(), v.end(), v.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return !(v == "on" || v == "true" || v == "1");
+  }();
 
   mlir::Location getLocForBlock(mlir::Block *block) {
     if (auto parentOp = block->getParentOp())
