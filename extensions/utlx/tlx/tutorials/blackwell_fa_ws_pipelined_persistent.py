@@ -270,7 +270,7 @@ def _softmax_inner_loop(
 
         qk = _fma_f32x2(qk, qk_scale, -m_ij[:, None])
         qks = _split_n(qk, NUM_MMA_SLICES)
-        ps = ()
+        ps: tuple = ()
         for slice_id in tl.static_range(0, NUM_MMA_SLICES):
             # prepare p for the v dot
             p_bufIdx = cid * NUM_MMA_SLICES + slice_id
@@ -1392,7 +1392,7 @@ def _attn_bwd_ws(
                 kv_buf_id, kv_phase = _get_bufidx_phase(i, NUM_BUFFERS_KV)
 
                 tlx.barrier_wait(dv_fulls[kv_buf_id], kv_phase)
-                slice_size: tl.constexpr = HEAD_DIM // EPILOGUE_SUBTILE
+                slice_size = HEAD_DIM // EPILOGUE_SUBTILE
                 for slice_id in tl.static_range(EPILOGUE_SUBTILE):
                     dv_slice = tlx.local_slice(
                         dv_tiles[kv_buf_id],

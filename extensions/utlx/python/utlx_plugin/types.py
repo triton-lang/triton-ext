@@ -426,10 +426,11 @@ class buffered_tensor_type(tl.block_type):
                 and self.num == other.num and self.storage == other.storage
                 and self.layout == other.layout)
 
-    def to_ir(self, builder) -> None:
+    def to_ir(self, builder):
         shape = self.shape
         if self.num >= 1:
             shape = [self.num] + list(shape)
+        assert self.layout is not None
         layout_ir = self.layout.to_ir(builder)
         alloc_shape = list(shape)
         if self.storage == storage_kind.tmem:
@@ -461,7 +462,7 @@ class mbarrier(tl.base_value):
         self,
         handle,
         num: int,
-        layout: Optional[swizzled_shared_layout_encoding] = None,
+        layout: Optional[shared_layout_encoding] = None,
         storage: storage_kind = storage_kind.smem,
         is_warp_barrier: bool = False,
     ):
@@ -480,17 +481,18 @@ class mbarrier_type(buffered_tensor_type):
 
     def __init__(self,
                  num: int,
-                 layout: Optional[swizzled_shared_layout_encoding],
+                 layout: Optional[shared_layout_encoding],
                  storage,
                  is_warp_barrier: bool = False):
         super().__init__(tl.int64, [1], num, storage, layout)
         self.is_warp_barrier = is_warp_barrier
 
-    def to_ir(self, builder) -> None:
+    def to_ir(self, builder):
         if self.num >= 1:
             shape = [self.num]
         else:
             shape = self.shape
+        assert self.layout is not None
         layout_ir = self.layout.to_ir(builder)
         return builder.get_shared_mem_desc_ty(self.element_ty.to_ir(builder),
                                               shape, layout_ir, shape)
@@ -508,7 +510,7 @@ class clc_response(tl.base_value):
     """A CLC response object."""
 
     def __init__(self, handle, num: int,
-                 layout: Optional[swizzled_shared_layout_encoding]):
+                 layout: Optional[shared_layout_encoding]):
         self.handle = handle
         self.type = clc_response_type(num, layout)
         self.num = num
@@ -519,15 +521,15 @@ class clc_response(tl.base_value):
 
 class clc_response_type(buffered_tensor_type):
 
-    def __init__(self, num: int,
-                 layout: Optional[swizzled_shared_layout_encoding]):
+    def __init__(self, num: int, layout: Optional[shared_layout_encoding]):
         super().__init__(tl.int64, [1], num, storage_kind.smem, layout)
 
-    def to_ir(self, builder) -> None:
+    def to_ir(self, builder):
         if self.num >= 1:
             shape = [self.num]
         else:
             shape = self.shape
+        assert self.layout is not None
         layout_ir = self.layout.to_ir(builder)
         return builder.get_shared_mem_desc_ty(self.element_ty.to_ir(builder),
                                               shape, layout_ir, shape)

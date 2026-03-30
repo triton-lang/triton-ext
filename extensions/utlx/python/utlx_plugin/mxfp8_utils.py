@@ -18,7 +18,7 @@ def _compute_scale_and_quantize(data_block, VEC_SIZE: tl.constexpr,
         FLOAT_MAX: tl.constexpr = 448.0
     else:
         tl.static_assert(dtype == tl.float8e5)
-        FLOAT_MAX: tl.constexpr = 57344.0
+        FLOAT_MAX = 57344.0
 
     data_reshaped = tl.reshape(data_block, [BLOCK_M, NUM_SCALES, VEC_SIZE])
     abs_data = tl.abs(data_reshaped)

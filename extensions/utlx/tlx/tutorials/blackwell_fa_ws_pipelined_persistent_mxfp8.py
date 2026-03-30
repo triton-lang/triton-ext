@@ -1375,14 +1375,14 @@ def generate_tensor_with_block_distributions(
 
     # Pre-generate random blocks for all ranges at once
     # Shape: [num_ranges, num_pregenerated_blocks, block_size]
-    all_blocks = []
+    block_list = []
     for min_val, max_val in min_max_ranges:
         blocks = (torch.rand(
             num_pregenerated_blocks, block_size, device=device, dtype=dtype) *
                   (max_val - min_val) + min_val)
-        all_blocks.append(blocks)
+        block_list.append(blocks)
     all_blocks = torch.stack(
-        all_blocks)  # [num_ranges, num_pregenerated, block_size]
+        block_list)  # [num_ranges, num_pregenerated, block_size]
 
     # Generate random indices on GPU (not CPU!)
     range_indices = torch.randint(0, num_ranges, (num_blocks, ), device=device)
@@ -1392,7 +1392,7 @@ def generate_tensor_with_block_distributions(
 
     # Use advanced indexing to select all blocks at once - NO PYTHON LOOP!
     selected_blocks = all_blocks[range_indices,
-                                 block_indices]  # [num_blocks, block_size]
+                                 block_indices, :]  # [num_blocks, block_size]
 
     # Flatten and take only the elements we need
     generated_tensor = selected_blocks.flatten()[:total_elements]

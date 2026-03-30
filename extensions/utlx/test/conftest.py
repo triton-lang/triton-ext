@@ -18,6 +18,8 @@ if _plugin_python_dir not in sys.path:
 from utlx_plugin.utility import ensure_plugin_on_path  # noqa: E402
 
 ensure_plugin_on_path()
+import triton.language.extra.tlx as tlx  # noqa: E402, F401
+
 from utlx_plugin.custom_stages import inspect_stages_hook  # noqa: E402
 
 # Activate the plugin's custom compilation stages

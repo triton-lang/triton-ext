@@ -95,14 +95,15 @@ def _attn_fwd_ws_pipelined_pingpong(
             kv_offset_y = offset_y + lo
 
             # load q: it will stay in SRAM throughout
-            for cid in tl.range(0,
-                                NUM_MMA_GROUPS,
-                                loop_unroll_factor=NUM_MMA_GROUPS):
-                tlx.barrier_expect_bytes(q_fulls[cid], 2 * BLOCK_M_SPLIT *
+            for q_cid in tl.range(0,
+                                  NUM_MMA_GROUPS,
+                                  loop_unroll_factor=NUM_MMA_GROUPS):
+                tlx.barrier_expect_bytes(q_fulls[q_cid], 2 * BLOCK_M_SPLIT *
                                          HEAD_DIM)  # float16
-                qo_offset_y_split = qo_offset_y + cid * BLOCK_M_SPLIT
-                tlx.async_descriptor_load(desc_q, q_tiles[cid],
-                                          [qo_offset_y_split, 0], q_fulls[cid])
+                qo_offset_y_split = qo_offset_y + q_cid * BLOCK_M_SPLIT
+                tlx.async_descriptor_load(desc_q, q_tiles[q_cid],
+                                          [qo_offset_y_split, 0],
+                                          q_fulls[q_cid])
 
             # loop over loading k, v
             kv_phase = 0

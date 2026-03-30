@@ -192,6 +192,7 @@ def kernel_layernorm_multi_cta(
     read_write_mask = None
     SHOULD_MASK: tl.constexpr = SHOULD_MASK_ROW or SHOULD_MASK_COL
     if SHOULD_MASK:
+        assert mask_row is not None and mask_col is not None
         read_write_mask = mask_row[:, None] & mask_col[None, :]
     other = 0.0 if SHOULD_MASK else None
 

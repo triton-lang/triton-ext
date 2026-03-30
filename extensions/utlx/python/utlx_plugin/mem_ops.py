@@ -379,7 +379,7 @@ def local_slice(
 
 @tl.builtin
 def local_trans(input: tlx.buffered_tensor,
-                dims: Tuple[int] = (1, 0),
+                dims: Tuple[int, ...] = (1, 0),
                 _semantic=None) -> tlx.buffered_tensor:
     """Permutes the dimensions of a buffered tensor."""
     if len(input.type.shape) != len(dims):
@@ -429,7 +429,7 @@ def async_load(
     is_volatile: bool = False,
     bulk: bool = False,
     bulk_size=None,
-    barrier: tlx.mbarrier = None,
+    barrier: Optional[tlx.mbarrier] = None,
     _semantic=None,
 ) -> tlx.async_token:
     """Loads buffer from global to local memory asynchronously."""
@@ -534,7 +534,7 @@ def async_load_wait_group(
 @tl.builtin
 def local_load(
     src: tlx.buffered_tensor,
-    token: tlx.async_token = None,
+    token: Optional[tlx.async_token] = None,
     _semantic=None,
 ) -> tl.tensor:
     """Load from SMEM/TMEM buffer into a register tensor."""
@@ -756,7 +756,7 @@ def async_descriptor_load(
     pred: tl.tensor = None,
     cache_modifier: str = "",
     eviction_policy: str = "",
-    multicast_targets: list = None,
+    multicast_targets: Optional[list] = None,
     _semantic=None,
 ) -> None:
     """Asynchronously load a tensor tile from global memory via TMA."""

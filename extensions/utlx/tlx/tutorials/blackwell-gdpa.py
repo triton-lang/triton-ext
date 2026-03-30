@@ -19,6 +19,7 @@ from triton._internal_testing import is_blackwell
 def get_num_sms() -> Optional[int]:
     if torch.cuda.is_available():
         return torch.cuda.get_device_properties("cuda").multi_processor_count
+    return None
 
 
 def _host_descriptor_pre_hook(nargs):
@@ -1400,7 +1401,7 @@ def gdpa_forward_tlx(
         )
 
     stage = 1  # When supporting causal, change to 3
-    extra_kern_args = {}
+    extra_kern_args: dict[str, int] = {}
     # extra_kern_args["maxnreg"] = 168
     nheads = query.shape[1]
     G = query.shape[1] // key.shape[1]
@@ -1541,8 +1542,8 @@ def generate_sparse_seq_len(
             dtype=torch.int,
         )
     else:
-        min_seq_len: int = 0
-        max_seq_len: int = int(2 * sparsity * max_seq_len)
+        min_seq_len = 0
+        max_seq_len = int(2 * sparsity * max_seq_len)
         return torch.randint(
             low=max(min_seq_len, 1),
             high=max(max_seq_len, 2),

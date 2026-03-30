@@ -1671,8 +1671,8 @@ def generate_sparse_seq_len(
             dtype=torch.int,
         )
     else:
-        min_seq_len: int = 0
-        max_seq_len: int = int(2 * sparsity * max_seq_len)
+        min_seq_len = 0
+        max_seq_len = int(2 * sparsity * max_seq_len)
         return torch.randint(
             low=min_seq_len,
             high=max_seq_len,
@@ -1799,7 +1799,7 @@ def test_op(max_uih_len_kv, max_targets):
 line_vals = ["triton", "triton_dyn_spec", "tlx_single_q"]
 line_names = ["Triton", "DynSpec", "tlx"]
 modes = ["fwd"]
-configs: List[triton.testing.Benchmark] = [
+bench_configs: List[triton.testing.Benchmark] = [
     triton.testing.Benchmark(
         x_names=["max_uih_len_kv"],
         x_vals=[1024, 2048, 4096, 6144],  # shape for IGR LSR
@@ -1828,7 +1828,7 @@ configs: List[triton.testing.Benchmark] = [
 ]
 
 
-@triton.testing.perf_report(configs)
+@triton.testing.perf_report(bench_configs)
 def bench_cross_attention(
     mode: str,
     provider: str,

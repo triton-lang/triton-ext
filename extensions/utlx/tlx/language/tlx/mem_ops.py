@@ -165,44 +165,47 @@ To bypass, rewrite it to `local_alloc(..., num=tl.constexpr(2))` or `local_alloc
     if layout is None:
         if storage == tlx.storage_kind.smem:
             if len(shape) == 1:
-                layout = tlx.swizzled_shared_layout_encoding.make_default(
+                swizzled_layout = tlx.swizzled_shared_layout_encoding.make_default(
                     rank=len(shape))
+                layout = swizzled_layout
                 layout_handle = _semantic.builder.make_swizzled_shared_encoding_attr(
-                    layout.vectorSize,
-                    layout.perPhase,
-                    layout.maxPhase,
-                    layout.order,
-                    layout.numCTAsPerCGA,
-                    layout.numCTASplit,
-                    layout.numCTAOrder,
+                    swizzled_layout.vectorSize,
+                    swizzled_layout.perPhase,
+                    swizzled_layout.maxPhase,
+                    swizzled_layout.order,
+                    swizzled_layout.numCTAsPerCGA,
+                    swizzled_layout.numCTASplit,
+                    swizzled_layout.numCTAOrder,
                 )
             else:
                 arch = _semantic.builder.options.arch
                 is_amd = arch.startswith("gfx")
                 if is_amd:
-                    layout = tlx.swizzled_shared_layout_encoding.make_default(
+                    swizzled_layout = tlx.swizzled_shared_layout_encoding.make_default(
                         rank=len(shape))
+                    layout = swizzled_layout
                     layout_handle = _semantic.builder.make_swizzled_shared_encoding_attr(
-                        layout.vectorSize,
-                        layout.perPhase,
-                        layout.maxPhase,
-                        layout.order,
-                        layout.numCTAsPerCGA,
-                        layout.numCTASplit,
-                        layout.numCTAOrder,
+                        swizzled_layout.vectorSize,
+                        swizzled_layout.perPhase,
+                        swizzled_layout.maxPhase,
+                        swizzled_layout.order,
+                        swizzled_layout.numCTAsPerCGA,
+                        swizzled_layout.numCTASplit,
+                        swizzled_layout.numCTAOrder,
                     )
                 else:
-                    layout = tlx.nv_mma_shared_layout_encoding.make_default(
+                    nv_layout = tlx.nv_mma_shared_layout_encoding.make_default(
                         shape, dtype)
+                    layout = nv_layout
                     layout_handle = _semantic.builder.make_nv_mma_shared_encoding_attr(
-                        [int(x) for x in layout.shape],
-                        layout.order,
-                        layout.elemType.to_ir(_semantic.builder),
-                        layout.numCTAsPerCGA,
-                        layout.numCTASplit,
-                        layout.numCTAOrder,
-                        layout.fp4Padded,
-                        layout.swizzled,
+                        [int(x) for x in nv_layout.shape],
+                        nv_layout.order,
+                        nv_layout.elemType.to_ir(_semantic.builder),
+                        nv_layout.numCTAsPerCGA,
+                        nv_layout.numCTASplit,
+                        nv_layout.numCTAOrder,
+                        nv_layout.fp4Padded,
+                        nv_layout.swizzled,
                     )
         else:
             # For 8-bit element types (uint8/int8), use a dummy TMEM layout that will
@@ -210,13 +213,16 @@ To bypass, rewrite it to `local_alloc(..., num=tl.constexpr(2))` or `local_alloc
             # scaled MMA operations where the final layout depends on usage context.
             if dtype.primitive_bitwidth < 16:
                 if dtype == tl.uint8 or dtype == tl.int8:
-                    layout = tlx.DummyTMEMLayoutEncoding()
+                    tmem_layout: tlx.layout_encoding = tlx.DummyTMEMLayoutEncoding(
+                    )
                 else:
                     raise NotImplementedError(
                         f"TMEM Layouts not supported for {dtype} yet")
             else:
-                layout = tlx.tensor_memory_layout_encoding.make_default(shape)
-            layout_handle = layout.to_ir(_semantic.builder)
+                tmem_layout = tlx.tensor_memory_layout_encoding.make_default(
+                    shape)
+            layout = tmem_layout  # type: ignore[assignment]
+            layout_handle = tmem_layout.to_ir(_semantic.builder)
     else:
         raise NotImplementedError(
             "User-specified layout encoding not yet implemented.")
@@ -559,8 +565,8 @@ def async_load(
     eviction_policy: str = "",
     is_volatile: bool = False,
     bulk: bool = False,
-    bulk_size: Optional = None,
-    barrier: tlx.mbarrier = None,
+    bulk_size=None,
+    barrier: Optional[tlx.mbarrier] = None,
     _semantic=None,
 ) -> tlx.async_token:
     """
@@ -698,7 +704,7 @@ def async_load_wait_group(
 @tl.builtin
 def local_load(
     src: tlx.buffered_tensor,
-    token: tlx.async_token = None,
+    token: Optional[tlx.async_token] = None,
     _semantic=None,
 ) -> tl.tensor:
     """
@@ -778,7 +784,7 @@ def tmem_copy(
 
 @tl.builtin
 def local_trans(input: tlx.buffered_tensor,
-                dims: Tuple[int] = (1, 0),
+                dims: Tuple[int, ...] = (1, 0),
                 _semantic=None) -> tlx.buffered_tensor:
     """
     Permutes the dimensions of a tensor.
@@ -808,7 +814,7 @@ def local_trans(input: tlx.buffered_tensor,
 def local_reinterpret(
     src: tlx.buffered_tensor,
     dtype: tl.dtype,
-    shape: list[tl.constexpr] = None,
+    shape: Optional[list[tl.constexpr]] = None,
     _semantic=None,
 ) -> tlx.buffered_tensor:
     """

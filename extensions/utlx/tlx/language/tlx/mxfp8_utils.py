@@ -40,7 +40,7 @@ def _compute_scale_and_quantize(
     else:
         tl.static_assert(dtype == tl.float8e5)
         # torch.finfo(torch.float8_e5m2).max
-        FLOAT_MAX: tl.constexpr = 57344.0
+        FLOAT_MAX = 57344.0
 
     # Reshape to [BLOCK_M, NUM_SCALES, BLOCK_SIZE] for per-group operations
     data_reshaped = tl.reshape(data_block, [BLOCK_M, NUM_SCALES, VEC_SIZE])

@@ -14,7 +14,7 @@ def require_nv_mma_shared_layout(x: tlx.buffered_tensor,
     rank = len(x.shape)
     layout = tlx.nv_mma_shared_layout_encoding(
         shape=x.shape,
-        order=x.type.layout.order,
+        order=x.type.layout.order,  # type: ignore[attr-defined]
         elemType=x.dtype,
         numCTAsPerCGA=[1] * rank,
         numCTASplit=[1] * rank,
@@ -149,6 +149,9 @@ def async_dot(
         assert isinstance(
             A, tlx.buffered_tensor), "input must be a buffered tensor"
         # D needs colStride = 32 / bitwidth, see https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-packing-formats
+        assert isinstance(
+            acc,
+            tlx.buffered_tensor), "acc must be a buffered tensor for Blackwell"
         acc_handle = require_tmem_layout_col_stride(acc, 1, _semantic.builder)
         handles = [t.handle for t in mBarriers]
         is_async = force_async or len(handles) > 0

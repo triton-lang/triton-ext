@@ -15,7 +15,7 @@ class layout_encoding:
     def __repr__(self):
         return self.__class__.__name__
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder):  # type: ignore[return]
         raise NotImplementedError(
             f"{self.__class__.__name__}.to_ir() must be overridden in subclasses"
         )
@@ -37,7 +37,7 @@ class shared_layout_encoding(layout_encoding):
             f"{self.__class__.__name__}.make_permute() must be overridden in subclasses"
         )
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder):  # type: ignore[return]
         raise NotImplementedError(
             f"{self.__class__.__name__}.to_ir() must be overridden in subclasses"
         )
@@ -872,10 +872,11 @@ class buffered_tensor_type(tl.block_type):
                           out: List[ir.type]) -> None:
         out.append(self.to_ir(builder))
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder):
         shape = self.shape
         if self.num >= 1:
             shape = [self.num] + list(shape)
+        assert self.layout is not None
         return builder.get_memdesc_type(
             shape,
             self.element_ty.to_ir(builder),
@@ -896,7 +897,7 @@ class mbarrier(tl.base_value):
         self,
         handle,
         num: int,
-        layout: Optional[swizzled_shared_layout_encoding],
+        layout: Optional[shared_layout_encoding],
         storage: storage_kind = storage_kind.smem,
         is_warp_barrier: bool = False,
     ):
@@ -922,7 +923,7 @@ class mbarrier_type(buffered_tensor_type):
 
     def __init__(self,
                  num: int,
-                 layout: Optional[swizzled_shared_layout_encoding],
+                 layout: Optional[shared_layout_encoding],
                  storage,
                  is_warp_barrier: bool = False):
         super().__init__(tl.int64, [1], num, storage, layout)
@@ -937,11 +938,12 @@ class mbarrier_type(buffered_tensor_type):
                          is_warp_barrier=self.is_warp_barrier)
         return value, cursor + 1
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder):
         if self.num >= 1:
             shape = [self.num]
         else:
             shape = self.shape
+        assert self.layout is not None
         return builder.get_memdesc_type(
             shape,
             self.element_ty.to_ir(builder),
@@ -959,7 +961,7 @@ class clc_response(tl.base_value):
         self,
         handle,
         num: int,
-        layout: Optional[swizzled_shared_layout_encoding],
+        layout: Optional[shared_layout_encoding],
     ):
         self.handle = handle
         self.type = clc_response_type(num, layout)
@@ -981,8 +983,7 @@ class clc_response_type(buffered_tensor_type):
     # since we have two concrete use cases now (mbarrier and clc_response)
     # both of which are opaque objects with fixed size
 
-    def __init__(self, num: int,
-                 layout: Optional[swizzled_shared_layout_encoding]):
+    def __init__(self, num: int, layout: Optional[shared_layout_encoding]):
         super().__init__(tl.int64, [1], num, storage_kind.smem, layout)
 
     def _unflatten_ir(self, handles: List[ir.value],
@@ -990,11 +991,12 @@ class clc_response_type(buffered_tensor_type):
         value = clc_response(handles[cursor], self.num, self.layout)
         return value, cursor + 1
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder):
         if self.num >= 1:
             shape = [self.num]
         else:
             shape = self.shape
+        assert self.layout is not None
         return builder.get_memdesc_type(
             shape,
             self.element_ty.to_ir(builder),

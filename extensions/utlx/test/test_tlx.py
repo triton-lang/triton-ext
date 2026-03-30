@@ -4935,12 +4935,12 @@ def test_async_dot_scaled_mixed_mxfp8_mxfp4(A_format, B_format, device):
         if A_IS_FP4:
             A_BYTES: tl.constexpr = BLOCK_M * BLOCK_K // 2
         else:
-            A_BYTES: tl.constexpr = BLOCK_M * BLOCK_K  # FP8 is 1 byte per element
+            A_BYTES = BLOCK_M * BLOCK_K  # FP8 is 1 byte per element
 
         if B_IS_FP4:
             B_BYTES: tl.constexpr = BLOCK_N * BLOCK_K // 2
         else:
-            B_BYTES: tl.constexpr = BLOCK_K * BLOCK_N  # FP8 is 1 byte per element
+            B_BYTES = BLOCK_K * BLOCK_N  # FP8 is 1 byte per element
 
         SCALE_BYTES: tl.constexpr = (REP_M + REP_N) * REP_K * 2 * 256
 
@@ -6787,7 +6787,7 @@ class TestToMxfp8:
             if ELEM_DTYPE == "e4m3":
                 fp8_type: tl.constexpr = tl.float8e4nv
             else:
-                fp8_type: tl.constexpr = tl.float8e5
+                fp8_type = tl.float8e5
             NUM_SCALES: tl.constexpr = BLOCK_K // VEC_SIZE
             data_tile = tlx.local_alloc((BLOCK_M, BLOCK_K), fp8_type,
                                         tl.constexpr(1))
