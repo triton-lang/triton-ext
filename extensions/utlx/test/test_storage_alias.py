@@ -275,14 +275,14 @@ def test_set_buffer_overlap_distinct_compile_only():
         spec = tlx.storage_alias_spec(storage=tlx.storage_kind.smem)
         a = tlx.local_alloc(
             (BLOCK, BLOCK),
-            tl.float32,
+            tl.float16,
             tl.constexpr(2),
             tlx.storage_kind.smem,
             reuse=spec,
         )
         b = tlx.local_alloc(
             (BLOCK, BLOCK),
-            tl.float16,
+            tl.bfloat16,
             tl.constexpr(2),
             tlx.storage_kind.smem,
             reuse=spec,
