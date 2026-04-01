@@ -162,4 +162,19 @@ def inspect_stages_hook(self=None,
         stages["ttir"] = lambda src, metadata: make_ttir_wrapper(
             src, metadata, options, capability)
 
+        # Wrap the llir stage to run storage alias lowering before
+        # allocate-shared-memory-nv, which invokes the alias analysis
+        # that does not recognize StorageAliasLocalAllocOp.
+        original_llir = stages["llir"]
+
+        def make_llir_wrapper(mod, metadata):
+            pm = ir.pass_manager(mod.context)
+            pm.enable_debug()
+            passes.plugin.utlx_storage_alias_lowering(pm, [])
+            passes.plugin.utlx_rewrite_local_alias(pm, [])
+            pm.run(mod, 'utlx_storage_alias')
+            return original_llir(mod, metadata)
+
+        stages["llir"] = make_llir_wrapper
+
     return get_key(), get_hash()
