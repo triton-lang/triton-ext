@@ -88,8 +88,7 @@ void utlx::createAsyncStore(TritonOpBuilder &self,
                             std::vector<mlir::Value> &operands) {
   if (operands.size() < 3)
     return;
-  createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                  "ttng.async_store", {},
+  createRuntimeOp(self.getBuilder(), self.getLastLoc(), "ttng.async_store", {},
                   {operands[0], operands[1], operands[2]});
 }
 
@@ -123,8 +122,8 @@ void utlx::createMapToRemoteBuffer(TritonOpBuilder &self,
   mlir::Value ctaRank = operands[2];
 
   auto *op = createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                             "ttng.map_to_remote_buffer",
-                             {src.getType()}, {src, ctaRank});
+                             "ttng.map_to_remote_buffer", {src.getType()},
+                             {src, ctaRank});
   if (op && op->getNumResults() > 0)
     operands[0] = op->getResult(0);
 }
@@ -145,8 +144,7 @@ void utlx::createAsyncCLCTryCancel(TritonOpBuilder &self,
   if (operands.size() < 2)
     return;
   createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                  "ttng.async_clc_try_cancel", {},
-                  {operands[0], operands[1]});
+                  "ttng.async_clc_try_cancel", {}, {operands[0], operands[1]});
 }
 
 /// utlx_clc_query_cancel(clcResAlloc) -> i32
@@ -156,8 +154,7 @@ void utlx::createCLCQueryCancel(TritonOpBuilder &self,
     return;
   auto i32Ty = self.getBuilder().getI32Type();
   auto *op = createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                             "ttng.clc_query_cancel", {i32Ty},
-                             {operands[1]});
+                             "ttng.clc_query_cancel", {i32Ty}, {operands[1]});
   if (op && op->getNumResults() > 0)
     operands[0] = op->getResult(0);
 }
@@ -179,9 +176,9 @@ void utlx::createVoteBallotSync(TritonOpBuilder &self,
     resultType = self.getBuilder().getI32Type();
   }
 
-  auto *op = createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                             "ttng.vote_ballot_sync", {resultType},
-                             {mask, pred});
+  auto *op =
+      createRuntimeOp(self.getBuilder(), self.getLastLoc(),
+                      "ttng.vote_ballot_sync", {resultType}, {mask, pred});
   if (op && op->getNumResults() > 0)
     operands[0] = op->getResult(0);
 }
@@ -214,8 +211,7 @@ void utlx::createNamedBarrierArrive(TritonOpBuilder &self,
   if (operands.size() < 2)
     return;
   createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                  "ttng.named_barrier_arrive", {},
-                  {operands[0], operands[1]});
+                  "ttng.named_barrier_arrive", {}, {operands[0], operands[1]});
 }
 
 /// utlx_named_barrier_wait(bar, numThreads)
@@ -224,8 +220,7 @@ void utlx::createNamedBarrierWait(TritonOpBuilder &self,
   if (operands.size() < 2)
     return;
   createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                  "ttng.named_barrier_wait", {},
-                  {operands[0], operands[1]});
+                  "ttng.named_barrier_wait", {}, {operands[0], operands[1]});
 }
 
 // ---------------------------------------------------------------------------
@@ -239,8 +234,7 @@ void utlx::createReadBarrierPhase(TritonOpBuilder &self,
     return;
   auto i32Ty = self.getBuilder().getI32Type();
   auto *op = createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                             "amdg.read_barrier_phase", {i32Ty},
-                             {operands[1]});
+                             "amdg.read_barrier_phase", {i32Ty}, {operands[1]});
   if (op && op->getNumResults() > 0)
     operands[0] = op->getResult(0);
 }
@@ -600,8 +594,7 @@ void utlx::createAsyncLoad(TritonOpBuilder &self,
     // For now, create as runtime op since bulk variant may differ
     llvm::SmallVector<mlir::Value> opOperands = {src, result};
     auto *op = createRuntimeOp(
-        self.getBuilder(), self.getLastLoc(),
-        "ttg.async_copy_global_to_local",
+        self.getBuilder(), self.getLastLoc(), "ttg.async_copy_global_to_local",
         {self.getBuilder().getType<ttg::AsyncTokenType>()}, opOperands);
     if (op && op->getNumResults() > 0)
       operands[0] = op->getResult(0);
@@ -613,8 +606,7 @@ void utlx::createAsyncLoad(TritonOpBuilder &self,
     for (size_t i = 3; i < operands.size() - 1; ++i)
       opOperands.push_back(operands[i]);
     auto *op = createRuntimeOp(
-        self.getBuilder(), self.getLastLoc(),
-        "ttg.async_copy_global_to_local",
+        self.getBuilder(), self.getLastLoc(), "ttg.async_copy_global_to_local",
         {self.getBuilder().getType<ttg::AsyncTokenType>()}, opOperands);
     if (op && op->getNumResults() > 0)
       operands[0] = op->getResult(0);
@@ -772,9 +764,8 @@ void utlx::createClcQuery(TritonOpBuilder &self,
   auto i32Ty = builder.getI32Type();
 
   // First query the cancel status
-  auto *queryOp =
-      createRuntimeOp(builder, loc, "ttng.clc_query_cancel",
-                      {i32Ty}, {operands[1]});
+  auto *queryOp = createRuntimeOp(builder, loc, "ttng.clc_query_cancel",
+                                  {i32Ty}, {operands[1]});
   if (!queryOp || queryOp->getNumResults() == 0)
     return;
 
