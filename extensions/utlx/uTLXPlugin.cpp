@@ -10,6 +10,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "triton/Tools/PluginUtils.h"
@@ -537,9 +538,152 @@ static void createAsyncWaitGroup(TritonOpBuilder &self,
   self.create<ttg::AsyncWaitOp>(tokens, static_cast<int>(*pendingsVal));
 }
 
-// --- utlx_warp_group_dot_wait: WarpGroupDotWaitOp with ReleaseLayoutOp unwrap
-// --- operands[0] = result slot operands[1] = input value (possibly wrapped in
-// ReleaseLayoutOp) operands[2] = pendings (i32 constant)
+// --- utlx_warp_group_dot: WarpGroupDotOp (mirrors gluon create_warpgroup_mma)
+// --- operands[0] = result slot
+// operands[1] = A, operands[2] = B, operands[3] = acc
+// operands[4] = useAcc (i1 or null-like; pass get_int1)
+// operands[5] = input_precision (i32 constant: 0=TF32, 1=TF32x3, 2=IEEE, ...)
+// operands[6] = maxNumImpreciseAcc (i32 constant)
+// operands[7] = isAsync (i32 constant: 0 or 1)
+static void createWarpGroupDot(TritonOpBuilder &self,
+                               std::vector<mlir::Value> &operands) {
+  if (operands.size() < 8)
+    return;
+
+  mlir::Value a = operands[1];
+  mlir::Value b = operands[2];
+  mlir::Value acc = operands[3];
+  mlir::Value useAcc = operands[4];
+
+  auto precisionVal = extractConstantInt(operands[5]);
+  auto maxImpreciseVal = extractConstantInt(operands[6]);
+  auto isAsyncVal = extractConstantInt(operands[7]);
+  if (!precisionVal || !maxImpreciseVal || !isAsyncVal)
+    return;
+
+  auto precision =
+      static_cast<mlir::triton::InputPrecision>(*precisionVal);
+  int maxNumImpreciseAcc = static_cast<int>(*maxImpreciseVal);
+  bool isAsync = *isAsyncVal != 0;
+
+  operands[0] = self.create<ttng::WarpGroupDotOp>(a, b, acc, useAcc, precision,
+                                                   maxNumImpreciseAcc, isAsync);
+}
+
+// --- utlx_tcgen05_mma: TCGen5MMAOp (mirrors gluon create_tcgen05_mma) ---
+// operands[0] = result slot
+// operands[1] = A, operands[2] = B, operands[3] = acc
+// operands[4] = useAcc (i1 or null carrier)
+// operands[5] = pred (i1 or null carrier)
+// operands[6] = two_ctas (i32: 0 or 1)
+// operands[7] = multicast (i32: 0 or 1)
+// operands[8] = numMbarriers (i32)
+// operands[9..9+N-1] = mbarrier values
+static void createTCGen05MMA(TritonOpBuilder &self,
+                             std::vector<mlir::Value> &operands) {
+  if (operands.size() < 9)
+    return;
+
+  mlir::Value a = operands[1];
+  mlir::Value b = operands[2];
+  mlir::Value acc = operands[3];
+  mlir::Value useAcc = operands[4];
+  mlir::Value pred = operands[5];
+
+  auto twoCTAsVal = extractConstantInt(operands[6]);
+  auto multicastVal = extractConstantInt(operands[7]);
+  auto numMbarriersVal = extractConstantInt(operands[8]);
+  if (!twoCTAsVal || !multicastVal || !numMbarriersVal)
+    return;
+
+  bool twoCTAs = *twoCTAsVal != 0;
+  bool multicast = *multicastVal != 0;
+  int numMbarriers = static_cast<int>(*numMbarriersVal);
+
+  llvm::SmallVector<mlir::Value> mbarriers;
+  for (int i = 0; i < numMbarriers; ++i) {
+    if (9 + i >= static_cast<int>(operands.size()))
+      break;
+    mbarriers.push_back(operands[9 + i]);
+  }
+
+  mlir::Value accDep; // null
+  auto tokType = self.getBuilder().getType<ttg::AsyncTokenType>();
+  self.create<ttng::TCGen5MMAOp>(tokType, a, b, acc, accDep, useAcc, pred,
+                                  twoCTAs, multicast, mbarriers,
+                                  std::vector<mlir::Value>{});
+}
+
+// --- utlx_tcgen05_mma_scaled: TCGen5MMAScaledOp ---
+// operands[0] = result slot
+// operands[1] = A, operands[2] = B, operands[3] = acc
+// operands[4] = aScale, operands[5] = bScale
+// operands[6] = aType (i32 enum), operands[7] = bType (i32 enum)
+// operands[8] = useAcc, operands[9] = pred
+// operands[10] = two_ctas (i32)
+// operands[11] = numMbarriers (i32)
+// operands[12..] = mbarrier values
+static void createTCGen05MMAScaled(TritonOpBuilder &self,
+                                   std::vector<mlir::Value> &operands) {
+  if (operands.size() < 12)
+    return;
+
+  mlir::Value a = operands[1];
+  mlir::Value b = operands[2];
+  mlir::Value acc = operands[3];
+  mlir::Value aScale = operands[4];
+  mlir::Value bScale = operands[5];
+
+  auto aTypeVal = extractConstantInt(operands[6]);
+  auto bTypeVal = extractConstantInt(operands[7]);
+  if (!aTypeVal || !bTypeVal)
+    return;
+  auto aType = static_cast<mlir::triton::ScaleDotElemType>(*aTypeVal);
+  auto bType = static_cast<mlir::triton::ScaleDotElemType>(*bTypeVal);
+
+  mlir::Value useAcc = operands[8];
+  mlir::Value pred = operands[9];
+
+  auto twoCTAsVal = extractConstantInt(operands[10]);
+  auto numMbarriersVal = extractConstantInt(operands[11]);
+  if (!twoCTAsVal || !numMbarriersVal)
+    return;
+  bool twoCTAs = *twoCTAsVal != 0;
+  int numMbarriers = static_cast<int>(*numMbarriersVal);
+
+  llvm::SmallVector<mlir::Value> mbarriers;
+  for (int i = 0; i < numMbarriers; ++i) {
+    if (12 + i >= static_cast<int>(operands.size()))
+      break;
+    mbarriers.push_back(operands[12 + i]);
+  }
+
+  mlir::Value accDep; // null
+  auto tokType = self.getBuilder().getType<ttg::AsyncTokenType>();
+  self.create<ttng::TCGen5MMAScaledOp>(tokType, a, b, acc, accDep, aScale,
+                                        bScale, aType, bType, useAcc, pred,
+                                        mbarriers, std::vector<mlir::Value>{},
+                                        twoCTAs);
+}
+
+// --- utlx_tcgen05_commit: TCGen5CommitOp ---
+// operands[0] = result slot (unused)
+// operands[1] = barrier
+// operands[2] = pred
+static void createTCGen05Commit(TritonOpBuilder &self,
+                                std::vector<mlir::Value> &operands) {
+  if (operands.size() < 3)
+    return;
+  self.create<ttng::TCGen5CommitOp>(operands[1], operands[2],
+                                     std::vector<mlir::Value>{});
+}
+
+// --- utlx_warp_group_dot_wait: WarpGroupDotWaitOp ---
+// operands[0] = result slot
+// operands[1] = input value
+// operands[2] = pendings (i32 constant)
+// Mirrors triton-fb's create_warp_group_dot_wait: just passes input as-is,
+// no ReleaseLayoutOp unwrapping (the input may come through loop phis).
 static void createWarpGroupDotWait(TritonOpBuilder &self,
                                    std::vector<mlir::Value> &operands) {
   if (operands.size() < 3)
@@ -550,29 +694,10 @@ static void createWarpGroupDotWait(TritonOpBuilder &self,
   if (!pendingsVal)
     return;
 
-  // Unwrap ReleaseLayoutOp if present
-  mlir::Value realInput = input;
-  tlx::ReleaseLayoutOp releaseOp = nullptr;
-  if (auto defOp = input.getDefiningOp()) {
-    if (auto release = mlir::dyn_cast<tlx::ReleaseLayoutOp>(defOp)) {
-      releaseOp = release;
-      realInput = release.getSrc();
-    }
-  }
-
-  // Create WarpGroupDotWaitOp with the unwrapped input
   auto waitOp = self.create<ttng::WarpGroupDotWaitOp>(
-      llvm::SmallVector<mlir::Value>{realInput},
+      llvm::SmallVector<mlir::Value>{input},
       static_cast<unsigned>(*pendingsVal));
-
-  if (releaseOp) {
-    // Move ReleaseLayoutOp after the wait and rewire
-    releaseOp->moveAfter(waitOp.getOperation());
-    releaseOp.getOperation()->setOperand(0, waitOp.getResult(0));
-    operands[0] = releaseOp.getResult();
-  } else {
-    operands[0] = waitOp.getResult(0);
-  }
+  operands[0] = waitOp.getResult(0);
 }
 
 // ===========================================================================
@@ -787,6 +912,10 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_cluster_cta_rank", utlx::createClusterCtaRank},
       {"utlx_thread_id", utlx::createThreadId},
       // MMA ops
+      {"utlx_warp_group_dot", createWarpGroupDot},
+      {"utlx_tcgen05_mma", createTCGen05MMA},
+      {"utlx_tcgen05_mma_scaled", createTCGen05MMAScaled},
+      {"utlx_tcgen05_commit", createTCGen05Commit},
       {"utlx_warp_group_dot_wait", createWarpGroupDotWait},
       // Async copy ops with token threading
       {"utlx_async_commit_group", createAsyncCommitGroup},
@@ -802,7 +931,8 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       dialects,
       1, // numDialects
       ops,
-      48, // numOps
+      52, // numOps
+      TRITON_VERSION
   };
   return &info;
 }

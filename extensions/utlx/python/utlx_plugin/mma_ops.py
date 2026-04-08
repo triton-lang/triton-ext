@@ -1,6 +1,6 @@
 """uTLX MMA operations.
 
-These ops use gluon builder methods for warp group dot,
+These ops use uTLX custom ops for warp group dot,
 tcgen05 dot, and layout operations.
 """
 
@@ -135,10 +135,15 @@ def async_dot(
                 use_acc_handle = use_acc.handle
             else:
                 use_acc_handle = _semantic.builder.get_int1(use_acc.value)
-        # Use gluon: create_tcgen05_mma(a, b, acc, useAcc, pred, mbarriers, mbarrier_preds, two_ctas, multicast)
-        _semantic.builder.create_tcgen05_mma(A_handle, B_handle, acc_handle,
-                                             use_acc_handle, pred, handles, [],
-                                             two_ctas, False)
+        # Use custom op: utlx_tcgen05_mma
+        _semantic.builder.utlx_tcgen05_mma([
+            A_handle, B_handle, acc_handle,
+            use_acc_handle if use_acc_handle is not None else _semantic.builder.get_int1(True),
+            pred if pred is not None else _semantic.builder.get_int1(True),
+            _semantic.builder.get_int32(1 if two_ctas else 0),
+            _semantic.builder.get_int32(0),  # multicast=False
+            _semantic.builder.get_int32(len(handles)),
+        ] + handles)
         return tl.tensor(acc_handle, tl.void)
     else:
         # Create NvidiaMma encoding and apply it to acc via combined custom op
@@ -152,10 +157,14 @@ def async_dot(
             # Apply dot operand encoding to A; pass acc_with_layout as parent carrier
             A_handle = require_dot_operand_layout(A, 0, acc_with_layout,
                                                   _semantic.builder)
-        # Use gluon: create_warpgroup_mma(a, b, acc, useAcc, precision, maxNumImpreciseAcc, isAsync)
-        output = _semantic.builder.create_warpgroup_mma(
-            A_handle, B_handle, acc_with_layout, None, input_precision,
-            max_num_imprecise_acc, True)
+        # Use custom op: utlx_warp_group_dot
+        output = _semantic.builder.utlx_warp_group_dot([
+            A_handle, B_handle, acc_with_layout,
+            _semantic.builder.get_int1(True),  # useAcc
+            _semantic.builder.get_int32(int(input_precision)),
+            _semantic.builder.get_int32(max_num_imprecise_acc),
+            _semantic.builder.get_int32(1),  # isAsync=True
+        ])
         output = _semantic.builder.utlx_release_layout([output])
         return tl.tensor(output, ret_ty)
 
@@ -228,12 +237,20 @@ def async_dot_scaled(
             use_acc_handle = use_acc.handle
         else:
             use_acc_handle = _semantic.builder.get_int1(use_acc.value)
-    # Use gluon: create_tcgen05_mma_scaled
-    _semantic.builder.create_tcgen05_mma_scaled(A_handle, B_handle, acc_handle,
-                                                A_scale_handle, B_scale_handle,
-                                                A_type, B_type, use_acc_handle,
-                                                pred, bar_handles, [],
-                                                two_ctas)
+    # Use custom op: utlx_tcgen05_mma_scaled
+    _semantic.builder.utlx_tcgen05_mma_scaled([
+        A_handle,
+        B_handle,
+        acc_handle,
+        A_scale_handle,
+        B_scale_handle,
+        _semantic.builder.get_int32(int(A_type)),
+        _semantic.builder.get_int32(int(B_type)),
+        use_acc_handle if use_acc_handle is not None else _semantic.builder.get_int1(True),
+        pred if pred is not None else _semantic.builder.get_int1(True),
+        _semantic.builder.get_int32(1 if two_ctas else 0),
+        _semantic.builder.get_int32(len(bar_handles)),
+    ] + bar_handles)
     return tl.tensor(acc_handle, tl.void)
 
 
@@ -260,6 +277,6 @@ def tcgen05_commit(mBarrier, two_ctas=False, _semantic=None) -> tl.tensor:
             cta_rank, _semantic.builder.get_int32(2))
         pred_handle = _semantic.builder.create_icmpEQ(
             mod_result, _semantic.builder.get_int32(0))
-    # Use gluon: create_tcgen05_commit(barrier, pred, descs)
-    _semantic.builder.create_tcgen05_commit(mBarrier.handle, pred_handle, [])
+    # Use custom op: utlx_tcgen05_commit
+    _semantic.builder.utlx_tcgen05_commit([mBarrier.handle, pred_handle])
     return tl.tensor(mBarrier.handle, tl.void)

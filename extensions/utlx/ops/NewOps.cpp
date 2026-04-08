@@ -389,6 +389,29 @@ void utlx::createRequireNvMmaSharedLayout(TritonOpBuilder &self,
   operands[0] = self.create<tlx::RequireLayoutOp>(newType, src);
 }
 
+/// Ensure ttg.num-warps (and related attrs) are set on the module.
+/// These are needed to verify layouts with NvidiaMmaEncoding.
+/// See gluon/_runtime.py: "Assign module attributes eagerly, as they are
+/// needed to verify layouts"
+static void ensureModuleAttrs(mlir::OpBuilder &builder, unsigned numWarps) {
+  mlir::Block *block = builder.getInsertionBlock();
+  if (!block)
+    return;
+  mlir::Operation *op = block->getParentOp();
+  while (op && !mlir::isa<mlir::ModuleOp>(op))
+    op = op->getParentOp();
+  if (!op)
+    return;
+  auto mod = mlir::cast<mlir::ModuleOp>(op);
+  if (!mod->hasAttr(ttg::AttrNumWarpsName))
+    mod->setAttr(ttg::AttrNumWarpsName,
+                 builder.getI32IntegerAttr(numWarps));
+  if (!mod->hasAttr(ttg::AttrNumThreadsPerWarp))
+    mod->setAttr(ttg::AttrNumThreadsPerWarp, builder.getI32IntegerAttr(32));
+  if (!mod->hasAttr(ttg::AttrNumCTAsName))
+    mod->setAttr(ttg::AttrNumCTAsName, builder.getI32IntegerAttr(1));
+}
+
 /// utlx_require_nv_mma_layout(result_slot, opndA, opndAcc, version,
 ///                              versionMinor, moduleNumWarps)
 void utlx::createRequireNvMmaLayout(TritonOpBuilder &self,
@@ -435,6 +458,9 @@ void utlx::createRequireNvMmaLayout(TritonOpBuilder &self,
         numWarps = static_cast<unsigned>(*contextualWarps);
     }
   }
+
+  // Eagerly set module attrs so layout verifiers can find ttg.num-warps
+  ensureModuleAttrs(self.getBuilder(), numWarps);
 
   auto instrShape = mlir::mmaVersionToInstrShape(versionMajor, retShapePerCTA,
                                                  dtypeA, numWarps);
@@ -563,54 +589,60 @@ void utlx::createClusterCtaRank(TritonOpBuilder &self,
 // Memory ops
 // ---------------------------------------------------------------------------
 
-/// utlx_async_load(result_slot, src, result_memdesc, [mask, other,]
-/// useBulk_flag,
-///                  [bulk_size, barrier])
-/// useBulk_flag is always present; if useBulk=1, bulk_size and barrier follow.
-/// For non-bulk loads, mask and other may be present before the flag.
+/// utlx_async_load(result_slot, src, result_memdesc, [mask, other,] useBulk_flag)
+/// useBulk_flag is always the last operand (i32 constant).
+/// For non-bulk loads: operands = [result_slot, src, result, (mask)?, (other)?, useBulk=0]
+///   mask and other are optional; 0, 1, or 2 values between result and useBulk flag.
 void utlx::createAsyncLoad(TritonOpBuilder &self,
                            std::vector<mlir::Value> &operands) {
   if (operands.size() < 4)
     return;
-  // The op is "ttg.async_copy_global_to_local"
-  // For now, use runtime op creation since the signature may vary
+
+  auto &builder = self.getBuilder();
+  auto loc = self.getLastLoc();
+
   mlir::Value src = operands[1];
   mlir::Value result = operands[2];
 
-  // Find the useBulk flag - it's always the last or second-to-last group
-  // For bulk: [src, result, bulk_size, barrier, useBulk=1]
-  // For non-bulk: [src, result, (mask)?, (other)?, useBulk=0]
-  auto useBulkVal = extractConstInt(operands.back());
-  if (!useBulkVal)
-    return;
-  bool useBulk = *useBulkVal != 0;
+  // Count optional operands between result and the useBulk flag (last operand)
+  size_t numOptional = operands.size() - 4;
 
-  if (useBulk) {
-    // operands: [result_slot, src, result, bulk_size, barrier, useBulk=1]
-    if (operands.size() < 6)
-      return;
-    // Bulk async load is effectively a barrier-based TMA copy
-    // Use AsyncCopyGlobalToLocalOp with bulk parameters
-    // For now, create as runtime op since bulk variant may differ
-    llvm::SmallVector<mlir::Value> opOperands = {src, result};
-    auto *op = createRuntimeOp(
-        self.getBuilder(), self.getLastLoc(), "ttg.async_copy_global_to_local",
-        {self.getBuilder().getType<ttg::AsyncTokenType>()}, opOperands);
-    if (op && op->getNumResults() > 0)
-      operands[0] = op->getResult(0);
-  } else {
-    // Non-bulk: operands[1]=src, operands[2]=result, then optional mask/other,
-    // then useBulk=0
-    llvm::SmallVector<mlir::Value> opOperands = {src, result};
-    // Add mask and other if present (operands between result and useBulk flag)
-    for (size_t i = 3; i < operands.size() - 1; ++i)
-      opOperands.push_back(operands[i]);
-    auto *op = createRuntimeOp(
-        self.getBuilder(), self.getLastLoc(), "ttg.async_copy_global_to_local",
-        {self.getBuilder().getType<ttg::AsyncTokenType>()}, opOperands);
-    if (op && op->getNumResults() > 0)
-      operands[0] = op->getResult(0);
-  }
+  mlir::Value mask;
+  mlir::Value other;
+  if (numOptional >= 1)
+    mask = operands[3];
+  if (numOptional >= 2)
+    other = operands[4];
+
+  // Build manually to correctly set operandSegmentSizes for AttrSizedOperandSegments
+  auto tokenType = builder.getType<ttg::AsyncTokenType>();
+  mlir::OperationState state(loc, "ttg.async_copy_global_to_local");
+  state.addTypes(tokenType);
+
+  // Operands: src, result, [mask], [other]
+  state.addOperands(src);
+  state.addOperands(result);
+  int32_t hasMask = mask ? 1 : 0;
+  int32_t hasOther = other ? 1 : 0;
+  if (mask)
+    state.addOperands(mask);
+  if (other)
+    state.addOperands(other);
+
+  state.addAttribute("operandSegmentSizes",
+                     builder.getDenseI32ArrayAttr({1, 1, hasMask, hasOther}));
+  state.addAttribute("cache",
+                     mlir::triton::CacheModifierAttr::get(
+                         builder.getContext(), mlir::triton::CacheModifier::NONE));
+  state.addAttribute("evict",
+                     mlir::triton::EvictionPolicyAttr::get(
+                         builder.getContext(), mlir::triton::EvictionPolicy::NORMAL));
+  state.addAttribute("isVolatile", builder.getBoolAttr(false));
+  state.addAttribute("contiguity", builder.getI32IntegerAttr(1));
+
+  auto *op = builder.create(state);
+  if (op && op->getNumResults() > 0)
+    operands[0] = op->getResult(0);
 }
 
 /// utlx_global_scratch_alloc(result_slot, nbytes, alignment) -> ptr

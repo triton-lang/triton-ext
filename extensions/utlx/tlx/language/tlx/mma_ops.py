@@ -22,27 +22,28 @@ def require_nv_mma_shared_layout(x: tlx.buffered_tensor,
         fp4Padded=fp4Padded,
         swizzled=swizzled,
     )
-
-    layout_handle = _builder.make_nv_mma_shared_encoding_attr(
-        [int(x) for x in layout.shape],
-        layout.order,
-        layout.elemType.to_ir(_builder),
-        layout.numCTAsPerCGA,
-        layout.numCTASplit,
-        layout.numCTAOrder,
-        layout.fp4Padded,
-        layout.swizzled,
-    )
-    return _builder.create_require_layout(x.handle, layout_handle)
+    # Combined custom op: creates encoding + RequireLayoutOp in one step
+    result = _builder.utlx_require_nv_mma_shared_layout(
+        [x.handle] + [_builder.get_int32(int(s)) for s in layout.shape] +
+        [_builder.get_int32(o) for o in layout.order] + [
+            _builder.get_int32(1 if layout.fp4Padded else 0),
+            _builder.get_int32(1 if layout.swizzled else 0)
+        ])
+    if result is not None:
+        return result
+    return x.handle
 
 
 def require_dot_operand_layout(opnd: tl.tensor,
                                opIdx,
-                               parent_layout,
+                               parent_value,
                                _builder=None):
-    layout_handle = _builder.make_dot_operand_encoding_attr(
-        opnd.handle, opIdx, parent_layout)
-    return _builder.create_require_layout(opnd.handle, layout_handle)
+    # parent_value is a Value whose type carries the parent NvidiaMmaEncoding
+    result = _builder.utlx_require_dot_operand_layout(
+        [opnd.handle, _builder.get_int32(opIdx), parent_value])
+    if result is not None:
+        return result
+    return opnd.handle
 
 
 def require_tmem_layout_col_stride(src: tlx.buffered_tensor,
@@ -54,14 +55,16 @@ def require_tmem_layout_col_stride(src: tlx.buffered_tensor,
             ), "input must be a TMEM tensor"
     old_layout = src.type.layout
     if old_layout.colStride != col_stride:
-        layout_handle = _builder.make_tensor_memory_encoding_attr(
-            old_layout.blockM,
-            old_layout.blockN,
-            col_stride,
-            old_layout.CTASplitM,
-            old_layout.CTASplitN,
-        )
-        return _builder.create_require_layout(src.handle, layout_handle)
+        result = _builder.utlx_require_tensor_memory_layout([
+            src.handle,
+            _builder.get_int32(old_layout.blockM),
+            _builder.get_int32(old_layout.blockN),
+            _builder.get_int32(col_stride),
+            _builder.get_int32(old_layout.CTASplitM),
+            _builder.get_int32(old_layout.CTASplitN)
+        ])
+        if result is not None:
+            return result
     # if the layout is already correct, return the original handle
     return src.handle
 
@@ -74,9 +77,10 @@ def require_tmem_scales_layout(src: tlx.buffered_tensor, _builder=None):
         src,
         tlx.buffered_tensor) and src.type.storage == tlx.storage_kind.tmem, (
             "input must be a TMEM tensor")
-    layout = tlx.tensor_memory_scales_layout_encoding.make_default()
-    layout_handle = layout.to_ir(_builder)
-    return _builder.create_require_layout(src.handle, layout_handle)
+    result = _builder.utlx_require_tensor_memory_scales_layout([src.handle])
+    if result is not None:
+        return result
+    return src.handle
 
 
 # async dot signature needs to be close to tl.dot as much as possible
@@ -99,7 +103,7 @@ def async_dot(
     """
     Performs a warp-group matrix multiply-accumulate operation of two blocks and return the matrix product.
 
-    This maps directly to NVIDIA Hopper’s wgmma.mma_async instructions, enabling high-throughput matrix multiplication
+    This maps directly to NVIDIA Hopper's wgmma.mma_async instructions, enabling high-throughput matrix multiplication
     across multiple warps within a warpgroup, or Blackwell's tcgen05.mma instruction.
 
     The operation computes:
@@ -165,25 +169,38 @@ def async_dot(
                 use_acc_handle = use_acc.handle
             else:
                 use_acc_handle = _semantic.builder.get_int1(use_acc.value)
-        output = _semantic.builder.create_tcgen5_dot(A_handle, B_handle,
-                                                     acc_handle,
-                                                     use_acc_handle, pred,
-                                                     two_ctas, handles,
-                                                     is_async)
-        return tl.tensor(output, tl.void)
+        # Use custom op: utlx_tcgen05_mma
+        _semantic.builder.utlx_tcgen05_mma([
+            A_handle, B_handle, acc_handle,
+            use_acc_handle if use_acc_handle is not None else _semantic.builder.get_int1(True),
+            pred if pred is not None else _semantic.builder.get_int1(True),
+            _semantic.builder.get_int32(1 if two_ctas else 0),
+            _semantic.builder.get_int32(0),  # multicast=False
+            _semantic.builder.get_int32(len(handles)),
+        ] + handles)
+        return tl.tensor(acc_handle, tl.void)
     else:
-        mma_layout = _semantic.builder.make_nv_mma_encoding_attr(
-            A_handle, acc_handle, version, 0,
-            _semantic.builder.options.num_warps)
-        acc = _semantic.builder.create_require_layout(acc_handle, mma_layout)
+        # Create NvidiaMma encoding and apply it to acc via combined custom op
+        acc_with_layout = _semantic.builder.utlx_require_nv_mma_layout([
+            A_handle, acc_handle,
+            _semantic.builder.get_int32(version),
+            _semantic.builder.get_int32(0),
+            _semantic.builder.get_int32(_semantic.builder.options.num_warps)
+        ])
         if isinstance(A, tl.tensor):
-            A_handle = require_dot_operand_layout(A, 0, mma_layout,
+            # Apply dot operand encoding to A; pass acc_with_layout as parent carrier
+            A_handle = require_dot_operand_layout(A, 0, acc_with_layout,
                                                   _semantic.builder)
-        output = _semantic.builder.create_warp_group_dot(
-            A_handle, B_handle, acc, input_precision, max_num_imprecise_acc,
-            True)
+        # Use custom op: utlx_warp_group_dot
+        output = _semantic.builder.utlx_warp_group_dot([
+            A_handle, B_handle, acc_with_layout,
+            _semantic.builder.get_int1(True),  # useAcc
+            _semantic.builder.get_int32(int(input_precision)),
+            _semantic.builder.get_int32(max_num_imprecise_acc),
+            _semantic.builder.get_int32(1),  # isAsync=True
+        ])
         # Release the mma layout for the output to conform to what the user expects
-        output = _semantic.builder.create_release_layout(output)
+        output = _semantic.builder.utlx_release_layout([output])
         return tl.tensor(output, ret_ty)
 
 
@@ -347,21 +364,21 @@ def async_dot_scaled(
             use_acc_handle = use_acc.handle
         else:
             use_acc_handle = _semantic.builder.get_int1(use_acc.value)
-    output = _semantic.builder.create_tcgen5_dot_scaled(
+    # Use custom op: utlx_tcgen05_mma_scaled
+    _semantic.builder.utlx_tcgen05_mma_scaled([
         A_handle,
         B_handle,
         acc_handle,
         A_scale_handle,
         B_scale_handle,
-        A_type,
-        B_type,
-        use_acc_handle,
-        pred,
-        two_ctas,
-        bar_handles,
-        is_async,
-    )
-    return tl.tensor(output, tl.void)
+        _semantic.builder.get_int32(int(A_type)),
+        _semantic.builder.get_int32(int(B_type)),
+        use_acc_handle if use_acc_handle is not None else _semantic.builder.get_int1(True),
+        pred if pred is not None else _semantic.builder.get_int1(True),
+        _semantic.builder.get_int32(1 if two_ctas else 0),
+        _semantic.builder.get_int32(len(bar_handles)),
+    ] + bar_handles)
+    return tl.tensor(acc_handle, tl.void)
 
 
 @tl.builtin
@@ -376,9 +393,10 @@ def async_dot_wait(
     waiting on.
     """
     pendings = tl._unwrap_if_constexpr(pendings)
-    return tl.tensor(
-        _semantic.builder.create_warp_group_dot_wait([inp.handle],
-                                                     pendings)[0], inp.type)
+    # Use custom op that handles ReleaseLayoutOp unwrap/rewire
+    result = _semantic.builder.utlx_warp_group_dot_wait(
+        [inp.handle, _semantic.builder.get_int32(pendings)])
+    return tl.tensor(result, inp.type)
 
 
 @tl.builtin
@@ -395,11 +413,11 @@ def tcgen05_commit(
         pred_handle = _semantic.builder.get_int1(True)
     else:
         # cluster_cta_rank() % 2 == 0
-        cta_rank = _semantic.builder.create_cluster_cta_rank()
+        cta_rank = _semantic.builder.utlx_cluster_cta_rank([])
         mod_result = _semantic.builder.create_urem(
             cta_rank, _semantic.builder.get_int32(2))
         pred_handle = _semantic.builder.create_icmpEQ(
             mod_result, _semantic.builder.get_int32(0))
-    return tl.tensor(
-        _semantic.builder.create_tcgen05_commit(mBarrier.handle, pred_handle),
-        tl.void)
+    # Use custom op: utlx_tcgen05_commit
+    _semantic.builder.utlx_tcgen05_commit([mBarrier.handle, pred_handle])
+    return tl.tensor(mBarrier.handle, tl.void)
