@@ -48,7 +48,7 @@ Each subdirectory's `CMakeLists.txt` is responsible for building its respective 
 
 - C++ compiler with C++17 support
 - CMake (3.15 or later)
-- Triton built with TRITON_EXT_ENABLED=ON 
+- Triton built with TRITON_EXT_ENABLED=ON
 
 Note: Extensions are enabled by default in Triton releases 3.7 and beyond.
 
