@@ -1,5 +1,6 @@
 #include "Export.h"
 #include "triton/Tools/PluginUtils.h" // For plugin:: callbacks and structs.
+#include "triton/Version.h"
 #include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "triton-ext"
@@ -16,6 +17,7 @@ static std::unordered_map<std::string, std::pair<plugin::AddPassCallback,
     passMap;
 static std::unordered_map<std::string, plugin::RegisterDialectCallback>
     dialectMap;
+static std::unordered_map<std::string, plugin::AddOpCallback> opMap;
 
 Result exportPass(const std::string passName,
                   plugin::RegisterPassCallback registerFunc,
@@ -30,6 +32,12 @@ Result exportDialect(const std::string dialectName,
   LLVM_DEBUG(llvm::dbgs() << "internally exporting dialect: " << dialectName
                           << "\n");
   dialectMap[dialectName] = insertFunc;
+  return TP_SUCCESS;
+}
+
+Result exportOp(const std::string opName, plugin::AddOpCallback addFunc) {
+  LLVM_DEBUG(llvm::dbgs() << "internally exporting op: " << opName << "\n");
+  opMap[opName] = addFunc;
   return TP_SUCCESS;
 }
 } // namespace triton::ext::support
@@ -67,13 +75,24 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
         plugin::DialectInfo{dialectName.c_str(), VERSION, registerFunc};
   }
 
+  auto ops = new plugin::OpInfo[opMap.size()];
+  size_t numOps = 0;
+  for (const auto &pair : opMap) {
+    const std::string &opName = pair.first;
+    auto addFunc = pair.second;
+    ops[numOps++] = plugin::OpInfo{opName.c_str(), addFunc};
+  }
+
   auto info = new plugin::PluginInfo{TRITON_PLUGIN_API_VERSION,
                                      PLUGIN_NAME,
                                      VERSION,
                                      passes,
                                      numPasses,
                                      dialects,
-                                     numDialects};
+                                     numDialects,
+                                     ops,
+                                     numOps,
+                                     TRITON_VERSION};
   return info;
 }
 

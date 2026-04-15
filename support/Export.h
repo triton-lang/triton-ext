@@ -34,6 +34,8 @@ Result exportPass(const std::string passName,
 Result exportDialect(const std::string dialectName,
                      plugin::RegisterDialectCallback registerFunc);
 
+Result exportOp(const std::string opName, plugin::AddOpCallback addFunc);
+
 } // namespace triton::ext::support
 
 #endif // TRITON_EXT_PASS_INFRA_H
