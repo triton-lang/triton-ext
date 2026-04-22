@@ -17,6 +17,20 @@ repos:
       - id: detect-private-key
       - id: debug-statements
 
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 1.0.0
+    hooks:
+      - id: mdformat
+        args: [--wrap, "80"]
+        files: '.*\.(md|txt)$'
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.48.0
+    hooks:
+      - id: markdownlint
+        language_version: lts
+        args: [--config, .markdownlint-cli]
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.9.1
     hooks:

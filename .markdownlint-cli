@@ -1,0 +1,14 @@
+default: true
+fix: true
+# Line length.
+MD013:
+  line_length: 80
+  tables: false
+  code_blocks: false
+# Multiple headings with the same content.
+MD024: false
+# Inline HTML.
+MD033:
+  allowed_elements: [a, p, img]
+# Images should have alternate text (alt text).
+MD045: false
