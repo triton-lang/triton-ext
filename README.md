@@ -24,7 +24,7 @@ codebase. Extensions are built as shared libraries that can be dynamically
 loaded by Triton at runtime.
 
 Extensions are built on top of the Triton plugin infrastructure documented
-[upstream](https://github.com/triton-lang/triton/tree/main/examples/plugins).
+[upstream][triton-plugins].
 
 Slides from the January 2026 Triton Community Meetup:
 [Triton Community Meetup: Triton Extensions Jan 2026](https://docs.google.com/presentation/d/1dnm8uhvabdwqsQAsaPM7IRpEh2tktQ91E1d40r91n1M/edit?usp=sharing)
@@ -86,12 +86,12 @@ To build the extensions:
 
 1. **Build Triton**: Build Triton and install it to a known location; see the CI
    [action][build-triton] for reference. Alternately, download pre-built Triton
-   binaries from GitHub: install [`gh`] and run `ci/download-artifact.py
-   triton` [^list-artifacts].
+   binaries from GitHub: install [`gh`] and run `ci/download-artifact.py triton`
+   [^list-artifacts].
 
-[^list-artifacts]: GitHub artifacts are only available for a limited set of
-    commits, OSes, and HW architectures. To list available artifacts, run
-    `ci/fetch-artifacts.py`.
+\[^list-artifacts\]: GitHub artifacts are only available for a limited set of
+commits, OSes, and HW architectures. To list available artifacts, run
+`ci/fetch-artifacts.py`.
 
 1. **Configure and build extensions**:
 
@@ -108,20 +108,17 @@ To build the extensions:
 
 ## Use
 
-Pass extensions can be loaded by Triton at runtime using the
-`TRITON_PASS_PLUGIN_PATH` environment variable (see
-[Triton plugins](https://github.com/triton-lang/triton/tree/main/examples/plugins)):
+Extensions are loaded by Triton at runtime using the `TRITON_PLUGIN_PATHS`
+environment variable (see [Triton plugins][triton-plugins]):
 
 ```bash
-export TRITON_PASS_PLUGIN_PATH=/path/to/libmy_pass.so
+export TRITON_PLUGIN_PATHS=/path/to/libmy_pass.so
 python your_script.py
 ```
 
-### Extension Plugins (µTLX)
-
-Extension plugins are loaded via `TRITON_PLUGIN_PATHS`. The µTLX plugin
-automatically registers itself as `triton.language.extra.tlx` when imported, so
-no filesystem symlinks are needed:
+Some extensions are accessible from Python: e.g., the µTLX plugin automatically
+registers itself as `triton.language.extra.tlx` when imported, so no filesystem
+symlinks are needed:
 
 ```bash
 export TRITON_PLUGIN_PATHS=/path/to/triton-ext/build/lib/libutlx.so
@@ -134,7 +131,7 @@ To load multiple plugins, separate paths with `:`:
 export TRITON_PLUGIN_PATHS=build/lib/libutlx.so:build/lib/libother_plugin.so
 ```
 
-
 [build-llvm]: ./.github/actions/build-llvm/action.yml
 [build-triton]: ./.github/actions/build-triton/action.yml
+[triton-plugins]: https://github.com/triton-lang/triton/tree/main/examples/plugins
 [`gh`]: https://cli.github.com/
