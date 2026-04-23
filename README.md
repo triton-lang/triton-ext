@@ -80,11 +80,18 @@ packaged with `make install`.
 To build the extensions:
 
 1. **Build LLVM**: Build LLVM as shared libraries and install it to a known
-   location; see the CI [action](./.github/actions/build-llvm/action.yml) for
-   reference.
+   location; see the CI [action][build-llvm] for reference. Alternately,
+   download pre-built LLVM binaries from GitHub: install [`gh`] and run
+   `ci/download-artifact.py llvm` [^list-artifacts].
 
 1. **Build Triton**: Build Triton and install it to a known location; see the CI
-   [action](./.github/actions/build-triton/action.yml) for reference.
+   [action][build-triton] for reference. Alternately, download pre-built Triton
+   binaries from GitHub: install [`gh`] and run `ci/download-artifact.py
+   triton` [^list-artifacts].
+
+[^list-artifacts]: GitHub artifacts are only available for a limited set of
+    commits, OSes, and HW architectures. To list available artifacts, run
+    `ci/fetch-artifacts.py`.
 
 1. **Configure and build extensions**:
 
@@ -126,3 +133,8 @@ To load multiple plugins, separate paths with `:`:
 ```bash
 export TRITON_PLUGIN_PATHS=build/lib/libutlx.so:build/lib/libother_plugin.so
 ```
+
+
+[build-llvm]: ./.github/actions/build-llvm/action.yml
+[build-triton]: ./.github/actions/build-triton/action.yml
+[`gh`]: https://cli.github.com/
