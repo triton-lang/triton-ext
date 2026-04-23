@@ -53,9 +53,9 @@ ______________________________________________________________________
 
 We define one placeholder layout types, organized by memory space and use case:
 
-| Placeholder Type | Memory Space | Resolves To |
-|------------------|--------------|-------------| | `DummyRegisterLayoutAttr` |
-Registers | `BlockedEncodingAttr` |
+| Placeholder Type          | Memory Space | Resolves To           |
+| ------------------------- | ------------ | --------------------- |
+| `DummyRegisterLayoutAttr` | Registers    | `BlockedEncodingAttr` |
 
 ### IR Examples
 
@@ -108,10 +108,9 @@ passes.ttir.add_rewrite_tensor_pointer(pm)
 
 Each placeholder type has a dedicated resolution function:
 
-| Placeholder | Resolution Function | Key Parameters Used |
-|-------------|---------------------|---------------------| |
-`DummyRegisterLayoutAttr` | `resolveRegisterLayout()` | shape, numWarps,
-threadsPerWarp, numCTAs |
+| Placeholder               | Resolution Function       | Key Parameters Used                      |
+| ------------------------- | ------------------------- | ---------------------------------------- |
+| `DummyRegisterLayoutAttr` | `resolveRegisterLayout()` | shape, numWarps, threadsPerWarp, numCTAs |
 
 The resolution functions use `ttg::lookupNumWarps()` and similar utilities to
 obtain the correct context-dependent values after inlining.
@@ -136,11 +135,12 @@ ______________________________________________________________________
 
 ## File Summary
 
-| File | Purpose | |------|---------| | `language/tlx/types.py` | Python
-placeholder layout classes | | `language/tlx/__init__.py` | Exports placeholder
-layout classes | | `dialect/include/IR/TLXAttrDefs.td` | TableGen definitions
-for placeholder attributes | | `dialect/triton_tlx.cc` | C++ builder methods for
-creating placeholder attributes | |
-`dialect/lib/Transforms/ResolvePlaceholderLayouts.cpp` | Resolution pass
-implementation | | `dialect/include/Transforms/Passes.td` | Pass declaration | |
-`nvidia/backend/compiler.py` | Pipeline integration |
+| File                                                   | Purpose                                                 |
+| ------------------------------------------------------ | ------------------------------------------------------- |
+| `language/tlx/types.py`                                | Python placeholder layout classes                       |
+| `language/tlx/__init__.py`                             | Exports placeholder layout classes                      |
+| `dialect/include/IR/TLXAttrDefs.td`                    | TableGen definitions for placeholder attributes         |
+| `dialect/triton_tlx.cc`                                | C++ builder methods for creating placeholder attributes |
+| `dialect/lib/Transforms/ResolvePlaceholderLayouts.cpp` | Resolution pass implementation                          |
+| `dialect/include/Transforms/Passes.td`                 | Pass declaration                                        |
+| `nvidia/backend/compiler.py`                           | Pipeline integration                                    |

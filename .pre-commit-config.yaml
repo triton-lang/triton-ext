@@ -23,6 +23,7 @@ repos:
       - id: mdformat
         args: [--wrap, "80"]
         files: '.*\.(md|txt)$'
+        additional_dependencies: [mdformat-gfm]
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.48.0

@@ -13,13 +13,11 @@ Triton to the metal.
 
 `tlx.fence(scope)` issues a memory fence. The `scope` argument is required:
 
-| Scope | PTX | Description | |-------|-----|-------------| | `"gpu"` |
-`fence.acq_rel.gpu` | Device-scope fence. Orders prior global/shared memory
-writes to be visible to all GPU threads. | | `"sys"` | `fence.acq_rel.sys` |
-System-scope fence. Like `"gpu"` but also visible to the host CPU. | |
-`"async_shared"` | `fence.proxy.async.shared::cta` | Proxy fence for async
-shared memory. Required between `local_store` and a subsequent TMA store
-(`async_descriptor_store`) to the same shared memory. |
+| Scope            | PTX                             | Description                                                                                                                                          |
+| ---------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"gpu"`          | `fence.acq_rel.gpu`             | Device-scope fence. Orders prior global/shared memory writes to be visible to all GPU threads.                                                       |
+| `"sys"`          | `fence.acq_rel.sys`             | System-scope fence. Like `"gpu"` but also visible to the host CPU.                                                                                   |
+| `"async_shared"` | `fence.proxy.async.shared::cta` | Proxy fence for async shared memory. Required between `local_store` and a subsequent TMA store (`async_descriptor_store`) to the same shared memory. |
 
 Example:
 

@@ -44,8 +44,8 @@ start at the same time, across both scenarios.
 
 ### Barrier Operations
 
-Barrier operations can be classified into three categories a) *Alloc/Init* b)
-*Arrive* c) *Wait*
+Barrier operations can be classified into three categories: (a) *Alloc/Init*,
+(b) *Arrive*, (c) *Wait*.
 
 #### Alloc/Init
 
@@ -124,12 +124,10 @@ TLX provides two categories of barriers a) Named Barriers and b) Memory barriers
   named barrier with an arrival count of *num_threads*. num_threads has to be a
   multiple of warp size i.e. multiples of 32.
 
-| TLX | MLIR | PTX | |----|----|----| | tlx.named_barrier_wait |
-ttng::wait_barrier_named |
-[bar.sync](https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar)
-| | tlx.named_barrier_arrive | ttng::arrive_barrier_named |
-[bar.arrive](https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar)
-|
+| TLX                      | MLIR                       | PTX               |
+| ------------------------ | -------------------------- | ----------------- |
+| tlx.named_barrier_wait   | ttng::wait_barrier_named   | [bar.sync][bar]   |
+| tlx.named_barrier_arrive | ttng::arrive_barrier_named | [bar.arrive][bar] |
 
 #### Example (PingPong Schedule)
 
@@ -232,19 +230,17 @@ while !done:
 
 #### Barrier APIs
 
-- \***tlx.alloc_barrier(num_barriers, arrive_count=1)** * Allocates a buffer in
+- ***tlx.alloc_barrier(num_barriers, arrive_count=1)*** Allocates a buffer in
   shared memory for *num_barrier* barrier objects and initializes them with
   *arrive_count*. *arrive_count* should be initialized based on the context in
   which this barrier’s barrier is executed.
 
-| Context of arrive | arrive_count | Notes | |:---|:---|:---| | Implicit arrive
-of an *tlx.barrier_expect_bytes* | 1 | Only one thread modifies the barrier
-arrival count after completion of a transaction | | *tlx.barrier_arrive* on NV
-within a *tlx.async_task* region | Number of warp groups | Only one thread per
-MMA group modifies the barrier arrival count on arrive | | *tlx.barrier_arrive*
-on NV outside a *tlx.async_task* region | 1 | Only tid == 0 modifies the barrier
-arrival count on arrive | | *tlx.barrier_arrive* on AMD | num_warps that execute
-*tlx.barrier_arrive* | One thread per wave(warp) increments the barrier count |
+| Context of arrive                                            | arrive_count                                | Notes                                                                                |
+| :----------------------------------------------------------- | :------------------------------------------ | :----------------------------------------------------------------------------------- |
+| Implicit arrive of an *tlx.barrier_expect_bytes*             | 1                                           | Only one thread modifies the barrier arrival count after completion of a transaction |
+| *tlx.barrier_arrive* on NV within a *tlx.async_task* region  | Number of warp groups                       | Only one thread per MMA group modifies the barrier arrival count on arrive           |
+| *tlx.barrier_arrive* on NV outside a *tlx.async_task* region | 1                                           | Only tid == 0 modifies the barrier arrival count on arrive                           |
+| *tlx.barrier_arrive* on AMD                                  | num_warps that execute *tlx.barrier_arrive* | One thread per wave(warp) increments the barrier count                               |
 
 - ***tlx.barrier_expect_bytes(bar, bytes)*** Specifies that *bytes* amount of
   data is expected to be copied before a barrier\_*wait* on *bar* can be
@@ -261,19 +257,16 @@ arrival count on arrive | | *tlx.barrier_arrive* on AMD | num_warps that execute
   *arrive_count* of *tlx.alloc_barrier* can be set to achieve the desired phase
   change behavior.
 
-  | TLX
-  [barriers](https://github.com/facebookexperimental/triton/blob/tlx/third_party/tlx/language/tlx/barrier.py)
-  | MLIR | PTX | |----|----|----| | tlx.alloc_barriers | ttng::InitBarrierOp |
-  [mbarrier.init](https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-init)
-  | | tlx.barrier_expect_bytes | ttng::BarrierExpectOp |
-  [mbarrier.expect_tx](http://mbarrier.expect_tx) | | tlx.barrier_wait |
-  ttng::WaitBarrierOp | [mbarrier.try_wait](http://mbarrier.try_wait) | |
-  tlx.barrier_arrive | ttng::ArriveBarrierOp |
-  [mbarrier.arrive](http://mbarrier.arrive) |
+  | TLX [barriers]           | MLIR                  | PTX                  |
+  | ------------------------ | --------------------- | -------------------- |
+  | tlx.alloc_barriers       | ttng::InitBarrierOp   | [mbarrier.init]      |
+  | tlx.barrier_expect_bytes | ttng::BarrierExpectOp | [mbarrier.expect_tx] |
+  | tlx.barrier_wait         | ttng::WaitBarrierOp   | [mbarrier.try_wait]  |
+  | tlx.barrier_arrive       | ttng::ArriveBarrierOp | [mbarrier.arrive]    |
 
 ### Examples
 
-#### WS-GEMM [https://github.com/facebookexperimental/triton/blob/tlx/third_party/tlx/tutorials/gemm-WS-hopper.py](https://github.com/facebookexperimental/triton/blob/tlx/third_party/tlx/tutorials/gemm-WS-hopper.py)
+#### WS-GEMM [gemm-WS-hopper.py]
 
 <p align="center">
   <img src="/third_party/tlx/media/image3.PNG"
@@ -317,3 +310,11 @@ to proceed.
 <p align="center">
 <img src="/third_party/tlx/media/image1.PNG" style="width:6.5in;height:2.5in" />
 </p>
+
+[bar]: https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar
+[barriers]: https://github.com/facebookexperimental/triton/blob/tlx/third_party/tlx/language/tlx/barrier.py
+[gemm-ws-hopper.py]: https://github.com/facebookexperimental/triton/blob/tlx/third_party/tlx/tutorials/gemm-WS-hopper.py
+[mbarrier.arrive]: https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive
+[mbarrier.expect_tx]: https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-expect-tx
+[mbarrier.init]: https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-init
+[mbarrier.try_wait]: https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-test-wait-try-wait
