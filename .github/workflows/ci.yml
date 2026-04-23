@@ -23,8 +23,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Upgrade pre-commit package
-        run: python3 -m pip install --upgrade pre-commit
+      - name: Install dependencies
+        run: python3 -m pip install -r requirements.txt
       - name: Check pre-commit
         run: python3 -m pre_commit run --all-files --verbose
       - name: Print diff of changes if pre-commit failed
@@ -73,7 +73,7 @@ jobs:
           echo "PATH=$PATH" >> $GITHUB_ENV
 
           python3 -m pip install --upgrade pip
-          python3 -m pip install lit
+          python3 -m pip install -r requirements.txt
           echo "pip version: $(pip --version)"
           echo "python version: $(python --version)"
 
