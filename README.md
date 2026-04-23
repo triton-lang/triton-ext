@@ -93,18 +93,18 @@ To build the extensions:
 commits, OSes, and HW architectures. To list available artifacts, run
 `ci/fetch-artifacts.py`.
 
-1. **Configure and build extensions**:
+1. **Build extensions**:
 
    ```bash
-   mkdir build
    export LLVM_INSTALL_DIR=/path/to/llvm/install
    export TRITON_INSTALL_DIR=/path/to/triton/install
-   cmake -S . -B build -G Ninja
-   cmake --build build
+   make build
    ```
 
-   See the CI [workflow](./.github/workflows/ci.yml) for reference. Extensions
-   are built as shared libraries under `build/lib`.
+   Note that if `LLVM_INSTALL_DIR` and `TRITON_INSTALL_DIR` are not set, the
+   `Makefile` will helpfully [search] for them in the project directory. See the
+   CI [workflow](./.github/workflows/ci.yml) for reference. Extensions are built
+   as shared libraries under `build/lib`.
 
 ## Use
 
@@ -133,5 +133,6 @@ export TRITON_PLUGIN_PATHS=build/lib/libutlx.so:build/lib/libother_plugin.so
 
 [build-llvm]: ./.github/actions/build-llvm/action.yml
 [build-triton]: ./.github/actions/build-triton/action.yml
+[search]: ./ci/pick-local-artifact.py
 [triton-plugins]: https://github.com/triton-lang/triton/tree/main/examples/plugins
 [`gh`]: https://cli.github.com/
