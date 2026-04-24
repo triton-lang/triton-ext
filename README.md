@@ -65,8 +65,12 @@ extensions.
 ## Prerequisites
 
 - C++ compiler with C++17 support
-- CMake (3.15 or later)
-- Triton built with TRITON_EXT_ENABLED=ON
+- CMake
+- GitHub CLI ([`gh`]), for downloading pre-built dependencies (optional)
+- Ninja
+- Python 3, for tests and build scripts; install dependencies with
+  `pip install -r requirements.txt`
+- Triton, built with `TRITON_EXT_ENABLED=ON`
 
 Note: Extensions are enabled by default in Triton releases 3.7 and beyond.
 
@@ -81,13 +85,12 @@ To build the extensions:
 
 1. **Build LLVM**: Build LLVM as shared libraries and install it to a known
    location; see the CI [action][build-llvm] for reference. Alternately,
-   download pre-built LLVM binaries from GitHub: install [`gh`] and run
+   download pre-built LLVM binaries from GitHub: run
    `ci/download-artifact.py llvm` [^list-artifacts].
 
 1. **Build Triton**: Build Triton and install it to a known location; see the CI
    [action][build-triton] for reference. Alternately, download pre-built Triton
-   binaries from GitHub: install [`gh`] and run `ci/download-artifact.py triton`
-   [^list-artifacts].
+   binaries from GitHub: run `ci/download-artifact.py triton` [^list-artifacts].
 
 \[^list-artifacts\]: GitHub artifacts are only available for a limited set of
 commits, OSes, and HW architectures. To list available artifacts, run
