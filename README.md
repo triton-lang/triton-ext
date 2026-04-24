@@ -109,6 +109,14 @@ commits, OSes, and HW architectures. To list available artifacts, run
    CI [workflow](./.github/workflows/ci.yml) for reference. Extensions are built
    as shared libraries under `build/lib`.
 
+## Test
+
+Run the test suite to verify the extensions are working correctly:
+
+```bash
+make test
+```
+
 ## Use
 
 Extensions are loaded by Triton at runtime using the `TRITON_PLUGIN_PATHS`
