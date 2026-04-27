@@ -58,7 +58,7 @@ runs:
 
     - name: Checkout triton
       if: steps.check-artifact.outputs.exists == 'false'
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6.0.2
       with:
         repository: triton-lang/triton
         ref: ${{ inputs.triton_hash }}

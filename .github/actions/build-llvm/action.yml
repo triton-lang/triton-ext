@@ -54,7 +54,7 @@ runs:
 
     - name: Checkout LLVM
       if: steps.check-artifact.outputs.exists == 'false'
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6.0.2
       with:
         repository: llvm/llvm-project
         path: llvm-project
