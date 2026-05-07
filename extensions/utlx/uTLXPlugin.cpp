@@ -13,6 +13,7 @@
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "triton/Tools/PluginUtils.h"
+#include "triton/Version.h"
 
 // TLX dialect headers
 #include "tlx/dialect/include/IR/Dialect.h"
@@ -803,6 +804,11 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       1, // numDialects
       ops,
       48, // numOps
+      // Triton commit `8497c845a` (#9937) added `isTritonAndPluginsVersionsMatch`
+      // which dereferences `info->tritonVersion` unconditionally — leaving this
+      // field nullptr crashes libtriton's import with `basic_string::_M_construct
+      // null not valid` before any Python-side workaround can run.
+      TRITON_VERSION,
   };
   return &info;
 }
