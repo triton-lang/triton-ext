@@ -20,8 +20,18 @@ build: configure
 	cmake --build ${BUILD_DIR}
 
 .PHONY: test
-test:
+test: check-lit-tests check-pytest-tests
+
+.PHONY: check-lit-tests
+check-lit-tests:
 	ninja -C ${BUILD_DIR} check-lit-tests
+
+# Plugin-import smoke tests: load each lib<name>.so via TRITON_PLUGIN_PATHS and
+# `import triton`. Catches regressions in the plugin's static-init path that
+# lit/FileCheck tests can't see (e.g. PluginInfo fields read by libtriton's loader).
+.PHONY: check-pytest-tests
+check-pytest-tests:
+	TRITON_EXT_BUILD_DIR=${BUILD_DIR} python3 -m pytest testing/
 
 .PHONY: clean
 clean:
