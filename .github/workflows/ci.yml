@@ -112,6 +112,18 @@ jobs:
                TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
                EXTRA_CMAKE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
 
+      - name: Smoke test plugin import
+        # `make test` only runs lit/FileCheck tests, which exercise MLIR passes
+        # but never load the plugin into Python. Regressions in the plugin's
+        # static init (e.g. PluginInfo fields read by libtriton's loader) slip
+        # through unless we actually `import triton` with TRITON_PLUGIN_PATHS
+        # pointing at the freshly-built libutlx.so.
+        env:
+          TRITON_PLUGIN_PATHS: ${{ github.workspace }}/build/lib/libutlx.so
+        run: |
+          test -f "$TRITON_PLUGIN_PATHS" || { echo "libutlx.so missing at $TRITON_PLUGIN_PATHS"; exit 1; }
+          python3 -c "import triton; print('triton', triton.__version__, 'loaded with utlx plugin from', '$TRITON_PLUGIN_PATHS')"
+
       - name: Run tests
         run: >
           make test LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
