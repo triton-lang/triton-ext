@@ -113,8 +113,9 @@ jobs:
                EXTRA_CMAKE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
 
       - name: Run tests
-        run: >
-          make test LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
+        run: |
+          source ~/.venv/bin/activate
+          make test LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}" \
                     TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
 
       - name: List files
