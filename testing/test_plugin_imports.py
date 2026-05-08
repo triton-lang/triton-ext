@@ -62,7 +62,8 @@ def test_plugins_discovered() -> None:
 def test_plugin_loads(name: str) -> None:
     plugin_path = PLUGIN_LIB_DIR / f"lib{name}.so"
     if not plugin_path.is_file():
-        pytest.skip(f"Plugin not built at {plugin_path} (extension may be disabled)")
+        pytest.skip(
+            f"Plugin not built at {plugin_path} (extension may be disabled)")
 
     env = {**os.environ, "TRITON_PLUGIN_PATHS": str(plugin_path)}
     result = subprocess.run(
@@ -75,5 +76,4 @@ def test_plugin_loads(name: str) -> None:
     assert result.returncode == 0, (
         f"Loading plugin {name} from {plugin_path} failed:\n"
         f"--- stdout ---\n{result.stdout}\n"
-        f"--- stderr ---\n{result.stderr}"
-    )
+        f"--- stderr ---\n{result.stderr}")
