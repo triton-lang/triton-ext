@@ -35,7 +35,7 @@ runs:
 
         SHORT_TRITON_COMMIT_HASH="${TRITON_COMMIT_HASH:0:8}"
         SYSINFO=$(python ci/probe-sysinfo.py)
-        INSTALL_DIR="triton-${SHORT_TRITON_COMMIT_HASH}-${SYSINFO}"
+        INSTALL_DIR="triton-${SHORT_TRITON_COMMIT_HASH}-${SYSINFO}-v2"
         echo "Triton installation directory: ${INSTALL_DIR}"
         echo "triton_install_dir=${INSTALL_DIR}" >> ${GITHUB_ENV}
         echo "triton_install_dir=${INSTALL_DIR}" >> ${GITHUB_OUTPUT}
@@ -93,8 +93,11 @@ runs:
       # Stripping debug symbols reduces the artifact size by an order of magnitude.
       run: |
         make install
-        find build/install -type f -executable | xargs strip --strip-debug
-        tar czf ../"${{ env.triton_install_dir }}.tar.gz" --transform="s|^build/install|${{ env.triton_install_dir }}|" build/install
+        find build/install python/triton -type f \( -executable -o -name "*.so" \) -print0 | xargs -0 -r strip --strip-debug || true
+        tar czf ../"${{ env.triton_install_dir }}.tar.gz" \
+          --transform="s|^build/install|${{ env.triton_install_dir }}|" \
+          --transform="s|^python|${{ env.triton_install_dir }}/python|" \
+          build/install python/triton
 
     - name: Upload Triton artifact
       if: steps.check-artifact.outputs.exists == 'false'

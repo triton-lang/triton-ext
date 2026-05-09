@@ -113,10 +113,17 @@ jobs:
                EXTRA_CMAKE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
 
       - name: Run tests
+        run: >
+          make test LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
+                    TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
+
+      - name: Run plugin tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/${{ steps.build-triton.outputs.triton_install_dir }}/python
+          LD_LIBRARY_PATH: ${{ github.workspace }}/${{ steps.build-llvm.outputs.llvm_install_dir }}/lib:${{ github.workspace }}/${{ steps.build-triton.outputs.triton_install_dir }}/lib
         run: |
           source ~/.venv/bin/activate
-          make test LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}" \
-                    TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
+          python -m pytest testing/test_plugins.py
 
       - name: List files
         run: du -d 3 -h .
