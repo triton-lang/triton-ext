@@ -29,6 +29,9 @@
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "triton/Tools/LayoutUtils.h"
 
+// TLX dialect (for ReleaseLayoutOp conversion)
+#include "tlx/dialect/include/IR/Dialect.h"
+
 // ---------------------------------------------------------------------------
 // Includes from TritonGPUConversion.cpp
 // ---------------------------------------------------------------------------
@@ -49,6 +52,7 @@ namespace {
 using namespace mlir;
 using namespace mlir::triton;
 using namespace mlir::triton::gpu;
+namespace tlx = mlir::triton::tlx;
 
 // pass named attrs (e.g., tt.contiguity) from Triton to Triton
 static void addNamedAttrs(Operation *op, DictionaryAttr dictAttrs) {
@@ -70,6 +74,85 @@ template <class Op> struct GenericOpPattern : public OpConversionPattern<Op> {
     rewriter.replaceOpWithNewOp<Op>(op, retTypes, adaptor.getOperands(),
                                     op->getAttrs());
 
+    return success();
+  }
+};
+
+// Custom conversion patterns for RequireLayoutOp/ReleaseLayoutOp.
+// These ops must be marked as always illegal (to avoid source
+// materializations), but GenericOpPattern would create new RequireLayoutOps
+// (also illegal → infinite loop). Instead, replace them with
+// ttg.convert_layout which is legal in the TritonGPU dialect.
+struct RequireLayoutToConvertPattern
+    : public OpConversionPattern<tlx::RequireLayoutOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(tlx::RequireLayoutOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (!isa<RankedTensorType>(op.getSrc().getType()))
+      return failure();
+    SmallVector<Type> retTypes;
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
+                                                      retTypes)))
+      return failure();
+    rewriter.replaceOpWithNewOp<triton::gpu::ConvertLayoutOp>(
+        op, retTypes[0], adaptor.getSrc());
+    return success();
+  }
+};
+
+struct ReleaseLayoutToConvertPattern
+    : public OpConversionPattern<tlx::ReleaseLayoutOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(tlx::ReleaseLayoutOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (!isa<RankedTensorType>(op.getSrc().getType()))
+      return failure();
+    SmallVector<Type> retTypes;
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
+                                                      retTypes)))
+      return failure();
+    rewriter.replaceOpWithNewOp<triton::gpu::ConvertLayoutOp>(
+        op, retTypes[0], adaptor.getSrc());
+    return success();
+  }
+};
+
+// Custom conversion pattern for WarpGroupDotOp.
+// WarpGroupDotOp has InferTypeOpInterface (TypesMatchWith: result type matches
+// accumulator type), so we cannot pass explicit result types. Instead we let
+// type inference derive result types from the converted operands.
+struct WarpGroupDotPattern
+    : public OpConversionPattern<triton::nvidia_gpu::WarpGroupDotOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::nvidia_gpu::WarpGroupDotOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<triton::nvidia_gpu::WarpGroupDotOp>(
+        op, adaptor.getA(), adaptor.getB(), adaptor.getC(),
+        adaptor.getUseC(),
+        op.getInputPrecision(), op.getMaxNumImpreciseAcc(), op.getIsAsync());
+    return success();
+  }
+};
+
+// Custom conversion pattern for WarpGroupDotWaitOp.
+// WarpGroupDotWaitOp has InferTypeOpInterface (AllTypesMatch<["inputs",
+// "outputs"]>), so result types are inferred from input types. Passing
+// converted (encoded) operands automatically produces encoded result types.
+struct WarpGroupDotWaitPattern
+    : public OpConversionPattern<triton::nvidia_gpu::WarpGroupDotWaitOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::nvidia_gpu::WarpGroupDotWaitOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<triton::nvidia_gpu::WarpGroupDotWaitOp>(
+        op, adaptor.getInputs(), op.getPendings());
     return success();
   }
 };
@@ -852,34 +935,60 @@ public:
     // --- Conversion target (from TritonGPUConversion.cpp) ---
     TritonGPUConversionTarget convTarget(*context, typeConverter);
 
+    // Lambda to check if an op has any unencoded ranked tensor operands/results.
+    // Ops with unencoded tensors are not yet legal and need conversion.
+    auto allTensorsEncoded = [](Operation *op) -> bool {
+      for (auto operandType : op->getOperandTypes()) {
+        if (auto rtt = dyn_cast<RankedTensorType>(operandType)) {
+          if (!rtt.getEncoding())
+            return false;
+        }
+      }
+      for (auto resultType : op->getResultTypes()) {
+        if (auto rtt = dyn_cast<RankedTensorType>(resultType)) {
+          if (!rtt.getEncoding())
+            return false;
+        }
+      }
+      return true;
+    };
+
     // TLX addition: override blanket TritonGPUDialect legality for ops that
     // may appear with unencoded tensor types from plugin custom ops.
     convTarget.addDynamicallyLegalOp<triton::gpu::AsyncCopyGlobalToLocalOp,
                                      triton::gpu::LocalLoadOp,
                                      triton::gpu::LocalStoreOp>(
-        [](Operation *op) -> bool {
-          for (auto operandType : op->getOperandTypes()) {
-            if (auto rtt = dyn_cast<RankedTensorType>(operandType)) {
-              if (!rtt.getEncoding())
-                return false;
-            }
-          }
-          for (auto resultType : op->getResultTypes()) {
-            if (auto rtt = dyn_cast<RankedTensorType>(resultType)) {
-              if (!rtt.getEncoding())
-                return false;
-            }
-          }
-          return true;
-        });
+        allTensorsEncoded);
+
+    // Mark the TritonNvidiaGPU dialect as legal so that ttng ops
+    // pass through unchanged, then override with dynamic legality for
+    // ops that may appear with unencoded tensor types from plugin custom ops.
+    convTarget.addLegalDialect<triton::nvidia_gpu::TritonNvidiaGPUDialect>();
+
+    // TTNG ops created by the plugin during builder phase may have unencoded
+    // tensor types. Add dynamic legality + conversion patterns for them.
+    convTarget.addDynamicallyLegalOp<
+        triton::nvidia_gpu::WarpGroupDotOp,
+        triton::nvidia_gpu::WarpGroupDotWaitOp>(allTensorsEncoded);
+
+    // TLX RequireLayoutOp/ReleaseLayoutOp with tensor types are converted to
+    // ttg.convert_layout (which is legal). MemDesc-typed ones pass through.
+    convTarget.addDynamicallyLegalOp<tlx::RequireLayoutOp,
+                                     tlx::ReleaseLayoutOp>([](Operation *op) {
+      // Legal only if no RankedTensorType operands/results (i.e., MemDesc only)
+      for (auto type : op->getOperandTypes())
+        if (isa<RankedTensorType>(type))
+          return false;
+      for (auto type : op->getResultTypes())
+        if (isa<RankedTensorType>(type))
+          return false;
+      return true;
+    });
 
     // TLX addition: on AMD targets, rewrite ttng.init_barrier →
     // amdg.init_barrier before the conversion, since the AMD backend
     // marks the ttng dialect as illegal and has no lowering for it.
-    // Mark the TritonNvidiaGPU dialect as legal so that ttng ops
-    // (e.g. ttng.init_barrier on NVIDIA) pass through unchanged.
     // On AMD, we also mark amdg legal for the rewritten ops.
-    convTarget.addLegalDialect<triton::nvidia_gpu::TritonNvidiaGPUDialect>();
 #ifdef UTLX_HAS_AMDGPU
     bool isAMD = target.find("hip:") == 0;
     if (isAMD) {
@@ -905,6 +1014,14 @@ public:
     populateCFPatterns(typeConverter, patterns);
     patterns.insert<GenericOpPattern<ub::PoisonOp>>(typeConverter, context);
 
+    // Custom patterns for TTNG ops with InferTypeOpInterface
+    // (GenericOpPattern doesn't work because these ops infer result types
+    // from operands rather than accepting explicit result types).
+    patterns.add<RequireLayoutToConvertPattern,
+                 ReleaseLayoutToConvertPattern,
+                 WarpGroupDotPattern,
+                 WarpGroupDotWaitPattern>(typeConverter, context);
+
     // Set module attributes (same as upstream ConvertTritonToTritonGPU).
     Builder b(&getContext());
     mod->setAttr(AttrNumWarpsName, b.getI32IntegerAttr(numWarps));
@@ -914,6 +1031,33 @@ public:
 
     if (failed(applyPartialConversion(mod, convTarget, std::move(patterns))))
       return signalPassFailure();
+
+    // Lower tensor-typed RequireLayoutOp/ReleaseLayoutOp to
+    // ttg.convert_layout. These ops change tensor encodings (e.g.,
+    // #blocked -> #nvidia_mma) and must be lowered before LLVM translation.
+    // The TLX PropagateLayout pass would normally handle this, but it may
+    // not be in the pipeline.
+    OpBuilder builder(context);
+    mod.walk([&](tlx::RequireLayoutOp op) {
+      if (!isa<RankedTensorType>(op.getSrc().getType()))
+        return WalkResult::advance();
+      builder.setInsertionPoint(op);
+      auto cvt = triton::gpu::ConvertLayoutOp::create(
+          builder, op.getLoc(), op.getType(), op.getSrc());
+      op.replaceAllUsesWith(cvt.getResult());
+      op.erase();
+      return WalkResult::advance();
+    });
+    mod.walk([&](tlx::ReleaseLayoutOp op) {
+      if (!isa<RankedTensorType>(op.getSrc().getType()))
+        return WalkResult::advance();
+      builder.setInsertionPoint(op);
+      auto cvt = triton::gpu::ConvertLayoutOp::create(
+          builder, op.getLoc(), op.getType(), op.getSrc());
+      op.replaceAllUsesWith(cvt.getResult());
+      op.erase();
+      return WalkResult::advance();
+    });
   }
 
 private:
