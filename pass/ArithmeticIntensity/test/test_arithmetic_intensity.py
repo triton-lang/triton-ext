@@ -77,7 +77,8 @@ def run_pass():
 
     def _run(mlir: str) -> str:
         # parse_mlir_module only accepts a file path, so spill to a tmp file.
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".mlir",
+        with tempfile.NamedTemporaryFile(mode="w",
+                                         suffix=".mlir",
                                          delete=False) as f:
             f.write(textwrap.dedent(mlir))
             path = f.name
@@ -97,7 +98,8 @@ def run_pass():
 _ATTR_KV = re.compile(r'([\w.]+)\s*=\s*"((?:[^"\\]|\\.)*)"')
 
 
-def _parse_arg_attrs(ir_text: str, func_name: str) -> dict[int, dict[str, str]]:
+def _parse_arg_attrs(ir_text: str,
+                     func_name: str) -> dict[int, dict[str, str]]:
     """Return ``{arg_index: {attr_name: attr_value}}`` for ``func_name``.
 
     Parses the textual MLIR with bracket balancing rather than a single
@@ -216,7 +218,8 @@ def test_param_driven_loop_emits_symbolic_bandwidth(run_pass) -> None:
     for idx in (0, 1):
         bw = attrs[idx].get("tt.bandwidth", "")
         assert "args[2]" in bw, (
-            f"expected args[2] as trip count in arg{idx} bandwidth; got {bw!r}")
+            f"expected args[2] as trip count in arg{idx} bandwidth; got {bw!r}"
+        )
         assert "1024" in bw, (
             f"expected per-iter bytes 1024 in arg{idx} bandwidth; got {bw!r}")
 
@@ -405,7 +408,8 @@ def test_matmul_scalar_ptr_params(run_pass) -> None:
         assert "8192" in bw, (
             f"expected per-iter bytes 8192 in {name} bandwidth; got {bw!r}")
     assert c_bw == "8192", (
-        f"expected exactly one 64x64xf16 store on C (8192 bytes); got {c_bw!r}")
+        f"expected exactly one 64x64xf16 store on C (8192 bytes); got {c_bw!r}"
+    )
     # tt.dot M*N*K*2 with M=N=K=64 -> 524288 flops/iter, times K/64, plus the
     # epilogue 64x64 truncf (4096) outside the loop.
     c_compute = attrs[2].get("tt.compute", "")
@@ -463,7 +467,8 @@ def test_matmul_tensordesc_params(run_pass) -> None:
         assert "8192" in bw, (
             f"expected per-iter bytes 8192 in {name} bandwidth; got {bw!r}")
     assert c_bw == "8192", (
-        f"expected exactly one 64x64xf16 store on C (8192 bytes); got {c_bw!r}")
+        f"expected exactly one 64x64xf16 store on C (8192 bytes); got {c_bw!r}"
+    )
     c_compute = attrs[2].get("tt.compute", "")
     assert "args[5]" in c_compute, (
         f"expected K (args[5]) in C compute; got {c_compute!r}")

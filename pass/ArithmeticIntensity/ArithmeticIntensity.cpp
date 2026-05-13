@@ -231,6 +231,8 @@ class BlockMetrics {
       return Metric(Metric::MetricKind::Compute, flops,
                     getElementType(value.getType()));
     } else if (auto reduceOp = dyn_cast<triton::ReduceOp>(op)) {
+      // Approximation: FLOPS = sum of input sizes
+      // TODO: improve this
       int64_t flops = 0;
       for (auto inputTy : reduceOp.getInputTypes()) {
         flops += getNumElements(inputTy);
@@ -369,9 +371,7 @@ public:
     return getAffineSymbolExpr(it->second, ctx);
   }
 
-  AffineExpr constant(int64_t c) const {
-    return getAffineConstantExpr(c, ctx);
-  }
+  AffineExpr constant(int64_t c) const { return getAffineConstantExpr(c, ctx); }
 
   // Simplify and serialise `expr`, substituting `s<i>` tokens with the
   // source-level name of the value at index `i` and rewriting affine-printer
@@ -379,9 +379,8 @@ public:
   std::string print(AffineExpr expr) const {
     if (!expr)
       return "";
-    AffineExpr simplified =
-        simplifyAffineExpr(expr, /*numDims=*/0,
-                           /*numSymbols=*/values.size());
+    AffineExpr simplified = simplifyAffineExpr(expr, /*numDims=*/0,
+                                               /*numSymbols=*/values.size());
     std::string raw;
     {
       llvm::raw_string_ostream os(raw);
@@ -427,7 +426,7 @@ private:
         if (tryKeyword("floordiv", "/"))
           continue;
         // TODO: re-enable this when we have a way to represent ceildiv
-        //if (tryKeyword("ceildiv", "/"))
+        // if (tryKeyword("ceildiv", "/"))
         //  continue;
         if (tryKeyword("mod", "%"))
           continue;
@@ -695,8 +694,7 @@ public:
         add(bandwidthMetrics[param.getArgNumber()], total);
         assert(!computeMetrics[param.getArgNumber()]);
         DenseSet<Value> visited;
-        AffineExpr compute =
-            calculateCompute(storeOp->getOperand(1), visited);
+        AffineExpr compute = calculateCompute(storeOp->getOperand(1), visited);
         if (compute)
           add(computeMetrics[param.getArgNumber()], compute);
       }
