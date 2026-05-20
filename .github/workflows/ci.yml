@@ -57,12 +57,11 @@ jobs:
 
       - name: Setup virtual environment
         run: |
-          python3 -m venv ~/.venv
-          source ~/.venv/bin/activate
-          echo "PATH=$PATH" >> $GITHUB_ENV
+          python -m venv ~/.venv
+          echo "$HOME/.venv/bin" >> $GITHUB_PATH
 
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
           echo "pip version: $(pip --version)"
           echo "python version: $(python --version)"
 
