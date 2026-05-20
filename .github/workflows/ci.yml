@@ -57,19 +57,14 @@ jobs:
 
       - name: Setup virtual environment
         run: |
-          python -m venv "$HOME/.venv"
-          source "$HOME/.venv/bin/activate"
-          echo "$HOME/.venv/bin" >> $GITHUB_PATH
-          echo "VIRTUAL_ENV=$HOME/.venv" >> $GITHUB_ENV
+          python3 -m venv ~/.venv
+          source ~/.venv/bin/activate
+          echo "PATH=$PATH" >> $GITHUB_ENV
 
-      - name: Upgrade pip
-        run: |
-          pip install --upgrade pip
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
           echo "pip version: $(pip --version)"
           echo "python version: $(python --version)"
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
 
       - name: Collect commit hashes
         id: hashes
