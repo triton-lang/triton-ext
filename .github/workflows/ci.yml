@@ -65,6 +65,12 @@ jobs:
           echo "pip version: $(pip --version)"
           echo "python version: $(python --version)"
 
+      - name: Debug
+        run: |
+          which python
+          which pip
+          echo "PATH: $PATH"
+
       - name: Collect commit hashes
         id: hashes
         # See `update-triton.yml` for where this commit hash is updated.
