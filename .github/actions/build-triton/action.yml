@@ -64,6 +64,25 @@ runs:
         ref: ${{ inputs.triton_hash }}
         path: ${{ steps.setup.outputs.triton_install_dir }}
 
+    - name: Apply macOS build fixes
+      if: steps.check-artifact.outputs.exists == 'false' && runner.os == 'macOS'
+      shell: bash
+      working-directory: ${{ steps.setup.outputs.triton_install_dir }}
+      run: |
+        # Fix 1: Triton's plugin examples don't add -undefined dynamic_lookup on
+        # macOS, causing undefined symbol errors at link time (LLVM symbols are not
+        # re-exported from libtriton due to its -exported_symbols_list). Append the
+        # necessary link option to examples/plugins/CMakeLists.txt.
+        cat >> examples/plugins/CMakeLists.txt << 'EOF'
+
+        # macOS: plugin dylibs must defer LLVM symbol resolution to load time.
+        if(APPLE)
+          foreach(plugin ${TRITON_PLUGIN_PASSES})
+            target_link_options(${plugin} PRIVATE "LINKER:-undefined,dynamic_lookup")
+          endforeach()
+        endif()
+        EOF
+
     - name: Build Triton
       if: steps.check-artifact.outputs.exists == 'false'
       id: build
