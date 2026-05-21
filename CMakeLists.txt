@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(triton-ext DESCRIPTION "Extensions for the Triton compiler" LANGUAGES C CXX)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
+
 include(cmake/utils.cmake)
 
 set(TRITON_EXT_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
