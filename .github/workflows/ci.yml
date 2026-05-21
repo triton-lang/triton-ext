@@ -24,9 +24,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: python3 -m pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt
       - name: Check pre-commit
-        run: python3 -m pre_commit run --all-files --verbose
+        run: python -m pre_commit run --all-files --verbose
       - name: Print diff of changes if pre-commit failed
         if: failure()
         run: git diff
@@ -49,6 +49,27 @@ jobs:
       - name: Checkout triton-ext
         uses: actions/checkout@v6.0.2
 
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Setup virtual environment
+        run: |
+          python -m venv "$HOME/.venv"
+          echo "$HOME/.venv/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        # These dependencies are installed in a separate step so that we can use
+        # the updated `$GITHUB_PATH`.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          echo "pip version: $(pip --version)"
+          echo "pip location: $(which pip)"
+          echo "python version: $(python --version)"
+          echo "python location: $(which python)"
+
       - name: Collect commit hashes
         id: hashes
         # See `update-triton.yml` for where this commit hash is updated.
@@ -60,22 +81,6 @@ jobs:
           LLVM_HASH=$(python ci/fetch-llvm-hash.py $TRITON_HASH)
           echo "llvm_hash=$LLVM_HASH" >> $GITHUB_OUTPUT
           echo "LLVM hash: $LLVM_HASH"
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-
-      - name: Setup virtual environment
-        run: |
-          python3 -m venv ~/.venv
-          source ~/.venv/bin/activate
-          echo "PATH=$PATH" >> $GITHUB_ENV
-
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements.txt
-          echo "pip version: $(pip --version)"
-          echo "python version: $(python --version)"
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
