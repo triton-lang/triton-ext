@@ -20,8 +20,15 @@ build: configure
 	cmake --build ${BUILD_DIR}
 
 .PHONY: test
-test:
+test: test-lit test-unit
+
+.PHONY: test-lit
+test-lit:
 	ninja -C ${BUILD_DIR} check-lit-tests
+
+.PHONY: test-unit
+test-unit:
+	TRITON_EXT_BUILD_DIR="${BUILD_DIR}" python -m pytest testing/ -v
 
 .PHONY: clean
 clean:
