@@ -69,6 +69,13 @@ runs:
       id: build
       working-directory: ${{ steps.setup.outputs.triton_install_dir }}
       shell: bash
+      env:
+        # Triton's proton component uses nlohmann/json with
+        # std::basic_string<uint8_t>, which triggers a
+        # -Werror,-Wdeprecated-declarations failure on macOS 15+ (libc++
+        # deprecated char_traits for non-standard types). Disable proton on
+        # macOS.
+        TRITON_BUILD_PROTON: ${{ runner.os == 'macOS' && '0' || 'ON' }}
       run: >
         CMAKE_C_COMPILER_LAUNCHER=sccache
         CMAKE_CXX_COMPILER_LAUNCHER=sccache
