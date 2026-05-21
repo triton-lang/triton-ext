@@ -117,7 +117,8 @@ runs:
       working-directory: ${{ steps.setup.outputs.triton_install_dir }}
       run: |
         make install
-        tar czf ../"${{ env.triton_install_dir }}.tar.gz" --transform="s|^build/install|${{ env.triton_install_dir }}|" build/install
+        mv build/install "${{ env.triton_install_dir }}"
+        tar czf ../"${{ env.triton_install_dir }}.tar.gz" "${{ env.triton_install_dir }}"
 
     - name: Upload Triton artifact
       if: steps.check-artifact.outputs.exists == 'false'
