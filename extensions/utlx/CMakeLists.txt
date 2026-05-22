@@ -291,6 +291,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     MLIRTransforms
     MLIRIR
     MLIRSupport
+    MLIRGPUDialect
+    MLIRMathDialect
+    MLIRSCFDialect
     LLVMSupport
 )
 
