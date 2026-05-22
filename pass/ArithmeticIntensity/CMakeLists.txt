@@ -24,11 +24,6 @@ add_mlir_library(${PROJECT_NAME}
 
     LINK_LIBS PUBLIC
     TritonExtensionSupport
-    #MLIRPass
-    #MLIRArithDialect
-    #MLIRSCFDialect
-    #LLVMSupport
-    #MLIRSupport
 )
 
 target_link_libraries(${PROJECT_NAME}
