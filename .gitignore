@@ -3,3 +3,4 @@ llvm-*
 triton-*
 !triton-ext.conf
 *.pyc
+.venv
