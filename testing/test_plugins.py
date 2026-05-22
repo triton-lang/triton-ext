@@ -38,8 +38,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUILD_DIR = Path(os.environ.get("BUILD_DIR", REPO_ROOT / "build"))
-TRITON_INSTALL_DIR = Path(os.environ.get("TRITON_INSTALL_DIR"))
-LLVM_INSTALL_DIR = Path(os.environ.get("LLVM_INSTALL_DIR"))
+TRITON_INSTALL_DIR = Path(os.environ["TRITON_INSTALL_DIR"])
+LLVM_INSTALL_DIR = Path(os.environ["LLVM_INSTALL_DIR"])
 SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
 SYS_LIBRARY_PATH = "DYLD_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
 
