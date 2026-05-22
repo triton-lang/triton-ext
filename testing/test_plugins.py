@@ -31,29 +31,23 @@ import os
 import shlex
 import subprocess
 import sys
+import utils
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BUILD_DIR = Path(os.environ.get("TRITON_EXT_BUILD_DIR", REPO_ROOT / "build"))
-PLUGIN_LIB_DIR = BUILD_DIR / "lib"
+BUILD_DIR = Path(os.environ.get("BUILD_DIR", REPO_ROOT / "build"))
+TRITON_INSTALL_DIR = Path(os.environ.get("TRITON_INSTALL_DIR"))
+LLVM_INSTALL_DIR = Path(os.environ.get("LLVM_INSTALL_DIR"))
 SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
+SYS_LIBRARY_PATH = "DYLD_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
 
 
 def _discover_plugins() -> list[pytest.ParameterSet]:
     plugins: list[pytest.ParameterSet] = []
-    for conf in REPO_ROOT.rglob("triton-ext.conf"):
-        rel_parts = conf.relative_to(REPO_ROOT).parts
-        if rel_parts[0].startswith(("triton-", "llvm-", "build")):
-            continue
-        text = conf.read_text().strip()
-        if not text:
-            continue
-        # Format is `name;status[;hash]` (CMake list); we only need the name.
-        name = text.split(";", 1)[0].strip()
-        if not name:
-            continue
+    for cfg in REPO_ROOT.rglob("triton-ext.conf"):
+        name = utils.read_extension_name(cfg)
         plugins.append(pytest.param(name, id=name))
     plugins.sort(key=lambda p: p.id)
     return plugins
@@ -63,7 +57,7 @@ PLUGINS = _discover_plugins()
 
 
 def _plugin_path(name: str) -> Path:
-    return PLUGIN_LIB_DIR / f"lib{name}.so"
+    return utils.find_library_path(name, [BUILD_DIR / "lib"])
 
 
 def _format_command(env_overrides: dict[str, str], args: list[str]) -> str:
@@ -105,8 +99,12 @@ def test_plugin_loads(name: str) -> None:
     path = _plugin_path(name)
     if not path.is_file():
         pytest.skip(f"Plugin not built at {path} (extension may be disabled)")
-    result, command = _run({"TRITON_PLUGIN_PATHS": str(path)},
-                           [sys.executable, "-c", "import triton"])
+    result, command = _run(
+        {
+            "TRITON_PLUGIN_PATHS": str(path),
+            "PYTHONPATH": str(TRITON_INSTALL_DIR / "python"),
+            SYS_LIBRARY_PATH: str(LLVM_INSTALL_DIR / "lib")
+        }, [sys.executable, "-c", "import triton"])
     assert result.returncode == 0, (
         f"Loading plugin {name} failed. Reproduce with:\n  {command}\n"
         f"--- stdout ---\n{result.stdout}\n"
@@ -130,9 +128,12 @@ def test_plugin_compiles_kernel(name: str) -> None:
     if not path.is_file():
         pytest.skip(f"Plugin not built at {path} (extension may be disabled)")
     result, command = _run(
-        {"TRITON_PLUGIN_PATHS": str(path)},
-        [sys.executable,
-         str(SCRIPTS_DIR / "compile_kernel.py")])
+        {
+            "TRITON_PLUGIN_PATHS": str(path),
+            "PYTHONPATH": str(TRITON_INSTALL_DIR / "python"),
+            SYS_LIBRARY_PATH: str(LLVM_INSTALL_DIR / "lib")
+        }, [sys.executable,
+            str(SCRIPTS_DIR / "compile_kernel.py")])
     assert result.returncode == 0, (
         f"Plugin {name} broke kernel compile. Reproduce with:\n  {command}\n"
         f"--- stdout ---\n{result.stdout}\n"
@@ -155,11 +156,13 @@ def test_utlx_registers_tlx_dsl() -> None:
     """
     plugin_path = _plugin_path("utlx")
     utlx_python = REPO_ROOT / "extensions" / "utlx" / "python"
-    pythonpath = f"{utlx_python}{os.pathsep}{os.environ.get('PYTHONPATH', '')}"
+    triton_python = TRITON_INSTALL_DIR / "python"
+    pythonpath = f"{utlx_python}{os.pathsep}{triton_python}"
     result, command = _run(
         {
             "TRITON_PLUGIN_PATHS": str(plugin_path),
             "PYTHONPATH": pythonpath,
+            SYS_LIBRARY_PATH: str(LLVM_INSTALL_DIR / "lib")
         },
         [sys.executable, str(SCRIPTS_DIR / "load_tlx_dsl.py")])
     assert result.returncode == 0, (
