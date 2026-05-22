@@ -8,6 +8,7 @@ tree can import it directly.
 import os
 import sys
 import logging
+from typing import Any
 
 
 def find_ext_cfg_path(lit_cfg_path):
@@ -19,7 +20,8 @@ def find_ext_cfg_path(lit_cfg_path):
             return candidate
         path = os.path.dirname(path)
     raise FileNotFoundError(
-        f"Could not find triton-ext.conf in any parent directory of {lit_cfg_path}")
+        f"Could not find triton-ext.conf in any parent directory of {lit_cfg_path}"
+    )
 
 
 def read_extension_name(ext_cfg_path: str) -> str:
@@ -39,10 +41,11 @@ def find_library_path(ext_name: str, search_dirs: list[str]) -> str:
         if os.path.isfile(candidate):
             return candidate
     raise FileNotFoundError(
-        f"Could not find shared library for extension {ext_name} in any of {search_dirs}")
+        f"Could not find shared library for extension {ext_name} in any of {search_dirs}"
+    )
 
 
-def setup_environment(config: dict, lit_cfg_path: str):
+def setup_environment(config: Any, lit_cfg_path: str):
     """Set up the environment for running lit tests with a Triton plugin. """
     # Extend the environment: calculate the path to the extension's shared library.
     ext_cfg_path = find_ext_cfg_path(lit_cfg_path)
@@ -51,7 +54,8 @@ def setup_environment(config: dict, lit_cfg_path: str):
     config.environment["TRITON_PLUGIN_PATHS"] = find_library_path(
         ext_name, [lib_dir])
     logging.debug(
-        f'ENV: TRITON_PLUGIN_PATHS={config.environment["TRITON_PLUGIN_PATHS"]}')
+        f'ENV: TRITON_PLUGIN_PATHS={config.environment["TRITON_PLUGIN_PATHS"]}'
+    )
 
     # Extend the environment: due to how we link Triton, `triton-opt` will not run unless it can
     # find LLVM's shared libraries.
