@@ -104,8 +104,6 @@ runs:
         TRITON_EXT_ENABLED=1
         make dev-install
 
-        make install
-
     - name: Dump Sccache Statistics
       if: steps.check-artifact.outputs.exists == 'false'
       shell: bash
@@ -115,9 +113,10 @@ runs:
       if: steps.check-artifact.outputs.exists == 'false'
       shell: bash
       working-directory: ${{ steps.setup.outputs.triton_install_dir }}
+      # Package up the equivalent of `make install` but strip the resulting binaries to reduce
+      # artifact size. Also, copy over the Python files so we can test with `import triton`.
       run: |
-        make install
-        cp -r build/install "${{ env.triton_install_dir }}"
+        cmake --install build --prefix "${{ env.triton_install_dir }}" --strip
         cp -r python "${{ env.triton_install_dir }}/python"
         tar czf ../"${{ env.triton_install_dir }}.tar.gz" "${{ env.triton_install_dir }}"
 
