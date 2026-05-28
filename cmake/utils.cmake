@@ -58,7 +58,7 @@ function(triton_ext_read_manifest triton_ext_dir)
     set(generated "${CMAKE_CURRENT_BINARY_DIR}/triton-ext-manifest.cmake")
     execute_process(
         COMMAND ${Python3_EXECUTABLE}
-                "${CMAKE_SOURCE_DIR}/ci/extension_config.py" "${manifest}" --cmake
+                "${CMAKE_SOURCE_DIR}/ci/print-extension-as-cmake.py" "${manifest}"
         OUTPUT_FILE "${generated}"
         RESULT_VARIABLE _manifest_rc
     )
@@ -90,16 +90,7 @@ function(triton_ext_should_build_extension triton_ext_dir result_var)
         return()
     endif()
 
-    # When TRITON_EXT_NAMES is set, build only the names it lists.
-    list(LENGTH TRITON_EXT_NAMES _size)
-    if(_size EQUAL 0)
-        set(${result_var} TRUE PARENT_SCOPE)
-    else()
-        list(FIND TRITON_EXT_NAMES "${TRITON_EXT_NAME}" _index)
-        if(NOT _index EQUAL -1)
-            set(${result_var} TRUE PARENT_SCOPE)
-        endif()
-    endif()
+    set(${result_var} TRUE PARENT_SCOPE)
 endfunction()
 
 # Macro to set up a Triton extension project.
@@ -117,7 +108,6 @@ endfunction()
 # - Adds the extension project name to the global TRITON_EXT_BUILT_TARGETS list
 macro(triton_extension ext_class)
     triton_ext_read_manifest("${CMAKE_CURRENT_SOURCE_DIR}")
-
     if(NOT TRITON_EXT_NAME)
         message(FATAL_ERROR "triton-ext.toml not found or missing 'name' in ${CMAKE_CURRENT_SOURCE_DIR}")
     endif()

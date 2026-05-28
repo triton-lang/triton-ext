@@ -1,4 +1,4 @@
 name = "loop_split"
 status = "experimental"
-enabled = 1
+enabled = true
 version = "0.1.0"
