@@ -55,4 +55,12 @@ repos:
     hooks:
       - id: clang-format
 
+  - repo: local
+    hooks:
+      - id: check-extensions
+        name: check extension manifests
+        entry: ci/check-extensions.py
+        language: python
+        pass_filenames: false
+
 exclude: '^$'
