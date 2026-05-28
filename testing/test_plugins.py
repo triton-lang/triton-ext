@@ -43,7 +43,7 @@ PLUGIN_LIB_DIR = BUILD_DIR / "lib"
 SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
 
 sys.path.insert(0, str(REPO_ROOT / "ci"))
-import extension_config  # noqa: E402  (ci/ is added to sys.path above)
+import extension  # noqa: E402  (ci/ is added to sys.path above)
 
 
 def _discover_plugins() -> list[pytest.ParameterSet]:
@@ -52,7 +52,7 @@ def _discover_plugins() -> list[pytest.ParameterSet]:
         rel_parts = manifest.relative_to(REPO_ROOT).parts
         if rel_parts[0].startswith(("triton-", "llvm-", "build")):
             continue
-        cfg = extension_config.load(manifest)
+        cfg = extension.load(manifest)
         # Disabled extensions are not built, so do not parametrize them.
         if not cfg.enabled:
             continue
