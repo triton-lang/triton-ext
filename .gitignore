@@ -3,3 +3,4 @@ llvm-*
 triton-*
 !triton-ext.toml
 *.pyc
+.venv
