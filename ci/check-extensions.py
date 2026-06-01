@@ -16,28 +16,6 @@ from pathlib import Path
 
 import extension
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-
-
-def out_of_place(path: Path) -> bool:
-    """Return True if the path is not in a valid extension directory."""
-    SEARCH_DIRECTORIES = ("backend", "dialect", "extensions", "language",
-                          "pass")
-    return not any(
-        path.is_relative_to(REPO_ROOT / d) for d in SEARCH_DIRECTORIES)
-
-
-def discover() -> list[extension.Manifest]:
-    """Find all `triton-ext.toml` files and parse them into structured metadata."""
-    extensions = []
-    for manifest in sorted(REPO_ROOT.rglob("triton-ext.toml")):
-        if out_of_place(manifest):
-            raise ValueError(
-                f"extension manifest found in unexpected location: {manifest}")
-        cfg = extension.load(manifest)
-        extensions.append(cfg)
-    return extensions
-
 
 def path_as_str(p):
     """When serializing to JSON, convert Path objects to strings."""
@@ -49,7 +27,7 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    extensions = discover()
+    extensions = extension.discover()
     if args.json:
         # Serializing a @dataclass with Path fields requires some special
         # handling.

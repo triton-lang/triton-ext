@@ -49,15 +49,9 @@ import extension  # noqa: E402  (ci/ is added to sys.path above)
 
 def _discover_plugins() -> list[pytest.ParameterSet]:
     plugins: list[pytest.ParameterSet] = []
-    for manifest in REPO_ROOT.rglob("triton-ext.toml"):
-        rel_parts = manifest.relative_to(REPO_ROOT).parts
-        if rel_parts[0].startswith(("triton-", "llvm-", "build")):
-            continue
-        cfg = extension.load(manifest)
-        # Disabled extensions are not built, so do not parametrize them.
-        if not cfg.enabled:
-            continue
-        plugins.append(pytest.param(cfg.name, id=cfg.name))
+    for cfg in extension.discover():
+        if cfg.enabled:
+            plugins.append(pytest.param(cfg.name, id=cfg.name))
     plugins.sort(key=lambda p: p.id)
     return plugins
 

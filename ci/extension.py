@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Parse the `triton-ext.toml` manifest: see :load:.
+Parse the `triton-ext.toml` manifest: see :load: and :discover:.
 
 This also understands parsing a CODEOWNERS file to associate a list of owners
 with an extension: see :parse_codeowners: and :owners_for:.
@@ -129,6 +129,33 @@ def load(manifest_path: Path) -> Manifest:
                     enabled=data.get("enabled", True),
                     version=data.get("version", "0.0.0"),
                     owners=owners)
+
+
+def _out_of_place(path: Path) -> bool:
+    """
+    Return True if the path is not in a valid extension directory.
+
+    >>> _out_of_place(REPO_ROOT / "extensions" / "foo" / "triton-ext.toml")
+    False
+    >>> _out_of_place(REPO_ROOT / "triton-7a5d6a3d-linux-x64" / "triton-ext.toml")
+    True
+    """
+    SEARCH_DIRECTORIES = ("backend", "dialect", "extensions", "language",
+                          "pass")
+    return not any(
+        path.is_relative_to(REPO_ROOT / d) for d in SEARCH_DIRECTORIES)
+
+
+def discover() -> list[Manifest]:
+    """Find all `triton-ext.toml` files and load them into structured metadata."""
+    extensions = []
+    for manifest in sorted(REPO_ROOT.rglob("triton-ext.toml")):
+        if _out_of_place(manifest):
+            raise ValueError(
+                f"extension manifest found in unexpected location: {manifest}")
+        cfg = load(manifest)
+        extensions.append(cfg)
+    return extensions
 
 
 if __name__ == "__main__":
