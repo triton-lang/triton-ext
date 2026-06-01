@@ -31,7 +31,7 @@ test-unit:
 	BUILD_DIR="${BUILD_DIR}" \
 	LLVM_INSTALL_DIR="$(LLVM_INSTALL_DIR)" \
 	TRITON_INSTALL_DIR="$(TRITON_INSTALL_DIR)" \
-		python -m pytest testing/ -v
+		python -m pytest --ignore=extensions/utlx --ignore=$(TRITON_INSTALL_DIR) -v
 
 .PHONY: clean
 clean:
