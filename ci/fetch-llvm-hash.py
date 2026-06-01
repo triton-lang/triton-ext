@@ -14,8 +14,8 @@ import requests
 
 def run(triton_rev):
     """Retrieve the LLVM commit hash pinned at this Triton revision."""
-    url = f'https://raw.githubusercontent.com/triton-lang/triton/{triton_rev}/cmake/llvm-hash.txt'
-    hash = requests.get(url).text.strip()
+    url = f'https://raw.githubusercontent.com/triton-lang/triton/{triton_rev}/cmake/llvm-info.json'
+    hash = requests.get(url).json()['llvm_hash']
     return hash
 
 
