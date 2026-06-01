@@ -38,8 +38,9 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BUILD_DIR = Path(os.environ.get("TRITON_EXT_BUILD_DIR", REPO_ROOT / "build"))
-PLUGIN_LIB_DIR = BUILD_DIR / "lib"
+BUILD_DIR = Path(os.environ.get("BUILD_DIR", REPO_ROOT / "build"))
+TRITON_INSTALL_DIR = Path(os.environ["TRITON_INSTALL_DIR"])
+LLVM_INSTALL_DIR = Path(os.environ["LLVM_INSTALL_DIR"])
 SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
 
 sys.path.insert(0, str(REPO_ROOT / "ci"))
@@ -65,7 +66,7 @@ PLUGINS = _discover_plugins()
 
 
 def _plugin_path(name: str) -> Path:
-    return PLUGIN_LIB_DIR / f"lib{name}.so"
+    return BUILD_DIR / "lib" / f"lib{name}.so"
 
 
 def _format_command(env_overrides: dict[str, str], args: list[str]) -> str:
@@ -107,8 +108,12 @@ def test_plugin_loads(name: str) -> None:
     path = _plugin_path(name)
     if not path.is_file():
         pytest.skip(f"Plugin not built at {path} (extension may be disabled)")
-    result, command = _run({"TRITON_PLUGIN_PATHS": str(path)},
-                           [sys.executable, "-c", "import triton"])
+    result, command = _run(
+        {
+            "TRITON_PLUGIN_PATHS": str(path),
+            "PYTHONPATH": str(TRITON_INSTALL_DIR / "python"),
+            "LD_LIBRARY_PATH": str(LLVM_INSTALL_DIR / "lib")
+        }, [sys.executable, "-c", "import triton"])
     assert result.returncode == 0, (
         f"Loading plugin {name} failed. Reproduce with:\n  {command}\n"
         f"--- stdout ---\n{result.stdout}\n"
@@ -132,9 +137,12 @@ def test_plugin_compiles_kernel(name: str) -> None:
     if not path.is_file():
         pytest.skip(f"Plugin not built at {path} (extension may be disabled)")
     result, command = _run(
-        {"TRITON_PLUGIN_PATHS": str(path)},
-        [sys.executable,
-         str(SCRIPTS_DIR / "compile_kernel.py")])
+        {
+            "TRITON_PLUGIN_PATHS": str(path),
+            "PYTHONPATH": str(TRITON_INSTALL_DIR / "python"),
+            "LD_LIBRARY_PATH": str(LLVM_INSTALL_DIR / "lib")
+        }, [sys.executable,
+            str(SCRIPTS_DIR / "compile_kernel.py")])
     assert result.returncode == 0, (
         f"Plugin {name} broke kernel compile. Reproduce with:\n  {command}\n"
         f"--- stdout ---\n{result.stdout}\n"
@@ -157,11 +165,13 @@ def test_utlx_registers_tlx_dsl() -> None:
     """
     plugin_path = _plugin_path("utlx")
     utlx_python = REPO_ROOT / "extensions" / "utlx" / "python"
-    pythonpath = f"{utlx_python}{os.pathsep}{os.environ.get('PYTHONPATH', '')}"
+    triton_python = TRITON_INSTALL_DIR / "python"
+    pythonpath = f"{utlx_python}{os.pathsep}{triton_python}"
     result, command = _run(
         {
             "TRITON_PLUGIN_PATHS": str(plugin_path),
             "PYTHONPATH": pythonpath,
+            "LD_LIBRARY_PATH": str(LLVM_INSTALL_DIR / "lib")
         },
         [sys.executable, str(SCRIPTS_DIR / "load_tlx_dsl.py")])
     assert result.returncode == 0, (

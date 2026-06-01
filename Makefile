@@ -28,7 +28,10 @@ test-lit:
 
 .PHONY: test-unit
 test-unit:
-	TRITON_EXT_BUILD_DIR="${BUILD_DIR}" python -m pytest testing/ -v
+	BUILD_DIR="${BUILD_DIR}" \
+	LLVM_INSTALL_DIR="$(LLVM_INSTALL_DIR)" \
+	TRITON_INSTALL_DIR="$(TRITON_INSTALL_DIR)" \
+		python -m pytest testing/ -v
 
 .PHONY: clean
 clean:
