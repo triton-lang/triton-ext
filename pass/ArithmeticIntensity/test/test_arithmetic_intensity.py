@@ -1,96 +1,66 @@
-"""Pytest tests for the arithmetic-intensity plugin pass.
+"""Check the arithmetic-intensity plugin pass.
 
-The tests load Triton's Python bindings, register the
-``libarithmetic_intensity.so`` plugin via ``TRITON_PLUGIN_PATHS``, parse
-a small MLIR module, run the pass through ``ir.pass_manager``, and
-assert that the expected ``tt.bandwidth`` and ``tt.compute`` attributes
-have been attached to the function's arguments.
-
-Plugin discovery (in order of priority):
-  * ``ARITHMETIC_INTENSITY_PLUGIN`` - explicit path to
-    ``libarithmetic_intensity.so``
-  * ``<repo>/build*/lib/libarithmetic_intensity.so`` (most recently
-    built)
-
-If the plugin cannot be located or Triton's bindings cannot be imported
-the whole module is skipped, so it is safe to collect in environments
-that haven't built the pass.
+Each test spawns a subprocess executing `run_pass.py` with a modified
+environment: `TRITON_PLUGIN_PATHS`, `PYTHONPATH`, and `LD_LIBRARY_PATH` set.
+`run_pass.py` accepts an MLIR file, runs the pass on it, and prints the
+transformed IR to stdout.
 """
 
 from __future__ import annotations
 
 import os
-import pathlib
 import re
+import subprocess
+import sys
 import tempfile
 import textwrap
+from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]
-
-
-def _resolve_plugin() -> pathlib.Path | None:
-    if env := os.environ.get("ARITHMETIC_INTENSITY_PLUGIN"):
-        p = pathlib.Path(env)
-        return p if p.exists() else None
-    for build_dir in ("build", "build-release", "build-debug"):
-        cand = PROJECT_ROOT / build_dir / "lib" / "libarithmetic_intensity.so"
-        if cand.exists():
-            return cand
-    return None
-
-
-_plugin = _resolve_plugin()
-_skip_reason: str | None = None
-if _plugin is None:
-    _skip_reason = ("arithmetic-intensity plugin not found; build the pass or "
-                    "set ARITHMETIC_INTENSITY_PLUGIN to override")
-else:
-    # Plugins are enumerated by libtriton at import time, so we must set
-    # TRITON_PLUGIN_PATHS *before* importing triton.
-    existing = os.environ.get("TRITON_PLUGIN_PATHS", "")
-    if str(_plugin) not in existing.split(":"):
-        os.environ["TRITON_PLUGIN_PATHS"] = (f"{_plugin}:{existing}"
-                                             if existing else str(_plugin))
-
-if _skip_reason is None:
-    try:
-        from triton._C.libtriton import ir, passes  # noqa: E402
-    except ImportError as exc:
-        _skip_reason = f"triton._C.libtriton import failed: {exc}"
-    else:
-        if not hasattr(passes.plugin, "arithmetic_intensity"):
-            _skip_reason = ("arithmetic_intensity pass not registered on "
-                            "passes.plugin (plugin failed to load?)")
-
-pytestmark = pytest.mark.skipif(_skip_reason is not None,
-                                reason=_skip_reason or "")
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+BUILD_DIR = Path(os.environ.get("BUILD_DIR", PROJECT_ROOT / "build"))
+TRITON_INSTALL_DIR = Path(os.environ["TRITON_INSTALL_DIR"])
+LLVM_INSTALL_DIR = Path(os.environ["LLVM_INSTALL_DIR"])
+RUN_PASS_SCRIPT = Path(__file__).resolve().parent / "run_pass.py"
+PLUGIN_LIB = BUILD_DIR / "lib" / "libarithmetic_intensity.so"
 
 
 @pytest.fixture(scope="module")
 def run_pass():
     """Return a callable that parses MLIR text, runs the pass, returns IR."""
 
-    ctx = ir.context()
-    ir.load_dialects(ctx)
+    if not PLUGIN_LIB.exists():
+        pytest.fail(f"plugin library not found; build {PLUGIN_LIB}.")
+
+    env_overrides = {
+        "TRITON_PLUGIN_PATHS": str(PLUGIN_LIB),
+        "PYTHONPATH": str(TRITON_INSTALL_DIR / "python"),
+        "LD_LIBRARY_PATH": str(LLVM_INSTALL_DIR / "lib"),
+    }
 
     def _run(mlir: str) -> str:
-        # parse_mlir_module only accepts a file path, so spill to a tmp file.
         with tempfile.NamedTemporaryFile(mode="w",
                                          suffix=".mlir",
                                          delete=False) as f:
             f.write(textwrap.dedent(mlir))
             path = f.name
         try:
-            mod = ir.parse_mlir_module(path, ctx)
+            env = {**os.environ, **env_overrides}
+            result = subprocess.run(
+                [sys.executable, str(RUN_PASS_SCRIPT), path],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         finally:
             os.unlink(path)
-
-        pm = ir.pass_manager(ctx)
-        passes.plugin.arithmetic_intensity(pm)
-        pm.run(mod, "arithmetic_intensity_test")
-        return mod.str_nodebug()
+        assert result.returncode == 0, (
+            f"run_pass.py failed (exit {result.returncode}):\n"
+            f"--- stdout ---\n{result.stdout}\n"
+            f"--- stderr ---\n{result.stderr}")
+        return result.stdout
 
     return _run
 
