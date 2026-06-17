@@ -121,7 +121,9 @@ def load(manifest_path: Path) -> Manifest:
     with open(manifest_path, "rb") as f:
         data = tomllib.load(f)
     rules = parse_codeowners(DEFAULT_CODEOWNERS)
-    path = manifest_path.absolute().relative_to(REPO_ROOT)
+    # Resolve symlinks so the comparison is consistent with REPO_ROOT (which is
+    # also resolved); otherwise a symlinked checkout breaks `relative_to`.
+    path = manifest_path.resolve().relative_to(REPO_ROOT)
     owners = owners_for(path.as_posix(), rules)
     return Manifest(name=data["name"],
                     path=path,
