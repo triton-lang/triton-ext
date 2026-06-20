@@ -2,5 +2,6 @@ build
 llvm-*
 triton-*
 !triton-ext.toml
+!.github/workflows/triton-utlx.yaml
 *.pyc
 .venv

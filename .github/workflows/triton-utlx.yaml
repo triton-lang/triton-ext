@@ -1,0 +1,198 @@
+name: Build & Publish micro-tlx
+# Builds the µTLX extension (extensions/utlx) into a pip wheel and publishes it to a Python package
+# index under the distribution name "micro-tlx".
+#
+# The build chain mirrors `ci.yml`: it builds (or reuses cached artifacts of) LLVM and Triton
+# (with TRITON_EXT_ENABLED=1), then builds the native plugin `libutlx.so`, and finally bundles the
+# Python packages (utlx, utlx_plugin, tlx) + the shared library into a wheel via
+# `extensions/utlx/build_wheel.sh`.
+#
+# Note: the import packages remain `utlx` / `utlx_plugin` / `tlx`; only the published
+# *distribution* name is rewritten to "micro-tlx".
+
+on:
+  # Publish on a version tag, e.g. `git tag v0.1.0 && git push --tags`.
+  push:
+    tags: ['v*']
+  # Manual run: build always; choose whether/where to publish.
+  workflow_dispatch:
+    inputs:
+      publish_to:
+        description: Package index to publish the wheel to.
+        type: choice
+        options: [none, testpypi, pypi]
+        # Default a manual run to TestPyPI so it's a safe dry run; choose `pypi`
+        # explicitly for a real release, or `none` to only build the wheel.
+        default: testpypi
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build micro-tlx wheel on ${{ matrix.config.runner }}
+    runs-on: ${{ matrix.config.runs_on }}
+    timeout-minutes: 300
+    defaults: {run: {shell: bash}}
+
+    strategy:
+      fail-fast: true
+      matrix:
+        config:
+        - {runner: 'Ubuntu 22.04', runs_on: 'ubuntu-22.04', target-os: 'ubuntu', arch: 'x64'}
+
+    steps:
+      - name: Checkout triton-ext
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Setup virtual environment
+        run: |
+          python -m venv "$HOME/.venv"
+          echo "$HOME/.venv/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install cmake ninja build wheel setuptools
+
+      - name: Collect commit hashes
+        id: hashes
+        # See `update-triton.yml` for where this commit hash is updated.
+        run: |
+          TRITON_HASH=$(cat ci/triton-hash.txt)
+          echo "triton_hash=$TRITON_HASH" >> $GITHUB_OUTPUT
+          echo "Triton hash: $TRITON_HASH"
+
+          LLVM_HASH=$(python ci/fetch-llvm-hash.py $TRITON_HASH)
+          echo "llvm_hash=$LLVM_HASH" >> $GITHUB_OUTPUT
+          echo "LLVM hash: $LLVM_HASH"
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Build LLVM
+        id: build-llvm
+        uses: ./.github/actions/build-llvm
+        with:
+          llvm_hash: ${{ steps.hashes.outputs.llvm_hash }}
+
+      - name: Download LLVM artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python ci/download-artifact.py ${{ steps.build-llvm.outputs.llvm_install_dir }}
+
+      - name: Build Triton
+        id: build-triton
+        uses: ./.github/actions/build-triton
+        with:
+          triton_hash: ${{ steps.hashes.outputs.triton_hash }}
+          llvm_install_dir: ${{ github.workspace }}/${{ steps.build-llvm.outputs.llvm_install_dir }}
+
+      - name: Download Triton artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python ci/download-artifact.py ${{ steps.build-triton.outputs.triton_install_dir }}
+
+      - name: Build µTLX plugin (libutlx.so)
+        # Configure the whole triton-ext tree but restrict the built extensions to `utlx`. The
+        # library lands at extensions/utlx/build/lib/libutlx.so (TRITON_EXT_LIBRARY_DIR), which is
+        # exactly the default build dir that build_wheel.sh expects.
+        env:
+          LLVM_INSTALL_DIR: ${{ github.workspace }}/${{ steps.build-llvm.outputs.llvm_install_dir }}
+          TRITON_INSTALL_DIR: ${{ github.workspace }}/${{ steps.build-triton.outputs.triton_install_dir }}
+        run: |
+          cmake -GNinja \
+            -B extensions/utlx/build \
+            -S . \
+            -DTRITON_EXT_NAMES="utlx" \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          ninja -C extensions/utlx/build utlx
+          test -f extensions/utlx/build/lib/libutlx.so
+
+      - name: Resolve package version
+        id: version
+        # On a `v*` tag publish with that version; otherwise keep the pyproject default.
+        run: |
+          REF="${{ github.ref }}"
+          if [[ "$REF" == refs/tags/v* ]]; then
+            VERSION="${REF#refs/tags/v}"
+          else
+            VERSION="$(grep -m1 '^version' extensions/utlx/pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building micro-tlx version: $VERSION"
+
+      - name: Build wheel as "micro-tlx"
+        working-directory: extensions/utlx
+        # build_wheel.sh hardcodes the distribution name "utlx" and a 0.1.0 version in its generated
+        # pyproject heredoc; rewrite both to publish as "micro-tlx" with the resolved version. The
+        # import packages (utlx/utlx_plugin/tlx) are unchanged — only the distribution name differs.
+        run: |
+          sed -i 's/^name = "utlx"$/name = "micro-tlx"/' build_wheel.sh
+          sed -i 's/^version = "0.1.0"$/version = "${{ steps.version.outputs.version }}"/' build_wheel.sh
+          # The script's trailing `ls` globs for utlx-*.whl; setuptools normalizes the new name to
+          # `micro_tlx-*.whl`, so update those globs too (they run under `set -e`).
+          sed -i 's/utlx-\*\.whl/micro_tlx-*.whl/g' build_wheel.sh
+          ./build_wheel.sh "${GITHUB_WORKSPACE}/extensions/utlx/build"
+
+      - name: Show wheel metadata
+        working-directory: extensions/utlx
+        run: |
+          ls -lh dist/
+          python -m pip install --quiet pkginfo
+          python - <<'PY'
+          import glob, pkginfo
+          whl = glob.glob("dist/*.whl")[0]
+          meta = pkginfo.Wheel(whl)
+          print("name:", meta.name)
+          print("version:", meta.version)
+          PY
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: micro-tlx-wheel
+          path: extensions/utlx/dist/*.whl
+          if-no-files-found: error
+
+  publish:
+    name: Publish micro-tlx to ${{ github.event_name == 'workflow_dispatch' && inputs.publish_to || 'pypi' }}
+    needs: build
+    runs-on: ubuntu-latest
+    # Publish on a version-tag push, or on a manual run that selected an index.
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_to != 'none')
+    environment:
+      name: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_to || 'pypi' }}
+    permissions:
+      # Required for PyPI Trusted Publishing (OIDC). Configure a trusted publisher for the
+      # "micro-tlx" project at https://pypi.org/manage/account/publishing/ pointing at this repo
+      # and workflow. No API token secret is then needed.
+      id-token: write
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: micro-tlx-wheel
+          path: dist
+
+      - name: Publish to TestPyPI
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_to == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist
+
+      - name: Publish to PyPI
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_to == 'pypi')
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
