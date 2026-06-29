@@ -23,7 +23,7 @@ ctx = ir.context()
 ir.load_dialects(ctx)
 mod = ir.parse_mlir_module(mlir_file, ctx)
 pm = ir.pass_manager(ctx)
-passes.plugin.arithmetic_intensity(pm)
+passes.plugin.add_arithmetic_intensity(pm)
 pipeline_tag = "test_arithmetic_intensity.py"
 pm.run(mod, pipeline_tag)
 print(mod.str_nodebug(), end="")
