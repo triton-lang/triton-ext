@@ -34,7 +34,7 @@ def alloc_barriers(
     arrive_count_ir = _semantic.builder.get_int32(int(arrive_count_val))
 
     args = [num_barriers_ir, arrive_count_ir]
-    handle = _semantic.builder.utlx_alloc_barriers(args)
+    handle = _semantic.builder.create_utlx_alloc_barriers(args)
 
     layout = tlx.swizzled_shared_layout_encoding.make_default(rank=1)
     return tlx.mbarrier(handle, num_barriers_val, layout)
@@ -57,7 +57,7 @@ def alloc_warp_barrier(
     arrive_count_ir = _semantic.builder.get_int32(int(arrive_count))
 
     args = [num_barriers_ir, arrive_count_ir]
-    handle = _semantic.builder.utlx_alloc_barriers(args)
+    handle = _semantic.builder.create_utlx_alloc_barriers(args)
 
     layout = tlx.swizzled_shared_layout_encoding.make_default(rank=1)
     return tlx.mbarrier(handle, num_barriers_val, layout, is_warp_barrier=True)
@@ -79,7 +79,8 @@ def barrier_expect_bytes(
     size_val = tl._unwrap_if_constexpr(size)
     size_ir = _semantic.builder.get_int32(int(size_val))
 
-    _semantic.builder.utlx_barrier_expect([bar.handle, size_ir, pred_handle])
+    _semantic.builder.create_utlx_barrier_expect(
+        [bar.handle, size_ir, pred_handle])
 
 
 @tl.builtin
@@ -107,7 +108,7 @@ def barrier_wait(
         raise RuntimeError(
             f"`phase` must be tl.tensor or tl.constexpr, got {type(phase)}")
 
-    _semantic.builder.utlx_barrier_wait(
+    _semantic.builder.create_utlx_barrier_wait(
         [bar.handle, phase_handle, pred_handle])
 
 
@@ -130,7 +131,7 @@ def barrier_arrive(
 
     arrive_count_ir = _semantic.builder.get_int32(int(arrive_count_val))
 
-    _semantic.builder.utlx_barrier_arrive([bar.handle, arrive_count_ir])
+    _semantic.builder.create_utlx_barrier_arrive([bar.handle, arrive_count_ir])
 
 
 @tl.builtin
@@ -143,7 +144,7 @@ def named_barrier_wait(
     bar_handle = _semantic._convert_elem_to_ir_value(bar, require_i64=False)
     arrive_count_handle = _semantic._convert_elem_to_ir_value(
         arrive_count, require_i64=False)
-    _semantic.builder.utlx_named_barrier_wait(
+    _semantic.builder.create_utlx_named_barrier_wait(
         [bar_handle, arrive_count_handle])
 
 
@@ -157,5 +158,5 @@ def named_barrier_arrive(
     bar_handle = _semantic._convert_elem_to_ir_value(bar, require_i64=False)
     arrive_count_handle = _semantic._convert_elem_to_ir_value(
         arrive_count, require_i64=False)
-    _semantic.builder.utlx_named_barrier_arrive(
+    _semantic.builder.create_utlx_named_barrier_arrive(
         [bar_handle, arrive_count_handle])

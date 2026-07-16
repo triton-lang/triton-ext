@@ -58,7 +58,7 @@ def _assert_blackwell_for_tmem(arch):
 def _create_tmem_compatible_tensor_layout(builder,
                                           tensor: tlx.buffered_tensor):
     """Create a DummyRegisterLayout encoding for TMEM-compatible register layout."""
-    return builder.utlx_make_dummy_register_layout(
+    return builder.create_utlx_make_dummy_register_layout(
         [builder.get_int32(int(s)) for s in tensor.shape] +
         [_make_type_carrier(builder, tensor.dtype),
          builder.get_int32(1)])  # tmemCompatible=True
@@ -91,7 +91,8 @@ def storage_alias_spec(
         size_val = tl._unwrap_if_constexpr(buffer_size_bytes)
     size_ir = _semantic.builder.get_int64(size_val)
 
-    handle = _semantic.builder.utlx_storage_alias_spec([storage_ir, size_ir])
+    handle = _semantic.builder.create_utlx_storage_alias_spec(
+        [storage_ir, size_ir])
 
     return tlx.storage_alias_spec(
         handle,
@@ -139,7 +140,7 @@ def local_alloc(
     target_hint = _semantic.builder.get_int32(1 if is_amd else 0)
 
     args = [type_carrier] + shape_values + [target_hint]
-    tensor_handle = _semantic.builder.utlx_local_alloc(args)
+    tensor_handle = _semantic.builder.create_utlx_local_alloc(args)
 
     if len(unwrapped_shape) == 1 or is_amd:
         py_layout = tlx.swizzled_shared_layout_encoding.make_default(
@@ -161,7 +162,8 @@ def _local_alloc_with_storage_alias(semantic, spec, dtype, full_shape,
     storage_hint = semantic.builder.get_int32(1 if is_tmem else 0)
 
     args = [spec.handle, type_carrier] + shape_values + [storage_hint]
-    tensor_handle = semantic.builder.utlx_storage_alias_local_alloc(args)
+    tensor_handle = semantic.builder.create_utlx_storage_alias_local_alloc(
+        args)
 
     if is_tmem:
         py_layout = tlx.tensor_memory_layout_encoding.make_default(
@@ -191,7 +193,7 @@ def _local_alloc_tmem(semantic, dtype, full_shape, unwrapped_shape,
     layout_hint = semantic.builder.get_int32(1 if use_dummy else 0)
 
     args = [type_carrier] + shape_values + [layout_hint]
-    tensor_handle = semantic.builder.utlx_local_alloc_tmem(args)
+    tensor_handle = semantic.builder.create_utlx_local_alloc_tmem(args)
 
     if use_dummy:
         py_layout = tlx.DummyTMEMLayoutEncoding()
@@ -216,7 +218,7 @@ def _local_alloc_with_alias(semantic, reuse_tensor, dtype, full_shape,
     storage_hint = semantic.builder.get_int32(1 if is_tmem else 0)
 
     args = [reuse_tensor.handle, type_carrier] + shape_values + [storage_hint]
-    tensor_handle = semantic.builder.utlx_local_alias(args)
+    tensor_handle = semantic.builder.create_utlx_local_alias(args)
 
     if is_tmem:
         py_layout = tlx.tensor_memory_layout_encoding.make_default(
@@ -241,7 +243,7 @@ def local_view(
     """Returns a subview of the buffer at the given index."""
     buffer_idx = _semantic._convert_elem_to_ir_value(buffer_idx,
                                                      require_i64=False)
-    view_handle = _semantic.builder.utlx_local_view(
+    view_handle = _semantic.builder.create_utlx_local_view(
         [local_allocated_buffers.handle, buffer_idx])
 
     if isinstance(local_allocated_buffers, tlx.mbarrier):
@@ -286,7 +288,7 @@ def remote_view(
     assert local_allocated_buffer.type.storage == storage_kind.smem, "remote_view requires local smem as input"
     remote_cta_rank_handle = _get_remote_cta_rank_handle(
         remote_cta_rank, _semantic)
-    remote_buf_handle = _semantic.builder.utlx_map_to_remote_buffer(
+    remote_buf_handle = _semantic.builder.create_utlx_map_to_remote_buffer(
         [local_allocated_buffer.handle, remote_cta_rank_handle])
     return tlx.mbarrier(remote_buf_handle, 0,
                         local_allocated_buffer.type.layout,
@@ -305,7 +307,7 @@ def remote_shmem_store(
     assert remote_cta_rank is not None
     remote_cta_rank_handle = _get_remote_cta_rank_handle(
         remote_cta_rank, _semantic)
-    _semantic.builder.utlx_remote_shmem_store(
+    _semantic.builder.create_utlx_remote_shmem_store(
         [src.handle, dst.handle, remote_cta_rank_handle])
     return tl.tensor(src.handle, tl.void)
 
@@ -324,7 +326,7 @@ def async_remote_shmem_store(
     assert barrier is not None
     remote_cta_rank_handle = _get_remote_cta_rank_handle(
         remote_cta_rank, _semantic)
-    _semantic.builder.utlx_async_remote_shmem_store(
+    _semantic.builder.create_utlx_async_remote_shmem_store(
         [src.handle, dst.handle, remote_cta_rank_handle, barrier.handle])
     return tl.tensor(src.handle, tl.void)
 
@@ -462,7 +464,7 @@ def async_load(
 
         _semantic._str_to_load_cache_modifier(cache_modifier)
         _semantic._str_to_eviction_policy(eviction_policy)
-        token = _semantic.builder.utlx_async_load([
+        token = _semantic.builder.create_utlx_async_load([
             src.handle, result.handle, bulk_size_handle, barrier.handle,
             _semantic.builder.get_int32(1)
         ])  # useBulk=1
@@ -494,7 +496,7 @@ def async_load(
     if other is not None:
         args.append(other.handle)
     args.append(_semantic.builder.get_int32(0))  # useBulk=0
-    token = _semantic.builder.utlx_async_load(args)
+    token = _semantic.builder.create_utlx_async_load(args)
     return tlx.async_token(token)
 
 
@@ -509,7 +511,7 @@ def async_load_commit_group(
     handles = [
         t.handle for t in tokens if t is not None and t.handle is not None
     ]
-    result = _semantic.builder.utlx_async_commit_group(handles)
+    result = _semantic.builder.create_utlx_async_commit_group(handles)
     return tlx.async_token(result)
 
 
@@ -527,7 +529,7 @@ def async_load_wait_group(
         t.handle for t in tokens if t is not None and t.handle is not None
     ]
     args = [_semantic.builder.get_int32(pendings)] + handles
-    _semantic.builder.utlx_async_wait_group(args)
+    _semantic.builder.create_utlx_async_wait_group(args)
     return tlx.async_token(None)
 
 
@@ -546,13 +548,13 @@ def local_load(
             _semantic.builder, src)
         load_handle = _semantic.builder.create_tmem_load(
             src.handle, tmem_layout, token.handle if token else None)
-        output = _semantic.builder.utlx_release_layout([load_handle])
+        output = _semantic.builder.create_utlx_release_layout([load_handle])
         return tl.tensor(output, block_type)
     else:
         args = [src.handle]
         if token is not None and token.handle is not None:
             args.append(token.handle)
-        output = _semantic.builder.utlx_local_load(args)
+        output = _semantic.builder.create_utlx_local_load(args)
         return tl.tensor(output, block_type)
 
 
@@ -568,13 +570,13 @@ def local_store(
         _assert_blackwell_for_tmem(_semantic.builder.options.arch)
         tmem_layout = _create_tmem_compatible_tensor_layout(
             _semantic.builder, dst)
-        src_handle = _semantic.builder.utlx_require_with_layout_carrier(
+        src_handle = _semantic.builder.create_utlx_require_with_layout_carrier(
             [src.handle, tmem_layout])
         return tl.tensor(
             _semantic.builder.create_tmem_store(dst.handle, src_handle),
             tl.void)
 
-    _semantic.builder.utlx_local_store([dst.handle, src.handle])
+    _semantic.builder.create_utlx_local_store([dst.handle, src.handle])
     return tl.tensor(src.handle, tl.void)
 
 
@@ -611,7 +613,7 @@ def async_store(
     else:
         size_handle = _semantic._convert_elem_to_ir_value(size,
                                                           require_i64=False)
-    _semantic.builder.utlx_async_store(
+    _semantic.builder.create_utlx_async_store(
         [src_smem.handle, dst_global_ptr.handle, size_handle])
 
 
@@ -623,7 +625,8 @@ def fence(scope: tl.constexpr, _semantic=None) -> None:
         _semantic.builder.create_fence_async_shared(False)
     elif scope in ("gpu", "sys"):
         scope_val = 0 if scope == "gpu" else 1
-        _semantic.builder.utlx_fence([_semantic.builder.get_int32(scope_val)])
+        _semantic.builder.create_utlx_fence(
+            [_semantic.builder.get_int32(scope_val)])
     else:
         raise ValueError(
             f"fence scope must be 'gpu', 'sys', or 'async_shared', got '{scope}'"
@@ -650,7 +653,7 @@ def allocate_tensor_descriptor(
     nbytes = descriptor_size * unwrapped_num
     alignment = 128
 
-    tensor_handle = _semantic.builder.utlx_global_scratch_alloc([
+    tensor_handle = _semantic.builder.create_utlx_global_scratch_alloc([
         _semantic.builder.get_int32(nbytes),
         _semantic.builder.get_int32(alignment)
     ])
@@ -804,8 +807,8 @@ def async_descriptor_prefetch_tensor(
         pred_handle = _semantic.builder.get_int1(True)
     else:
         pred_handle = pred.handle
-    _semantic.builder.utlx_async_tma_prefetch([desc.handle] + offsets +
-                                              [pred_handle])
+    _semantic.builder.create_utlx_async_tma_prefetch([desc.handle] + offsets +
+                                                     [pred_handle])
 
 
 @tl.builtin
