@@ -14,10 +14,11 @@ Usage:
 	[DRY_RUN={1|0}] [VERBOSE={1|0}] python ci/create-triton-pin-pr.py
 """
 
-import subprocess
-import sys
+import common
 import os
 import logging
+import subprocess
+import sys
 
 
 def exec(args: list[str],
@@ -124,15 +125,10 @@ def main(dry_run: bool):
     open_pr(branch, short_hash, hash, dry_run)
 
 
-def env2bool(variable: str) -> bool:
-    """Convert an environment variable string to a boolean."""
-    return os.getenv(variable, 'false').lower() in ('true', '1', 't')
-
-
 if __name__ == "__main__":
     logging.getLogger().name = os.path.basename(__file__)
-    if env2bool("VERBOSE"):
+    if common.env2bool("VERBOSE"):
         logging.basicConfig(level=logging.DEBUG)
-    dry_run = env2bool("DRY_RUN")
+    dry_run = common.env2bool("DRY_RUN")
 
     main(dry_run)

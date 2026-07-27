@@ -15,12 +15,13 @@ Usage:
     [GITHUB_TOKEN=<relative-path>] [VERBOSE={1|0}] python fetch-artifact-id.py [artifact-name]
 """
 
+import common
 from dataclasses import dataclass
-import sys
-import os
 import json
-import subprocess
 import logging
+import os
+import subprocess
+import sys
 
 
 @dataclass
@@ -77,14 +78,9 @@ def main(repository: str, artifact_name: str | None):
         print_all(artifacts)
 
 
-def env2bool(variable: str) -> bool:
-    """Convert an environment variable string to a boolean."""
-    return os.getenv(variable, 'false').lower() in ('true', '1', 't')
-
-
 if __name__ == "__main__":
     logging.getLogger().name = os.path.basename(__file__)
-    if env2bool("VERBOSE"):
+    if common.env2bool("VERBOSE"):
         logging.basicConfig(level=logging.DEBUG)
 
     repository = os.getenv('GITHUB_REPOSITORY', 'triton-lang/triton-ext')

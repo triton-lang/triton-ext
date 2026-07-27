@@ -16,12 +16,13 @@ Usage:
     python ci/download-artifact.py <project>[-<commit>[-<os>[-<arch>]]]
 """
 
-import sys
+import common
 import os
 import subprocess
 import tarfile
 import logging
 import shutil
+import sys
 
 
 def read_triton_hash():
@@ -163,18 +164,13 @@ def main(repository: str, project: str, commit: str | None,
           file=sys.stderr)
 
 
-def env2bool(variable: str) -> bool:
-    """Convert an environment variable string to a boolean."""
-    return os.getenv(variable, 'false').lower() in ('true', '1', 't')
-
-
 if __name__ == "__main__":
     logging.getLogger().name = os.path.basename(__file__)
-    if env2bool("VERBOSE"):
+    if common.env2bool("VERBOSE"):
         logging.basicConfig(level=logging.DEBUG)
 
     repository = os.getenv('GITHUB_REPOSITORY', 'triton-lang/triton-ext')
-    dry_run = env2bool("DRY_RUN")
+    dry_run = common.env2bool("DRY_RUN")
 
     USAGE = "python download-artifact.py <project>[-<commit>[-<os>[-<arch>]]]"
     if len(sys.argv) != 2:
