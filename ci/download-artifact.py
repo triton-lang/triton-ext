@@ -17,11 +17,9 @@ Usage:
 """
 
 import common
+import logging
 import os
 import subprocess
-import tarfile
-import logging
-import shutil
 import sys
 
 
@@ -85,53 +83,6 @@ def download_artifact(repository, artifact_name):
     return artifact_file
 
 
-def is_contained_path(path):
-    """Check if a path is contained (i.e., does not contain '..' or start with '/')."""
-    return not (path.startswith('/') or '..' in path)
-
-
-def filter_data(tarinfo, path):
-    """Apply 'data' filter behavior but skip certain symlinks."""
-    # Skip symlinks if they point outside the extraction directory.
-    if tarinfo.issym() or tarinfo.islnk():
-        if not is_contained_path(tarinfo.linkname):
-            logging.warning(
-                f"Skipping symlink: {tarinfo.name} -> {tarinfo.linkname}")
-            return None
-
-    # Apply 'data' filter behavior: strip dangerous metadata, but preserve
-    # executability for files that were executable in the archive.
-    if tarinfo.isdir():
-        tarinfo.mode = 0o755
-    else:
-        tarinfo.mode = 0o755 if (tarinfo.mode & 0o111) else 0o644
-    tarinfo.uid = tarinfo.gid = 0
-    tarinfo.uname = tarinfo.gname = ""
-
-    # Block paths outside the extraction directory.
-    if not is_contained_path(tarinfo.name):
-        logging.warning(f"Skipping potentially unsafe path: {tarinfo.name}")
-        return None
-
-    return tarinfo
-
-
-def extract_artifact(artifact_file):
-    """Extract a tar.gz artifact."""
-    output_dir = artifact_file.replace(".tar.gz", "")
-    if os.path.exists(output_dir):
-        logging.debug(f"Deleting existing directory: {output_dir}")
-        shutil.rmtree(output_dir)
-
-    logging.debug(f"Extracting artifact: {artifact_file}")
-    try:
-        with tarfile.open(artifact_file, "r:gz") as tar:
-            tar.extractall(filter=filter_data)
-    except Exception as e:
-        logging.error(f"Error extracting artifact: {e}")
-        sys.exit(1)
-
-
 def main(repository: str, project: str, commit: str | None,
          os_name: str | None, arch: str | None, dry_run: bool):
     assert project in ("llvm", "triton")
@@ -158,7 +109,7 @@ def main(repository: str, project: str, commit: str | None,
     artifact = f"{project}-{commit[:8]}-{os_name}-{arch}"
     if not dry_run:
         tar_gz = download_artifact(repository, artifact)
-        extract_artifact(tar_gz)
+        common.extract_artifact(tar_gz)
 
     print(f"Successfully downloaded and installed: {artifact}/",
           file=sys.stderr)
