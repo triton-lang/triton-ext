@@ -32,6 +32,7 @@ from fnmatch import fnmatch
 
 import common
 import list_triton_wheels as wheels
+import probe_sysinfo
 
 USAGE = "Usage: python ci/download_triton_wheel.py [channel] ['wheel-pattern']"
 LOG = logging.getLogger(os.path.basename(__file__))
@@ -42,13 +43,6 @@ def read_triton_hash():
     dir = os.path.dirname(os.path.abspath(__file__))
     file = os.path.join(dir, "triton-hash.txt")
     return open(file).read().strip()
-
-
-def probe_sysinfo():
-    """Get the current OS and architecture via the probe-sysinfo module."""
-    import importlib as _il
-    module = _il.import_module("probe-sysinfo")
-    return module.run()
 
 
 def probe_python_tag():
@@ -120,7 +114,7 @@ def main(
     if channel == "nightly" and pattern is None:
         ref = read_triton_hash()
         pytag = probe_python_tag()
-        os, probed_arch = probe_sysinfo()
+        os, probed_arch = probe_sysinfo.run()
         arch = normalize_arch(probed_arch)
         pattern = f"triton-*+git{ref[:8]}-{pytag}-{pytag}-{os}*_{arch}*.whl"
 

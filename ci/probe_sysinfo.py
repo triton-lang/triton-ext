@@ -13,7 +13,7 @@ OS name is refined to the distro family rather than the generic `linux`:
 - everything else (Ubuntu, Debian, etc.): `ubuntu`
 
 Usage:
-    [REFINE_OS=1|0] python probe-sysinfo.py
+    [REFINE_OS=1|0] python probe_sysinfo.py
 """
 
 import os
