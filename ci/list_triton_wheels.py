@@ -3,6 +3,7 @@
 List all available Triton wheel versions.
 
 - **nightly** wheels come from the Triton's Azure `feed`_ published to by CI
+  (default)
 - **release** wheels come from `PyPI`_
 
 This module exports the :class:`Wheel` class and the :func:`run` function, which
@@ -10,7 +11,7 @@ fetches a list of wheels for a given channel (a `PEP 503`_ index). When run as a
 script it prints the retrieved wheel names to stdout.
 
 Usage:
-    python ci/list_triton_wheels.py nightly|release
+    python ci/list_triton_wheels.py [nightly|release]
 
 .. _feed: https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/Triton-Nightly/pypi/simple/triton/
 .. _PEP 503: https://peps.python.org/pep-0503/
@@ -149,11 +150,11 @@ if __name__ == "__main__":
         results = doctest.testmod()
         sys.exit(int(results.failed > 0))
 
-    USAGE = "python ci/list_triton_wheels.py nightly|release"
-    if len(sys.argv) != 2 or sys.argv[1] not in CHANNELS:
-        print(f"Usage: {USAGE}", file=sys.stderr)
+    channel = sys.argv[1] if len(sys.argv) > 1 else "nightly"
+    if channel not in CHANNELS:
+        print("Usage: python ci/list_triton_wheels.py [nightly|release]",
+              file=sys.stderr)
         sys.exit(1)
 
-    channel = sys.argv[1]
     for wheel in run(channel):
         print(wheel)
