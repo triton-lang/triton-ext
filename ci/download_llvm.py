@@ -5,11 +5,10 @@ and expand it in the current directory. Triton's CI builds LLVM and uploads the
 resulting tarballs to a public Azure blob container to Azure:
 https://oaitriton.blob.core.windows.net/public/llvm-builds/.
 
-Artifact names follow the pattern `llvm-<commit>-<os>-<arch>-<build-number>`.
+Artifact names follow the pattern `<commit>-<os>-<arch>-<build-number>`.
 This script accepts the same pattern as its single argument, which can be
-incrementally more specific (e.g., `<llvm>`, `llvm-<commit>`, etc.):
+incrementally more specific (e.g., `<commit>`, `<commit>-<os>`, etc.):
 
-- `llvm` (required)
 - `<commit>`: a short (8-char) LLVM commit hash (optional; defaults to the hash
   pinned in Triton)
 - `<os>`: the target OS (optional; defaults to current system; one of: ubuntu,
@@ -20,7 +19,7 @@ incrementally more specific (e.g., `<llvm>`, `llvm-<commit>`, etc.):
   Triton)
 
 Usage:
-    python ci/download-llvm.py llvm[-<commit>[-<os>[-<arch>[-<build-number>]]]]
+    python ci/download_llvm.py [<commit>[-<os>[-<arch>[-<build-number>]]]]
 """
 
 import logging
@@ -28,6 +27,7 @@ import os
 import sys
 
 import common
+import probe_sysinfo
 import requests
 
 LOG = logging.getLogger(os.path.basename(__file__))
@@ -51,13 +51,6 @@ def fetch_llvm_build_info(triton_rev):
     return response.json()
 
 
-def probe_sysinfo():
-    """Get the current OS and architecture."""
-    import importlib
-    module = importlib.import_module("probe-sysinfo")
-    return module.run()
-
-
 def get_artifact_name(commit, os_name, arch, build_number):
     """Build the artifact base name (without .tar.gz)."""
     short_hash = commit[:8]
@@ -73,9 +66,8 @@ def download_artifact(artifact_name):
     return artifact_file
 
 
-def main(project: str, commit: str | None, os_name: str | None,
-         arch: str | None, build_number: str | None, dry_run: bool):
-    assert project == "llvm", f"Only 'llvm' is supported; got '{project}'"
+def main(commit: str | None, os_name: str | None, arch: str | None,
+         build_number: str | None, dry_run: bool):
 
     # Fetch LLVM build info from the pinned Triton revision if any fields are missing.
     build_info = None
@@ -96,7 +88,7 @@ def main(project: str, commit: str | None, os_name: str | None,
         LOG.debug(f"Found LLVM build number: {build_number}")
 
     # If no OS or architecture is provided, probe the current system.
-    probed_os, probed_arch = probe_sysinfo()
+    probed_os, probed_arch = probe_sysinfo.run(refine_os=True)
     LOG.debug(f"Probed system: {probed_os}-{probed_arch}")
     if not os_name:
         os_name = probed_os
@@ -121,16 +113,14 @@ if __name__ == "__main__":
 
     dry_run = common.env2bool("DRY_RUN")
 
-    USAGE = "python download-llvm.py llvm[-<commit>[-<os>[-<arch>[-<build-number>]]]]"
-    if len(sys.argv) != 2:
+    if len(sys.argv) == 1:
+        commit, os_name, arch, build_number = (None, None, None, None)
+    elif len(sys.argv) == 2:
+        parts = sys.argv[1].split('-')
+        commit, os_name, arch, build_number = (parts + [None] * 4)[:4]
+    else:
+        USAGE = "python ci/download_llvm.py [<commit>[-<os>[-<arch>[-<build-number>]]]]"
         LOG.error(f"Usage: {USAGE}")
         sys.exit(1)
 
-    parts = sys.argv[1].split('-')
-    project, commit, os_name, arch, build_number = (parts + [None] * 5)[:5]
-    if project != "llvm":
-        LOG.error("Invalid project name; expected 'llvm'.")
-        LOG.error(f"Usage: {USAGE}")
-        sys.exit(1)
-
-    main(project, commit, os_name, arch, build_number, dry_run)
+    main(commit, os_name, arch, build_number, dry_run)
