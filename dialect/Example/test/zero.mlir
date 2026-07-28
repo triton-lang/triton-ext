@@ -1,4 +1,4 @@
-// RUN: triton-opt --split-input-file %s -canonicalize | FileCheck %s
+// RUN: triton-ext-opt --split-input-file %s -canonicalize | FileCheck %s
 
 // This test checks that the `example.zero` op is correctly parsed and printed
 // and that it is not canonicalized away. In a real dialect, we would want to

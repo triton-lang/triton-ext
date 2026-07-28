@@ -1,7 +1,7 @@
 import os
 import sys
 
-# Extend the test environment from `lit-test/lit.cfg.py`: point `triton-opt` at the shared library for this pass. In the
+# Extend the test environment from `lit-test/lit.cfg.py`: point `triton-ext-opt` at the shared library for this pass. In the
 # future, this should calculate an OS-agnostic path, possibly using the CMake target (TODO).
 config.environment["TRITON_PLUGIN_PATHS"] = os.path.join(
     config.triton_ext_binary_dir, "lib", "libloop_split.so")

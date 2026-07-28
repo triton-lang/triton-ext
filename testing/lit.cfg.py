@@ -1,4 +1,5 @@
 import os
+import platform
 import lit.formats
 from lit.llvm import llvm_config
 
@@ -40,3 +41,21 @@ config.environment["FILECHECK_OPTS"] = "--enable-var-scope"
 # libraries.
 llvm_lib_dir = os.path.join(config.llvm_install_dir, "lib")
 llvm_config.with_environment("LD_LIBRARY_PATH", llvm_lib_dir, append_path=True)
+triton_lib_dir = os.path.join(config.triton_install_dir, "lib")
+llvm_config.with_environment("LD_LIBRARY_PATH",
+                             triton_lib_dir,
+                             append_path=True)
+
+# Make the triton-ext build tools (e.g. triton-ext-opt) available on PATH.
+triton_ext_tools_dir = os.path.join(config.triton_ext_binary_dir, "bin")
+llvm_config.with_environment("PATH", triton_ext_tools_dir, append_path=True)
+config.environment["TRITON_EXT_TOOLS_DIR"] = triton_ext_tools_dir
+
+# Preload the CPython-symbol stubs so a libtriton-linked tool (triton-ext-opt)
+# loads without a real interpreter. On macOS, flat-namespace handles this.
+if platform.system() != "Darwin":
+    pystubs = os.path.join(config.triton_ext_binary_dir, "lib",
+                           "libpystubs.so")
+    existing = config.environment.get("LD_PRELOAD", "")
+    config.environment["LD_PRELOAD"] = (pystubs + ":" +
+                                        existing) if existing else pystubs

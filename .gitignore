@@ -1,6 +1,6 @@
 build
-llvm-*
-triton-*
+/llvm-*
+/triton-*
 !triton-ext.toml
 *.pyc
 .venv
