@@ -116,7 +116,7 @@ def main(
         pytag = probe_python_tag()
         os, probed_arch = probe_sysinfo.run()
         arch = normalize_arch(probed_arch)
-        pattern = f"triton-*+git{ref[:8]}-{pytag}-{pytag}-{os}*_{arch}*.whl"
+        pattern = f"triton-*+git{ref[:8]}-{pytag}-{pytag}-*{os}*_{arch}*.whl"
 
     if not pattern:
         LOG.error("No wheel pattern specified.")
