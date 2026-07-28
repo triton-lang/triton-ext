@@ -6,20 +6,24 @@ first, it examines the GitHub environment
   `RUNNER_OS` and `RUNNER_ARCH`
 - if these are not set, it falls back to Python's `platform` module.
 
-On Linux the OS name is refined to the distro family rather than the generic
-`linux`: - RHEL-compatible distros (RHEL, CentOS, Fedora, etc.): `almalinux` -
-everything else (Ubuntu, Debian, etc.): `ubuntu`
+To match upstream Triton's artifact naming, if `REFINE_OS` is configured a Linux
+OS name is refined to the distro family rather than the generic `linux`:
+
+- RHEL-compatible distros (RHEL, CentOS, Fedora, etc.): `almalinux`
+- everything else (Ubuntu, Debian, etc.): `ubuntu`
 
 Usage:
-    python probe-sysinfo.py
+    [REFINE_OS=1|0] python probe-sysinfo.py
 """
 
 import os
 import platform
 import sys
 
+import common
 
-def detect_linux_distro() -> str:
+
+def refine_linux_distro() -> str:
     """Return the artifact OS name for the current Linux distribution.
 
     Reads /etc/os-release via `platform.freedesktop_os_release()` and checks
@@ -36,11 +40,11 @@ def detect_linux_distro() -> str:
         return "ubuntu"
 
 
-def run() -> tuple[str, str]:
+def run(refine_os=False) -> tuple[str, str]:
     """Get the current OS and architecture (lowercase)."""
     os_name = os.getenv('RUNNER_OS', sys.platform).lower()
     if os_name.startswith("linux"):
-        os_name = detect_linux_distro()
+        os_name = refine_linux_distro() if refine_os else "linux"
     elif os_name.startswith("darwin"):
         os_name = "macos"
     elif os_name.startswith("win"):
@@ -56,5 +60,6 @@ def run() -> tuple[str, str]:
 
 
 if __name__ == "__main__":
-    os_name, arch = run()
+    refine_os = common.env2bool("REFINE_OS")
+    os_name, arch = run(refine_os)
     print(f"{os_name}-{arch}")
