@@ -23,7 +23,6 @@ Usage:
     python ci/download-llvm.py llvm[-<commit>[-<os>[-<arch>[-<build-number>]]]]
 """
 
-import hashlib
 import logging
 import os
 import sys
@@ -68,53 +67,10 @@ def get_artifact_name(commit, os_name, arch, build_number):
 def download_artifact(artifact_name):
     """Download an LLVM artifact tarball from Azure blob storage."""
     artifact_file = f"{artifact_name}.tar.gz"
-    if os.path.exists(artifact_file):
-        LOG.debug(f"Artifact already exists locally: {artifact_file}")
-        return artifact_file
-
     url = f"{AZURE_BASE_URL}/{artifact_file}"
     LOG.debug(f"Downloading artifact from: {url}")
-
-    response = requests.get(url, stream=True)
-    if response.status_code == 404:
-        LOG.error(f"Artifact not found: {url}")
-        sys.exit(1)
-    response.raise_for_status()
-
-    total = int(response.headers.get("content-length", 0))
-    downloaded = 0
-    with open(artifact_file, "wb") as f:
-        for chunk in response.iter_content(chunk_size=1 << 20):
-            f.write(chunk)
-            downloaded += len(chunk)
-            if total:
-                pct = downloaded * 100 // total
-                print(
-                    f"\r  {pct}% ({downloaded // (1 << 20)} / {total // (1 << 20)} MiB)",
-                    end="",
-                    flush=True,
-                    file=sys.stderr)
-    if total:
-        print(file=sys.stderr)  # newline after progress
-
+    common.download_file(url, artifact_file)
     return artifact_file
-
-
-def verify_checksum(artifact_file, expected_sha256):
-    """Verify the SHA-256 checksum of a downloaded file."""
-    LOG.debug(f"Verifying checksum: {artifact_file}")
-    sha256 = hashlib.sha256()
-    with open(artifact_file, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            sha256.update(chunk)
-    actual = sha256.hexdigest()
-    if actual != expected_sha256:
-        LOG.error(f"Checksum mismatch for {artifact_file}:")
-        LOG.error(f"  expected: {expected_sha256}")
-        LOG.error(f"  actual:   {actual}")
-        os.remove(artifact_file)
-        sys.exit(1)
-    LOG.debug(f"Checksum verified: {actual}")
 
 
 def main(project: str, commit: str | None, os_name: str | None,
@@ -151,8 +107,8 @@ def main(project: str, commit: str | None, os_name: str | None,
     if not dry_run:
         tar_gz = download_artifact(artifact)
         if build_info:
-            verify_checksum(tar_gz,
-                            build_info["sha256sum"][f"{os_name}-{arch}"])
+            common.verify_checksum(
+                tar_gz, build_info["sha256sum"][f"{os_name}-{arch}"])
         common.extract_artifact(tar_gz)
 
     print(f"Successfully downloaded and installed: {artifact}/",
