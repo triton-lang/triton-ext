@@ -30,7 +30,7 @@ runs:
         echo "llvm_commit_hash=${LLVM_COMMIT_HASH}" >> ${GITHUB_ENV}
 
         SHORT_LLVM_COMMIT_HASH="${LLVM_COMMIT_HASH:0:8}"
-        SYSINFO=$(python ci/probe-sysinfo.py)
+        SYSINFO=$(python ci/probe_sysinfo.py)
         INSTALL_DIR="llvm-${SHORT_LLVM_COMMIT_HASH}-${SYSINFO}"
         echo "LLVM installation directory: ${INSTALL_DIR}"
         echo "llvm_install_dir=${INSTALL_DIR}" >> ${GITHUB_ENV}

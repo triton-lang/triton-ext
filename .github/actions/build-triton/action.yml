@@ -34,7 +34,7 @@ runs:
         echo "triton_commit_hash=${TRITON_COMMIT_HASH}" >> ${GITHUB_ENV}
 
         SHORT_TRITON_COMMIT_HASH="${TRITON_COMMIT_HASH:0:8}"
-        SYSINFO=$(python ci/probe-sysinfo.py)
+        SYSINFO=$(python ci/probe_sysinfo.py)
         INSTALL_DIR="triton-${SHORT_TRITON_COMMIT_HASH}-${SYSINFO}"
         echo "Triton installation directory: ${INSTALL_DIR}"
         echo "triton_install_dir=${INSTALL_DIR}" >> ${GITHUB_ENV}
