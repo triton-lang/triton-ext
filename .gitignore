@@ -1,6 +1,14 @@
-build
-llvm-*
-triton-*
-!triton-ext.toml
+build/
+dist/
+llvm-*/
+triton-*/
+.venv/
+*.tar.gz
 *.pyc
-.venv
+
+# Python packaging / compiled extension artifacts.
+*.egg-info/
+*.so
+*.dylib
+*.dll
+*.whl
