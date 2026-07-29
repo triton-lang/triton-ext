@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=64"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core>=0.10", "cmake>=3.20", "ninja"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "utlx"
@@ -8,6 +8,19 @@ version = "0.1.0"
 description = "uTLX: Triton Language Extensions distributed as a Plugin"
 requires-python = ">=3.9"
 
-[tool.setuptools.packages.find]
-where = ["python", "tlx/language"]
-include = ["utlx", "utlx_plugin", "utlx_plugin.*", "tlx", "tlx.*"]
+[tool.triton-ext]
+status = "experimental"
+enabled = true
+
+[tool.scikit-build]
+cmake.version = ">=3.20"
+cmake.build-type = "Release"
+# Keep tutorials and caches out of the wheel.
+wheel.exclude = ["**/__pycache__/**", "**/*.pyc", "tlx/tutorials/**"]
+
+# Bundle the three pure-Python packages. CMake installs libutlx.so into
+# utlx_plugin/ using `install()` (see CMakeLists.txt).
+[tool.scikit-build.wheel.packages]
+utlx_plugin = "python/utlx_plugin"
+utlx = "python/utlx"
+tlx = "tlx/language/tlx"

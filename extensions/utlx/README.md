@@ -21,37 +21,40 @@ source ./triton/.venv/bin/activate
 TRITON_EXT_ENABLED=1 make -C triton dev-install-llvm
 ```
 
-## Configure and Build the µTLX plugin
+## Build and install the µTLX wheel
+
+µTLX is packaged as a self-contained wheel (via `scikit-build-core`). The native
+plugin (`libutlx.so`) is compiled by CMake and bundled inside the `utlx_plugin`
+package, so importing it registers the plugin with Triton automatically — no
+`TRITON_PLUGIN_PATHS` needed.
+
+Build inputs:
+
+- `LLVM_INSTALL_DIR` — an LLVM/MLIR install (headers, `mlir-tblgen`, CMake
+  modules). Pass it as an environment variable.
+- `TRITON_WHEEL_DIR` — an installed Triton wheel built with
+  `TRITON_EXT_ENABLED=1`. Discovered automatically from the active Python
+  environment; override with `TRITON_WHEEL_DIR=...` if needed.
 
 ```bash
 cd $PROJECT_ROOT
 git clone -b tlx https://github.com/triton-lang/triton-ext
 
-cmake -GNinja \
-  -B./triton-ext/extensions/utlx/build \
-  -S./triton-ext \
-  -DTRITON_SOURCE_DIR=$PROJECT_ROOT/triton \
-  -DTRITON_BUILD_DIR=$PROJECT_ROOT/triton/build/cmake.linux-x86_64-cpython-3.11 \
-  -DLLVM_BUILD_DIR=$PROJECT_ROOT/triton/llvm-project/build \
-  -DTRITON_EXT_NAMES="utlx"
-
-ninja -C ./triton-ext/extensions/utlx/build
+LLVM_INSTALL_DIR=$(realpath $PROJECT_ROOT/triton-ext/llvm-*) \
+    pip install ./triton-ext/extensions/utlx --no-build-isolation
 ```
 
-## Output: build/lib/libutlx.so
-
-To use it:
-
-## Set the plugin path
+`--no-build-isolation` lets CMake discover the Triton wheel installed in the
+active environment. To build a distributable wheel instead of installing:
 
 ```bash
-export TRITON_PLUGIN_PATHS=$PROJECT_ROOT/triton-ext/extensions/utlx/build/lib/libutlx.so
+LLVM_INSTALL_DIR=$(realpath $PROJECT_ROOT/triton-ext/llvm-*) \
+    pip wheel ./triton-ext/extensions/utlx --no-build-isolation --no-deps -w dist
 ```
 
 ## Run AMD Group GEMM
 
 ```bash
-TRITON_PLUGIN_PATHS=$PROJECT_ROOT/triton-ext/extensions/utlx/build/lib/libutlx.so \
 python $PROJECT_ROOT/triton-ext/extensions/utlx/tlx/tutorials/amd-gemm-pipelined_test.py
 ```
 
@@ -59,15 +62,7 @@ python $PROJECT_ROOT/triton-ext/extensions/utlx/tlx/tutorials/amd-gemm-pipelined
 
 ```bash
 cd $PROJECT_ROOT/triton-ext/extensions/utlx/test
-TRITON_PLUGIN_PATHS=$PROJECT_ROOT/triton-ext/extensions/utlx/build/lib/libutlx.so python -m pytest -v
+python -m pytest -v
 ```
-
-The three required paths:
-
-- TRITON_SOURCE_DIR — Triton source tree (for headers)
-- TRITON_BUILD_DIR — Triton build directory (for libtriton.so and generated
-  headers)
-- LLVM_BUILD_DIR — LLVM/MLIR build directory (for mlir-tblgen, MLIR libs, and
-  headers)
 
 [tlx]: https://github.com/facebookexperimental/triton

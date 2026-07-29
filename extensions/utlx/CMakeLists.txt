@@ -1,175 +1,161 @@
-triton_extension(uTLXPlugin)
-
 # ---------------------------------------------------------------------------
 # uTLX — standalone Triton plugin for the TLX dialect.
 #
-# This extension builds libuTLXPlugin.so, loadable via TRITON_PLUGIN_PATHS.
-# It provides:
-#   - The TLX dialect (types, attrs, ops)
-#   - TLX transform passes
-#   - TLX custom ops for the TritonOpBuilder
-#   - TLX conversion patterns (ConvertTritonToTritonGPU plugin pass)
+# Builds a single self-contained `libutlx.so`, bundled into the `utlx` wheel and
+# loaded on import (see python/utlx_plugin/__init__.py). It provides the TLX
+# dialect (types, attrs, ops), TLX transform passes, TLX custom ops for the
+# TritonOpBuilder, and the ConvertTritonToTritonGPU conversion patterns.
 #
-# Supports two build modes:
-#   1. Within triton-ext (TRITON_INSTALL_DIR / LLVM_INSTALL_DIR set by parent)
-#   2. With source/build dirs (TRITON_SOURCE_DIR / TRITON_BUILD_DIR / LLVM_BUILD_DIR)
+# The plugin links ONLY against the Triton shared library shipped inside an
+# installed Triton wheel (`triton/_C/libtriton.so`), which re-exports the
+# MLIR/LLVM symbols it needs (the wheel must be built with
+# `TRITON_EXT_ENABLED=1`). LLVM/MLIR is used only for headers, `mlir-tblgen`,
+# and CMake modules — never for linking.
+#
+# Two inputs are required:
+#   - TRITON_WHEEL_DIR  — an installed Triton wheel (`<site-packages>/triton`).
+#                         Discovered automatically from the active Python
+#                         interpreter, or pass `-DTRITON_WHEEL_DIR=...`.
+#   - LLVM_INSTALL_DIR  — an LLVM/MLIR install (headers + mlir-tblgen + CMake
+#                         modules). Discovered automatically from a local
+#                         `llvm-*` artifact (see cmake/llvm.cmake), or pass
+#                         `-DLLVM_INSTALL_DIR=...` / set the environment
+#                         variable to override.
+#
+# This file is normally driven by scikit-build-core (`pip install .`), but can
+# also be configured directly:
+#
+#   cmake -S extensions/utlx -B extensions/utlx/build -G Ninja \
+#       -DLLVM_INSTALL_DIR=$(python ci/pick_local_artifact.py 'llvm-*') \
+#       -DTRITON_WHEEL_DIR=$(python ci/probe_triton_wheel.py)
+#   cmake --build extensions/utlx/build
 # ---------------------------------------------------------------------------
+cmake_minimum_required(VERSION 3.20)
+project(utlx LANGUAGES C CXX)
 
-# Accept source/build paths from environment if not set via -D
-if(NOT TRITON_SOURCE_DIR AND DEFINED ENV{TRITON_SOURCE_DIR})
-    set(TRITON_SOURCE_DIR $ENV{TRITON_SOURCE_DIR})
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
+
+find_package(Python COMPONENTS Interpreter REQUIRED)
+
+# ---------------------------------------------------------------------------
+# Extension name/version come from pyproject.toml, passed in by scikit-build-core
+# as SKBUILD_PROJECT_NAME/SKBUILD_PROJECT_VERSION. The name drives the output
+# library filename (`libutlx.so`). Fall back to the project() values for direct
+# `cmake` configures that don't go through scikit-build-core.
+# ---------------------------------------------------------------------------
+if(DEFINED SKBUILD_PROJECT_NAME)
+    set(TRITON_EXT_NAME "${SKBUILD_PROJECT_NAME}")
+else()
+    set(TRITON_EXT_NAME "${PROJECT_NAME}")
 endif()
-if(NOT TRITON_BUILD_DIR AND DEFINED ENV{TRITON_BUILD_DIR})
-    set(TRITON_BUILD_DIR $ENV{TRITON_BUILD_DIR})
+if(DEFINED SKBUILD_PROJECT_VERSION)
+    set(TRITON_EXT_VERSION "${SKBUILD_PROJECT_VERSION}")
+else()
+    set(TRITON_EXT_VERSION "0.0.0+dev")
 endif()
-if(NOT LLVM_BUILD_DIR AND DEFINED ENV{LLVM_BUILD_DIR})
-    set(LLVM_BUILD_DIR $ENV{LLVM_BUILD_DIR})
+message(STATUS "Building triton-ext extension: ${TRITON_EXT_NAME} "
+               "(v${TRITON_EXT_VERSION})")
+
+# ---------------------------------------------------------------------------
+# Locate Triton from an installed wheel: headers under `<triton>/include`, the
+# shared library under `<triton>/_C`. Discover it (from the environment or the
+# active interpreter; see cmake/triton-wheel.cmake) unless already given via
+# -DTRITON_WHEEL_DIR.
+# ---------------------------------------------------------------------------
+get_filename_component(TRITON_EXT_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.."
+                       ABSOLUTE)
+include("${TRITON_EXT_REPO_ROOT}/cmake/triton-wheel.cmake")
+if(NOT DEFINED TRITON_WHEEL_DIR)
+    find_triton_wheel(TRITON_WHEEL_DIR)
+endif()
+message(STATUS "Found Triton wheel at ${TRITON_WHEEL_DIR}")
+
+get_filename_component(TRITON_WHEEL_DIR "${TRITON_WHEEL_DIR}" ABSOLUTE)
+set(TRITON_WHEEL_INCLUDE_DIR "${TRITON_WHEEL_DIR}/include")
+find_library(TRITON_LIB NAMES triton
+PATHS "${TRITON_WHEEL_DIR}/_C" NO_DEFAULT_PATH REQUIRED)
+message(STATUS "Found Triton library at ${TRITON_LIB}")
+
+if(NOT EXISTS "${TRITON_WHEEL_INCLUDE_DIR}/triton")
+    message(FATAL_ERROR
+            "Triton wheel is missing C++ headers at ${TRITON_WHEEL_INCLUDE_DIR}; "
+            "it must be built with TRITON_EXT_ENABLED=1.")
 endif()
 
 # ---------------------------------------------------------------------------
-# TableGen for the TLX dialect
+# Locate LLVM/MLIR for headers, mlir-tblgen, and CMake modules (NOT for linking:
+# the required symbols are re-exported by libtriton). Discover it (from the
+# environment or a local artifact; see cmake/llvm.cmake) unless already given
+# via -DLLVM_INSTALL_DIR.
 # ---------------------------------------------------------------------------
-set(UTLX_DIALECT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tlx/dialect")
-set(UTLX_DIALECT_INCLUDE_DIR "${UTLX_DIALECT_DIR}/include")
+include("${TRITON_EXT_REPO_ROOT}/cmake/llvm.cmake")
+if(NOT DEFINED LLVM_INSTALL_DIR)
+    find_llvm_install_dir(LLVM_INSTALL_DIR)
+endif()
+get_filename_component(LLVM_INSTALL_DIR "${LLVM_INSTALL_DIR}" ABSOLUTE)
+find_package(MLIR REQUIRED CONFIG PATHS "${LLVM_INSTALL_DIR}/lib/cmake/mlir")
+message(STATUS "Found MLIR at ${MLIR_DIR}")
+
+list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")
+include(TableGen)
+include(AddLLVM)
+include(AddMLIR)
+
+# ---------------------------------------------------------------------------
+# Include search paths (shared by TableGen and the C++ compile). These must be
+# set before `mlir_tablegen` so TableGen can resolve `include "..."` directives.
+# ---------------------------------------------------------------------------
+set(UTLX_DIALECT_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tlx/dialect/include")
 set(UTLX_TABLEGEN_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/tlx/dialect/include")
 
-# Ensure the output directories exist
-file(MAKE_DIRECTORY "${UTLX_TABLEGEN_OUTPUT_DIR}/IR")
-file(MAKE_DIRECTORY "${UTLX_TABLEGEN_OUTPUT_DIR}/Transforms")
-
-# Find mlir-tblgen
-if(NOT MLIR_TABLEGEN_EXE)
-    if(LLVM_BUILD_DIR)
-        find_program(MLIR_TABLEGEN_EXE mlir-tblgen
-            PATHS "${LLVM_BUILD_DIR}/bin"
-            NO_DEFAULT_PATH)
-    endif()
-    if(NOT MLIR_TABLEGEN_EXE AND LLVM_INSTALL_DIR)
-        find_program(MLIR_TABLEGEN_EXE mlir-tblgen
-            PATHS "${LLVM_INSTALL_DIR}/bin"
-            NO_DEFAULT_PATH)
-    endif()
-    if(NOT MLIR_TABLEGEN_EXE)
-        find_program(MLIR_TABLEGEN_EXE mlir-tblgen)
-    endif()
-endif()
-
-if(NOT MLIR_TABLEGEN_EXE)
-    message(FATAL_ERROR "Could not find mlir-tblgen. Set LLVM_BUILD_DIR or LLVM_INSTALL_DIR.")
-endif()
-
-# Collect tablegen include paths
-set(UTLX_TBLGEN_INCLUDES
-    "-I${UTLX_DIALECT_INCLUDE_DIR}/IR"
-    "-I${UTLX_DIALECT_INCLUDE_DIR}"
-)
-# MLIR/LLVM tablegen includes
-if(LLVM_BUILD_DIR)
-    list(APPEND UTLX_TBLGEN_INCLUDES
-        "-I${LLVM_BUILD_DIR}/include"
-    )
-endif()
-if(LLVM_INSTALL_DIR)
-    list(APPEND UTLX_TBLGEN_INCLUDES
-        "-I${LLVM_INSTALL_DIR}/include"
-    )
-endif()
-foreach(dir ${LLVM_INCLUDE_DIRS})
-    list(APPEND UTLX_TBLGEN_INCLUDES "-I${dir}")
-endforeach()
-foreach(dir ${MLIR_INCLUDE_DIRS})
-    list(APPEND UTLX_TBLGEN_INCLUDES "-I${dir}")
-endforeach()
-# Triton tablegen includes
-if(TRITON_SOURCE_DIR)
-    list(APPEND UTLX_TBLGEN_INCLUDES
-        "-I${TRITON_SOURCE_DIR}/include"
-        "-I${TRITON_SOURCE_DIR}"
-    )
-    if(TRITON_BUILD_DIR)
-        list(APPEND UTLX_TBLGEN_INCLUDES
-            "-I${TRITON_BUILD_DIR}/include"
-        )
-    endif()
-elseif(TRITON_INSTALL_DIR)
-    list(APPEND UTLX_TBLGEN_INCLUDES "-I${TRITON_INSTALL_DIR}/include")
-endif()
-
-# Helper function for running mlir-tblgen
-function(utlx_tablegen input output generator)
-    set(extra_args ${ARGN})
-    get_filename_component(input_abs "${input}" ABSOLUTE)
-    add_custom_command(
-        OUTPUT "${output}"
-        COMMAND "${MLIR_TABLEGEN_EXE}" ${generator} ${extra_args}
-                ${UTLX_TBLGEN_INCLUDES} "${input_abs}"
-                -o "${output}"
-        DEPENDS "${input_abs}"
-        COMMENT "Running mlir-tblgen ${generator} on ${input}"
-        VERBATIM
-    )
-endfunction()
-
-# --- IR TableGen ---
-set(IR_TD_DIR "${UTLX_DIALECT_INCLUDE_DIR}/IR")
-set(IR_OUT_DIR "${UTLX_TABLEGEN_OUTPUT_DIR}/IR")
-
-# Dialect
-utlx_tablegen("${IR_TD_DIR}/TLXDialect.td" "${IR_OUT_DIR}/Dialect.h.inc"
-    "-gen-dialect-decls" "-dialect=tlx")
-utlx_tablegen("${IR_TD_DIR}/TLXDialect.td" "${IR_OUT_DIR}/Dialect.cpp.inc"
-    "-gen-dialect-defs" "-dialect=tlx")
-
-# Types
-utlx_tablegen("${IR_TD_DIR}/TLXTypes.td" "${IR_OUT_DIR}/TLXTypes.h.inc"
-    "-gen-typedef-decls")
-utlx_tablegen("${IR_TD_DIR}/TLXTypes.td" "${IR_OUT_DIR}/TLXTypes.cpp.inc"
-    "-gen-typedef-defs")
-utlx_tablegen("${IR_TD_DIR}/TLXTypes.td" "${IR_OUT_DIR}/TLXTypesEnums.h.inc"
-    "-gen-enum-decls")
-utlx_tablegen("${IR_TD_DIR}/TLXTypes.td" "${IR_OUT_DIR}/TLXTypesEnums.cpp.inc"
-    "-gen-enum-defs")
-
-# Ops
-utlx_tablegen("${IR_TD_DIR}/TLXOps.td" "${IR_OUT_DIR}/Ops.h.inc"
-    "-gen-op-decls")
-utlx_tablegen("${IR_TD_DIR}/TLXOps.td" "${IR_OUT_DIR}/Ops.cpp.inc"
-    "-gen-op-defs")
-
-# AttrDefs
-utlx_tablegen("${IR_TD_DIR}/TLXAttrDefs.td" "${IR_OUT_DIR}/TLXAttrDefs.h.inc"
-    "-gen-attrdef-decls")
-utlx_tablegen("${IR_TD_DIR}/TLXAttrDefs.td" "${IR_OUT_DIR}/TLXAttrDefs.cpp.inc"
-    "-gen-attrdef-defs")
-
-# --- Transforms TableGen ---
-set(TRANSFORMS_TD_DIR "${UTLX_DIALECT_INCLUDE_DIR}/Transforms")
-set(TRANSFORMS_OUT_DIR "${UTLX_TABLEGEN_OUTPUT_DIR}/Transforms")
-
-utlx_tablegen("${TRANSFORMS_TD_DIR}/Passes.td" "${TRANSFORMS_OUT_DIR}/Passes.h.inc"
-    "-gen-pass-decls")
-
-# Collect all tablegen outputs into a custom target
-set(UTLX_TABLEGEN_OUTPUTS
-    "${IR_OUT_DIR}/Dialect.h.inc"
-    "${IR_OUT_DIR}/Dialect.cpp.inc"
-    "${IR_OUT_DIR}/TLXTypes.h.inc"
-    "${IR_OUT_DIR}/TLXTypes.cpp.inc"
-    "${IR_OUT_DIR}/TLXTypesEnums.h.inc"
-    "${IR_OUT_DIR}/TLXTypesEnums.cpp.inc"
-    "${IR_OUT_DIR}/Ops.h.inc"
-    "${IR_OUT_DIR}/Ops.cpp.inc"
-    "${IR_OUT_DIR}/TLXAttrDefs.h.inc"
-    "${IR_OUT_DIR}/TLXAttrDefs.cpp.inc"
-    "${TRANSFORMS_OUT_DIR}/Passes.h.inc"
-)
-add_custom_target(uTLXTableGen DEPENDS ${UTLX_TABLEGEN_OUTPUTS})
+include_directories(SYSTEM
+    ${MLIR_INCLUDE_DIRS}
+    ${LLVM_INCLUDE_DIRS}
+    "${TRITON_WHEEL_INCLUDE_DIR}")
+include_directories(
+    # `#include "tlx/dialect/include/IR/Dialect.h"` (source root)
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    # `#include "tlx/dialect/include/Transforms/Passes.h.inc"` (generated root)
+    "${CMAKE_CURRENT_BINARY_DIR}"
+    # `#include "IR/Dialect.h"` (source headers)
+    "${UTLX_DIALECT_INCLUDE_DIR}"
+    # local TableGen includes, e.g. `include "TLXDialect.td"`
+    "${UTLX_DIALECT_INCLUDE_DIR}/IR"
+    # `#include "IR/Dialect.cpp.inc"` (generated headers)
+    "${UTLX_TABLEGEN_OUTPUT_DIR}")
+add_definitions(${LLVM_DEFINITIONS})
 
 # ---------------------------------------------------------------------------
-# Plugin sources
+# TableGen the TLX dialect and pass declarations.
 # ---------------------------------------------------------------------------
-set(UTLX_PLUGIN_SOURCES
-    # Plugin entry point
+set(LLVM_TARGET_DEFINITIONS "${UTLX_DIALECT_INCLUDE_DIR}/IR/TLXDialect.td")
+mlir_tablegen(tlx/dialect/include/IR/Dialect.h.inc -gen-dialect-decls -dialect=tlx)
+mlir_tablegen(tlx/dialect/include/IR/Dialect.cpp.inc -gen-dialect-defs -dialect=tlx)
+
+set(LLVM_TARGET_DEFINITIONS "${UTLX_DIALECT_INCLUDE_DIR}/IR/TLXTypes.td")
+mlir_tablegen(tlx/dialect/include/IR/TLXTypes.h.inc -gen-typedef-decls)
+mlir_tablegen(tlx/dialect/include/IR/TLXTypes.cpp.inc -gen-typedef-defs)
+mlir_tablegen(tlx/dialect/include/IR/TLXTypesEnums.h.inc -gen-enum-decls)
+mlir_tablegen(tlx/dialect/include/IR/TLXTypesEnums.cpp.inc -gen-enum-defs)
+
+set(LLVM_TARGET_DEFINITIONS "${UTLX_DIALECT_INCLUDE_DIR}/IR/TLXOps.td")
+mlir_tablegen(tlx/dialect/include/IR/Ops.h.inc -gen-op-decls)
+mlir_tablegen(tlx/dialect/include/IR/Ops.cpp.inc -gen-op-defs)
+
+set(LLVM_TARGET_DEFINITIONS "${UTLX_DIALECT_INCLUDE_DIR}/IR/TLXAttrDefs.td")
+mlir_tablegen(tlx/dialect/include/IR/TLXAttrDefs.h.inc -gen-attrdef-decls)
+mlir_tablegen(tlx/dialect/include/IR/TLXAttrDefs.cpp.inc -gen-attrdef-defs)
+
+set(LLVM_TARGET_DEFINITIONS "${UTLX_DIALECT_INCLUDE_DIR}/Transforms/Passes.td")
+mlir_tablegen(tlx/dialect/include/Transforms/Passes.h.inc -gen-pass-decls)
+
+add_public_tablegen_target(uTLXTableGen)
+
+# ---------------------------------------------------------------------------
+# Plugin library.
+# ---------------------------------------------------------------------------
+add_library(${TRITON_EXT_NAME} SHARED
     uTLXPlugin.cpp
     uTLXConversionPatterns.cpp
     # Dialect IR
@@ -190,121 +176,55 @@ set(UTLX_PLUGIN_SOURCES
     tlx/dialect/lib/Transforms/BufferOffsetCalculation.cpp
     # Analysis
     tlx/dialect/lib/Analysis/LayoutPropagation.cpp
-    # New/modified op wrappers (runtime op creation)
+    # Runtime op creation
     ops/NewOps.cpp
     # Ported passes - NVIDIA
     passes/nvidia/PruneUnusedBarriers.cpp
-    passes/nvidia/PingPong.cpp
-    # Ported passes - AMD
-    # NOTE: AMD barrier passes require patched triton (ReadBarrierPhaseOp,
-    # ArriveBarrierOp with expectedCount). Uncomment when
-    # triton-tlx-core-changes patch is applied:
-    # passes/amd/LowerBarrierOps.cpp
-    # passes/amd/BarrierOpConversion.cpp
-)
+    passes/nvidia/PingPong.cpp)
+add_dependencies(${TRITON_EXT_NAME} uTLXTableGen)
 
-add_library(${PROJECT_NAME} SHARED ${UTLX_PLUGIN_SOURCES})
-add_dependencies(${PROJECT_NAME} uTLXTableGen)
+target_compile_definitions(${TRITON_EXT_NAME} PRIVATE
+    TRITON_EXT_VERSION="${TRITON_EXT_VERSION}")
 
-# ---------------------------------------------------------------------------
-# Include directories
-# ---------------------------------------------------------------------------
-set(UTLX_INCLUDE_DIRS
-    # For #include "IR/Dialect.h" (relative from lib/IR/*.cpp)
-    # Source headers: found via tlx/dialect/include/
-    "${UTLX_DIALECT_INCLUDE_DIR}"
-    # Generated headers: found via tablegen output
-    "${UTLX_TABLEGEN_OUTPUT_DIR}"
-    # For #include "tlx/dialect/include/IR/..." (source headers)
-    "${CMAKE_CURRENT_SOURCE_DIR}"
-    # For #include "tlx/dialect/include/IR/..." (generated headers)
-    "${CMAKE_CURRENT_BINARY_DIR}"
-)
-
-if(TRITON_SOURCE_DIR)
-    list(APPEND UTLX_INCLUDE_DIRS
-        "${TRITON_SOURCE_DIR}/include"
-        "${TRITON_SOURCE_DIR}"
-        "${TRITON_SOURCE_DIR}/third_party/amd/include"
-        "${TRITON_SOURCE_DIR}/third_party"
-        "${TRITON_SOURCE_DIR}/third_party/nvidia/include"
-    )
-    if(TRITON_BUILD_DIR)
-        list(APPEND UTLX_INCLUDE_DIRS
-            "${TRITON_BUILD_DIR}/include"
-            "${TRITON_BUILD_DIR}/third_party"
-        )
-    endif()
-
-    # Find libtriton.so from source tree
-    if(NOT UTLX_TRITON_LIB)
-        find_library(UTLX_TRITON_LIB
-            NAMES triton
-            PATHS "${TRITON_SOURCE_DIR}/python/triton/_C"
-            NO_DEFAULT_PATH
-        )
-    endif()
-elseif(TRITON_INSTALL_DIR)
-    list(APPEND UTLX_INCLUDE_DIRS "${TRITON_INSTALL_DIR}/include")
-endif()
-
-# LLVM/MLIR include dirs
-if(LLVM_BUILD_DIR)
-    find_package(MLIR QUIET CONFIG PATHS "${LLVM_BUILD_DIR}/lib/cmake/mlir")
-    find_package(LLVM QUIET CONFIG PATHS "${LLVM_BUILD_DIR}/lib/cmake/llvm")
-endif()
-list(APPEND UTLX_INCLUDE_DIRS ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
-
-target_include_directories(${PROJECT_NAME} PRIVATE ${UTLX_INCLUDE_DIRS})
-
-# ---------------------------------------------------------------------------
-# Optional AMDGPU support (requires third_party headers from triton source)
-# ---------------------------------------------------------------------------
-set(_AMDGPU_HEADER_FOUND FALSE)
-foreach(_dir ${UTLX_INCLUDE_DIRS})
-    if(EXISTS "${_dir}/Dialect/TritonAMDGPU/IR/Dialect.h")
-        set(_AMDGPU_HEADER_FOUND TRUE)
-        break()
-    endif()
-endforeach()
-if(_AMDGPU_HEADER_FOUND)
-    message(STATUS "AMDGPU dialect header found — enabling UTLX_HAS_AMDGPU")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE UTLX_HAS_AMDGPU)
-else()
-    message(STATUS "AMDGPU dialect header not found — AMD support disabled")
-endif()
-
-# ---------------------------------------------------------------------------
-# Link libraries
-# ---------------------------------------------------------------------------
-if(UTLX_TRITON_LIB)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${UTLX_TRITON_LIB})
-elseif(TRITON_LIB)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${TRITON_LIB})
-else()
-    message(FATAL_ERROR "Could not find libtriton.so. Set TRITON_SOURCE_DIR or TRITON_INSTALL_DIR.")
-endif()
-
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    MLIRPass
-    MLIRAnalysis
-    MLIRTransforms
-    MLIRIR
-    MLIRSupport
-    LLVMSupport
-)
-
-# ---------------------------------------------------------------------------
-# Build properties
-# ---------------------------------------------------------------------------
-set_target_properties(${PROJECT_NAME} PROPERTIES
-    CXX_STANDARD 17
-    LIBRARY_OUTPUT_DIRECTORY "${TRITON_EXT_LIBRARY_DIR}"
-)
-
-target_compile_options(${PROJECT_NAME} PRIVATE
+target_compile_options(${TRITON_EXT_NAME} PRIVATE
     -fvisibility=hidden
     -fno-exceptions
     -fno-rtti
-    -Wno-deprecated-declarations
-)
+    -Wno-deprecated-declarations)
+
+# ---------------------------------------------------------------------------
+# Optional AMDGPU support (requires third_party AMD headers in the Triton wheel).
+# ---------------------------------------------------------------------------
+if(EXISTS "${TRITON_WHEEL_INCLUDE_DIR}/Dialect/TritonAMDGPU/IR/Dialect.h")
+    message(STATUS "uTLX: AMDGPU dialect header found — enabling UTLX_HAS_AMDGPU")
+    target_compile_definitions(${TRITON_EXT_NAME} PRIVATE UTLX_HAS_AMDGPU)
+else()
+    message(STATUS "uTLX: AMDGPU dialect header not found — AMD support disabled")
+endif()
+
+# ---------------------------------------------------------------------------
+# Require LLVM_ENABLE_ABI_BREAKING_CHECKS=1 to match the host libtriton (built as
+# an asserts build); see cmake/llvm-abi-breaking.cmake for the rationale.
+# ---------------------------------------------------------------------------
+include("${TRITON_EXT_REPO_ROOT}/cmake/llvm-abi-breaking.cmake")
+require_llvm_abi_breaking_checks("${LLVM_INSTALL_DIR}")
+
+# Link ONLY against libtriton, which re-exports the MLIR/LLVM symbols. Use
+# --no-as-needed so the DT_NEEDED entry is retained even though the plugin
+# resolves the symbols at load time from the already-loaded libtriton.
+target_link_libraries(${TRITON_EXT_NAME} PRIVATE
+    "$<$<PLATFORM_ID:Linux>:-Wl,--no-as-needed>"
+    ${TRITON_LIB}
+    "$<$<PLATFORM_ID:Linux>:-Wl,--as-needed>"
+    "$<$<PLATFORM_ID:Darwin>:-undefined dynamic_lookup>")
+
+# Emit a plain, unversioned `libutlx.so`.
+set_target_properties(${TRITON_EXT_NAME} PROPERTIES
+    PREFIX "lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+# ---------------------------------------------------------------------------
+# Install the library into the `utlx_plugin` package so scikit-build-core bundles
+# it into the wheel next to python/utlx_plugin/__init__.py, which loads it.
+# ---------------------------------------------------------------------------
+install(TARGETS ${TRITON_EXT_NAME} LIBRARY DESTINATION utlx_plugin)

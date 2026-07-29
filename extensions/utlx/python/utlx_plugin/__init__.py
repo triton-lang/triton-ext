@@ -186,8 +186,10 @@ from .utility import (
 # Register this module as triton.language.extra.tlx so that
 # `import triton.language.extra.tlx` works without a filesystem symlink.
 # This must happen before importing mxfp8_utils which does that import.
+from pathlib import Path
 import sys as _sys
 import triton.language.extra as _extra
+import triton._C.libtriton as _libtriton
 
 _sys.modules['triton.language.extra.tlx'] = _sys.modules[__name__]
 _extra.tlx = _sys.modules[__name__]
@@ -213,3 +215,115 @@ def _register_compiler_dispatch():
 
 
 _register_compiler_dispatch()
+
+
+def _make_tlx_op_builder():
+    """Build a hybrid op-builder class for tlx (non-gluon) kernels.
+
+    uTLX ops such as ``async_dot`` rely on native gluon builder methods
+    (``create_warpgroup_mma``, ``create_tcgen05_mma``, ``create_async_tma_*``)
+    that exist only on ``gluon_ir.GluonOpBuilder``. A plain ``@triton.jit``
+    kernel compiles with ``ir.builder`` (``TritonOpBuilder``), which lacks
+    those ops. ``GluonOpBuilder`` subclasses ``TritonOpBuilder`` and also
+    inherits the ``create_utlx_*`` plugin ops, but it *overrides* a number of
+    shared ops (``create_broadcast``, ``create_cat``, ``create_split``, ...)
+    with gluon-specific signatures that are incompatible with the standard
+    ``TritonSemantic`` used for regular kernels.
+
+    We therefore derive a class from ``GluonOpBuilder`` that restores the base
+    ``TritonOpBuilder`` implementation for every op the gluon builder overrides.
+    The result speaks the regular Triton op ABI (so ``TritonSemantic`` and the
+    ``create_utlx_*`` plugin ops work) while still exposing the gluon-exclusive
+    ops that tlx needs.
+    """
+    from triton._C.libtriton import ir as _ir
+    from triton._C.libtriton import gluon_ir as _gluon_ir
+
+    base = _ir.builder
+    gluon = _gluon_ir.GluonOpBuilder
+
+    # Ops present on both classes but overridden by gluon -> restore the base
+    # implementation so TritonSemantic keeps working. Gluon-exclusive ops (not
+    # on the base) are left untouched and remain available.
+    namespace = {}
+    for name in dir(base):
+        if name.startswith("__"):
+            continue
+        base_attr = getattr(base, name, None)
+        gluon_attr = getattr(gluon, name, None)
+        if base_attr is None or gluon_attr is None:
+            continue
+        if base_attr is gluon_attr:
+            continue  # inherited unchanged; nothing to restore
+
+        def _delegate(self, *args, _bm=base_attr, **kwargs):
+            return _bm(self, *args, **kwargs)
+
+        namespace[name] = _delegate
+
+    return type("TLXOpBuilder", (gluon, ), namespace)
+
+
+def _tag_module_num_warps(codegen):
+    """Set ``ttg.num-warps``/``ttg.threads-per-warp`` on the module early.
+
+    tlx kernels attach ttgpu distributed layouts (e.g. ``nvidia_mma``) to
+    tensors during TTIR construction. Triton's ``VerifyTensorLayoutsTrait``
+    validates those layouts against the module's warp counts, which normally are
+    only set later by ``convert-triton-to-tritongpu``. Set them up front (from
+    the compile options) so the initial ``module.verify()`` succeeds.
+    """
+    try:
+        builder = codegen.builder
+        module = codegen.module
+        options = builder.options
+        num_warps = int(options.num_warps)
+        threads_per_warp = int(getattr(options, "warp_size", 32) or 32)
+        if module.get_int_attr("ttg.num-warps") is None:
+            module.set_attr("ttg.num-warps", builder.get_int32_attr(num_warps))
+        if module.get_int_attr("ttg.threads-per-warp") is None:
+            module.set_attr("ttg.threads-per-warp",
+                            builder.get_int32_attr(threads_per_warp))
+    except (AttributeError, TypeError):
+        pass
+
+
+def _patch_gluon_builder():
+    """Route non-gluon kernel compilation through the hybrid tlx builder."""
+    try:
+        import triton.compiler.code_generator as _cg
+        _tlx_builder = _make_tlx_op_builder()
+    except (ImportError, AttributeError):
+        return
+
+    if getattr(_cg.CodeGenerator, "_utlx_gluon_builder", False):
+        return
+
+    _orig_init = _cg.CodeGenerator.__init__
+
+    def _init(self, *args, **kwargs):
+        # Only the non-gluon path constructs ``ir.builder(context)``; swap that
+        # class for the hybrid builder for the duration of the original __init__.
+        if not kwargs.get("is_gluon", False):
+            _orig_builder = _cg.ir.builder
+            _cg.ir.builder = _tlx_builder
+            try:
+                _orig_init(self, *args, **kwargs)
+            finally:
+                _cg.ir.builder = _orig_builder
+            _tag_module_num_warps(self)
+        else:
+            _orig_init(self, *args, **kwargs)
+
+    _cg.CodeGenerator.__init__ = _init
+    _cg.CodeGenerator._utlx_gluon_builder = True
+
+
+_patch_gluon_builder()
+
+# Register the uTLX plugin library with Triton.
+PLUGIN_DIR = Path(__file__).resolve().parent
+PLUGIN_LIBRARY = PLUGIN_DIR / "libutlx.so"
+_libtriton.passes.plugin.extend_with(str(PLUGIN_LIBRARY))  # adds passes
+_libtriton.ir.extend_dialects_with(str(PLUGIN_LIBRARY))  # adds dialects
+_libtriton.ir.builder.extend_with(str(PLUGIN_LIBRARY))  # adds ops
