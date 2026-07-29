@@ -1,42 +1,35 @@
-# Shortcuts for building the project; the true build system is CMake, but this records common commands.
+# Shortcuts for building the entire project; each extension is built
+# independently.
 
-TRITON_INSTALL_DIR ?= $(shell ci/pick_local_artifact.py 'triton-*[!tar.gz]')
-$(if $(TRITON_INSTALL_DIR),,$(error Could not find Triton wheel; try `ci/download-artifact.py triton`))
-LLVM_INSTALL_DIR ?= $(shell ci/pick_local_artifact.py 'llvm-*[!tar.gz]')
-$(if $(LLVM_INSTALL_DIR),,$(error Could not find LLVM artifact; try `ci/download-artifact.py llvm`))
 BUILD_DIR ?= build
-EXTRA_CMAKE_ARGS ?=
 
 default: build
 
-.PHONY: configure
-configure:
-	mkdir -p ${BUILD_DIR}
-	LLVM_INSTALL_DIR="$(LLVM_INSTALL_DIR)" \
-	TRITON_INSTALL_DIR="$(TRITON_INSTALL_DIR)" \
-		cmake -S . -B ${BUILD_DIR} -G Ninja ${EXTRA_CMAKE_ARGS}
+.PHONY: list
+list:
+	ci/list_extensions.py
 
 .PHONY: build
-build: configure
-	cmake --build ${BUILD_DIR}
+build:
+	@for EXT_DIR in $(shell ci/list_extensions.py path); do \
+		$(MAKE) -C $$EXT_DIR build; \
+	done
+
+.PHONY: install
+install:
+	@for EXT_DIR in $(shell ci/list_extensions.py path); do \
+		$(MAKE) -C $$EXT_DIR install; \
+	done
 
 .PHONY: test
-test: test-lit test-unit
-
-.PHONY: test-lit
-test-lit:
-	ninja -C ${BUILD_DIR} check-lit-tests
-
-.PHONY: test-unit
-test-unit:
-	BUILD_DIR="${BUILD_DIR}" \
-	LLVM_INSTALL_DIR="$(LLVM_INSTALL_DIR)" \
-	TRITON_INSTALL_DIR="$(TRITON_INSTALL_DIR)" \
-		python -m pytest --ignore=extensions/utlx --ignore=$(TRITON_INSTALL_DIR) -v
+test:
+	@for EXT_DIR in $(shell ci/list_extensions.py path); do \
+		$(MAKE) -C $$EXT_DIR test; \
+	done
 
 .PHONY: clean
 clean:
-	rm -rf ${BUILD_DIR}
+	rm -rf $(BUILD_DIR)
 
 .PHONY: clean-all
 clean-all: clean
