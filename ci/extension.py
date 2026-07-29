@@ -1,32 +1,42 @@
 #!/usr/bin/env python3
 """
-Parse the `triton-ext.toml` manifest: see :load: and :discover:.
+Parse the `pyproject.toml` manifest: see :load: and :discover:.
 
 This also understands parsing a CODEOWNERS file to associate a list of owners
 with an extension: see :parse_codeowners: and :owners_for:.
 """
 
-import tomllib
+import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import tomllib
+
 VALID_STATUS = {"experimental", "stable"}
+TRITON_PREFIX = "triton-"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CODEOWNERS = REPO_ROOT / ".github" / "CODEOWNERS"
+LOG = logging.getLogger(os.path.basename(__file__))
 
 
 @dataclass(frozen=True)
 class Manifest:
     """
-    Structured metadata for a Triton extension, parsed from a `triton-ext.toml`
+    Structured metadata for a Triton extension, parsed from a `pyproject.toml`
     manifest.
 
-    >>> Manifest(name="foo", path=Path("foo"), status="stable", enabled=True, version="1.2.3")
-    Manifest(name='foo', path=PosixPath('foo'), status='stable', enabled=True, version='1.2.3', owners=[])
-    >>> Manifest(name="bar", path=Path("bar"))
-    Manifest(name='bar', path=PosixPath('bar'), status='experimental', enabled=True, version='0.0.0', owners=[])
+    `name` is the short extension name used for display, CMake variables, and
+    the plugin ABI; `wheel` is the `pyproject.toml` project name and
+    determines the wheel filename.
+
+    >>> Manifest(name="foo", wheel="triton-foo", path=Path("foo"), status="stable", enabled=True, version="1.2.3")
+    Manifest(name='foo', wheel='triton-foo', path=PosixPath('foo'), status='stable', enabled=True, version='1.2.3', owners=[])
+    >>> Manifest(name="bar", wheel="bar", path=Path("bar"))
+    Manifest(name='bar', wheel='bar', path=PosixPath('bar'), status='experimental', enabled=True, version='0.0.0', owners=[])
     """
     name: str
+    wheel: str
     path: Path
     status: str = "experimental"
     enabled: bool = True
@@ -38,16 +48,19 @@ class Manifest:
         if not self.name or not isinstance(self.name, str):
             raise ValueError(
                 f"{self.path}: missing required string field 'name'")
+        if not self.wheel or not isinstance(self.wheel, str):
+            raise ValueError(
+                f"{self.path}: missing required string field 'wheel_name'")
         if self.status not in VALID_STATUS:
             raise ValueError(
                 f"{self.path}: invalid status '{self.status}', must be one of: {sorted(VALID_STATUS)}"
             )
         if not isinstance(self.enabled, bool):
-            raise ValueError(
+            raise TypeError(
                 f"{self.path}: 'enabled' must be a boolean, got {self.enabled!r}"
             )
         if not isinstance(self.version, str):
-            raise ValueError(f"{self.path}: 'version' field must be a string")
+            raise TypeError(f"{self.path}: 'version' field must be a string")
         if not isinstance(self.owners, list) or not all(
                 isinstance(o, str) for o in self.owners):
             raise ValueError(
@@ -115,7 +128,7 @@ def owners_for(path: str, rules: list[CodeOwnerRule]) -> list[str]:
 
 def load(manifest_path: Path) -> Manifest:
     """
-    Read and validate a `triton-ext.toml` manifest attaching any associated code
+    Read and validate a `pyproject.toml` manifest attaching any associated code
     owners from the CODEOWNERS file.
     """
     with open(manifest_path, "rb") as f:
@@ -124,12 +137,19 @@ def load(manifest_path: Path) -> Manifest:
     # Resolve symlinks so the comparison is consistent with REPO_ROOT (which is
     # also resolved); otherwise a symlinked checkout breaks `relative_to`.
     path = manifest_path.resolve().relative_to(REPO_ROOT)
+    wheel = data["project"]["name"]
+    if not wheel.startswith(TRITON_PREFIX):
+        LOG.warning("%s: wheel %r has no %r prefix; consider renaming to %r",
+                    path, wheel, TRITON_PREFIX, TRITON_PREFIX + wheel)
+    name = wheel.removeprefix(TRITON_PREFIX)
     owners = owners_for(path.as_posix(), rules)
-    return Manifest(name=data["name"],
-                    path=path,
-                    status=data.get("status", "experimental"),
-                    enabled=data.get("enabled", True),
-                    version=data.get("version", "0.0.0"),
+    return Manifest(name=name,
+                    wheel=wheel,
+                    version=data["project"]["version"],
+                    status=data["tool"]["triton-ext"].get(
+                        "status", "experimental"),
+                    enabled=data["tool"]["triton-ext"].get("enabled", True),
+                    path=path.parent,
                     owners=owners)
 
 
@@ -149,9 +169,12 @@ def _out_of_place(path: Path) -> bool:
 
 
 def discover() -> list[Manifest]:
-    """Find all `triton-ext.toml` files and load them into structured metadata."""
+    """Find all `pyproject.toml` files and load them into structured metadata."""
     extensions = []
-    for manifest in sorted(REPO_ROOT.rglob("triton-ext.toml")):
+    for manifest in sorted(REPO_ROOT.rglob("pyproject.toml")):
+        if manifest.parent == REPO_ROOT:
+            # Skip the root pyproject.toml (for the triton-ext repo itself).
+            continue
         if _out_of_place(manifest):
             raise ValueError(
                 f"extension manifest found in unexpected location: {manifest}")

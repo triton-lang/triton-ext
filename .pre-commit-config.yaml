@@ -59,7 +59,7 @@ repos:
     hooks:
       - id: check-extensions
         name: check extension manifests
-        entry: ci/check-extensions.py
+        entry: ci/list_extensions.py
         language: python
         pass_filenames: false
 

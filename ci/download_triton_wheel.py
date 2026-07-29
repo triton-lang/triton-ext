@@ -134,7 +134,7 @@ def main(
         if wheel.sha256:
             common.verify_checksum(wheel.filename, wheel.sha256)
 
-    print(f"{wheel.filename}", file=sys.stderr)
+    print(wheel.filename)
 
 
 if __name__ == "__main__":

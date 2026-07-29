@@ -103,8 +103,11 @@ def main(commit: str | None, os_name: str | None, arch: str | None,
                 tar_gz, build_info["sha256sum"][f"{os_name}-{arch}"])
         common.extract_artifact(tar_gz)
 
-    print(f"Successfully downloaded and installed: {artifact}/",
-          file=sys.stderr)
+    # Reset mtime for the extracted directory; this is useful for
+    # `ci/pick_local_artifact.py` to pick the most recently downloaded artifact.
+    os.utime(artifact, None)
+
+    print(artifact)
 
 
 if __name__ == "__main__":
