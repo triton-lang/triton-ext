@@ -41,7 +41,7 @@ def fetch_llvm_hash(triton_rev):
 def probe_sysinfo():
     """Get the current OS and architecture in lowercase."""
     import importlib
-    module = importlib.import_module("probe-sysinfo")
+    module = importlib.import_module("probe_sysinfo")
     return module.run()
 
 
