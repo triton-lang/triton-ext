@@ -10,4 +10,4 @@ install:
 
 .PHONY: test
 test:
-	pytest test/
+	pytest

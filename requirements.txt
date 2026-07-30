@@ -1,4 +1,4 @@
-lit~=18.1
+filecheck~=1.0
 ninja~=1.13
 pre_commit~=4.6
 pytest~=8.3

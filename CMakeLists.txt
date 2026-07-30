@@ -82,8 +82,9 @@ foreach(subdir ${ALL_SUBDIRECTORIES})
                      "${TRITON_EXT_BINARY_DIR}/${subdir}")
 endforeach()
 
-# Add tests.
-add_subdirectory("${TRITON_EXT_SOURCE_DIR}/testing" "${TRITON_EXT_BINARY_DIR}/testing")
+# Tests are run with pytest, not CMake/lit: the top-level `conftest.py` collects
+# the lit-style `.mlir` tests (see `testing/mlir_runner.py`) and each extension's
+# `make test` runs `pytest test/`.
 
 # We create a meta-target to track when all extensions are built. All extension targets add themselves to the global
 # `TRITON_EXT_BUILT_TARGETS` during setup (e.g., `triton_ext_pass_setup`)

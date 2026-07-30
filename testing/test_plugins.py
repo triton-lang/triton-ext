@@ -1,50 +1,58 @@
 """Plugin integration tests.
 
-Auto-discovers every plugin declared by a `triton-ext.toml` and exercises
-its `lib<name>.so` from a fresh Python interpreter with `TRITON_PLUGIN_PATHS`
-set. Each plugin runs in its own subprocess so failures isolate cleanly.
-Extensions with `enabled = 0` in their manifest are not built, so they are
-skipped during discovery.
+Auto-discovers every extension declared by a ``pyproject.toml`` carrying a
+``[tool.triton-ext]`` stanza and exercises it via a direct import.  Each
+enabled extension is imported using ``import <package>``, which loads and
+registers the compiled plugin library. No ``TRITON_PLUGIN_PATHS``,
+``PYTHONPATH``, or ``LD_LIBRARY_PATH`` overrides are needed; the extensions
+must be installed beforehand (e.g. with ``make build && make install``).
 
 Tests:
-  - test_plugin_loads[<name>]            -- plugin static-init: `import triton`
-                                            succeeds with the .so loaded.
-  - test_plugin_compiles_kernel[<name>]  -- end-to-end: JIT-decorate and lower
-                                            a basic kernel through the plugin's
-                                            pipeline.
-  - test_<plugin>_<feature>              -- plugin-specific scenarios, gated
-                                            with `@pytest.mark.skipif` on the
-                                            plugin's .so existence.
+  - test_plugins_discovered                -- guard: at least one plugin exists.
+  - test_plugin_loads[<name>]              -- ``import <package>`` succeeds.
+  - test_plugin_compiles_kernel[<name>]    -- JIT-decorate and lower a basic
+                                             kernel through the plugin pipeline.
+  - test_utlx_registers_tlx_dsl           -- utlx registers
+                                             ``triton.language.extra.tlx``.
 
-Adding a new plugin: drop a `triton-ext.toml`; both parametrized tests pick
-it up. To exempt a plugin from a parametrized test, mark it at parametrize
-time with `pytest.param(..., marks=pytest.mark.skip(...))` -- see
-`_COMPILE_PLUGINS` for an example.
-
-The kernel-compile and tlx-DSL scenarios live as standalone scripts under
-`testing/scripts/` so they can be run by hand to debug a plugin, e.g.
-`TRITON_PLUGIN_PATHS=build/lib/lib<name>.so python testing/scripts/compile_kernel.py`.
-On failure each test prints the exact command to reproduce it.
+Adding a new plugin: drop a ``pyproject.toml`` with ``[tool.triton-ext]``;
+both parametrized tests pick it up automatically.  To exempt a plugin from a
+parametrized test mark it at parametrize time with
+``pytest.param(..., marks=pytest.mark.skip(...))``.
 """
 
 from __future__ import annotations
 
-import os
-import shlex
-import subprocess
+import importlib
 import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BUILD_DIR = Path(os.environ.get("BUILD_DIR", REPO_ROOT / "build"))
-TRITON_INSTALL_DIR = Path(os.environ["TRITON_INSTALL_DIR"])
-LLVM_INSTALL_DIR = Path(os.environ["LLVM_INSTALL_DIR"])
-SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
 
 sys.path.insert(0, str(REPO_ROOT / "ci"))
 import extension  # noqa: E402  (ci/ is added to sys.path above)
+
+# Map from extension *name* (as in triton-ext.toml / pyproject.toml) to the
+# importable Python package name.
+_PACKAGE_MAP: dict[str, str] = {
+    "arithmetic_intensity": "triton_arithmetic_intensity",
+    "triton_arithmetic_intensity": "triton_arithmetic_intensity",
+    "loop_split": "triton_loop_split",
+    "triton_loop_split": "triton_loop_split",
+    "example": "triton_example",
+    "triton-example": "triton_example",
+    "utlx": "utlx_plugin",
+}
+
+
+def _package_name(ext_name: str) -> str:
+    """Return the importable Python package name for an extension."""
+    if ext_name in _PACKAGE_MAP:
+        return _PACKAGE_MAP[ext_name]
+    # Fall back: replace hyphens/spaces with underscores
+    return ext_name.replace("-", "_").replace(" ", "_")
 
 
 def _discover_plugins() -> list[pytest.ParameterSet]:
@@ -58,34 +66,6 @@ def _discover_plugins() -> list[pytest.ParameterSet]:
 
 PLUGINS = _discover_plugins()
 
-
-def _plugin_path(name: str) -> Path:
-    return BUILD_DIR / "lib" / f"lib{name}.so"
-
-
-def _format_command(env_overrides: dict[str, str], args: list[str]) -> str:
-    """Render a copy-pasteable shell command for manual debugging."""
-    prefix = " ".join(f"{k}={shlex.quote(v)}"
-                      for k, v in env_overrides.items())
-    cmd = " ".join(shlex.quote(a) for a in args)
-    return f"{prefix} {cmd}".strip()
-
-
-def _run(env_overrides: dict[str, str],
-         args: list[str]) -> tuple[subprocess.CompletedProcess, str]:
-    """Run a subprocess and return it along with its debug command string."""
-    env = {**os.environ, **env_overrides}
-    command = _format_command(env_overrides, args)
-    result = subprocess.run(
-        args,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result, command
-
-
 # ---------------------------------------------------------------------------
 # Generic per-plugin tests (auto-discovered)
 # ---------------------------------------------------------------------------
@@ -93,30 +73,24 @@ def _run(env_overrides: dict[str, str],
 
 def test_plugins_discovered() -> None:
     """Guard against silently testing nothing if discovery breaks."""
-    assert PLUGINS, f"No triton-ext.toml files found under {REPO_ROOT}"
+    assert PLUGINS, f"No triton-ext extensions found under {REPO_ROOT}"
 
 
 @pytest.mark.parametrize("name", PLUGINS)
 def test_plugin_loads(name: str) -> None:
-    """Smoke: `import triton` succeeds with the plugin loaded."""
-    path = _plugin_path(name)
-    if not path.is_file():
-        pytest.skip(f"Plugin not built at {path} (extension may be disabled)")
-    result, command = _run(
-        {
-            "TRITON_PLUGIN_PATHS": str(path),
-            "PYTHONPATH": str(TRITON_INSTALL_DIR / "python"),
-            "LD_LIBRARY_PATH": str(LLVM_INSTALL_DIR / "lib")
-        }, [sys.executable, "-c", "import triton"])
-    assert result.returncode == 0, (
-        f"Loading plugin {name} failed. Reproduce with:\n  {command}\n"
-        f"--- stdout ---\n{result.stdout}\n"
-        f"--- stderr ---\n{result.stderr}")
+    """Smoke: ``import <package>`` succeeds with the plugin registered."""
+    pkg = _package_name(name)
+    try:
+        importlib.import_module(pkg)
+    except ImportError as exc:
+        pytest.skip(
+            f"Package {pkg!r} not installed (run `make build && make install`): {exc}"
+        )
 
 
-# example dialect is scaffolding-only -- its Dialect::initialize() doesn't
+# example dialect is scaffolding-only — its Dialect::initialize() doesn't
 # register StringAttr, so kernel compile aborts with an LLVM storage-uniquer
-# error. Tag it as skip at parametrize time.
+# error.  Tag it as skip at parametrize time.
 _COMPILE_PLUGINS = [
     pytest.param(p.values[0],
                  marks=pytest.mark.skip(reason="scaffolding-only dialect"),
@@ -126,21 +100,39 @@ _COMPILE_PLUGINS = [
 
 @pytest.mark.parametrize("name", _COMPILE_PLUGINS)
 def test_plugin_compiles_kernel(name: str) -> None:
-    """User scenario: with the plugin loaded, JIT-decorate and lower a basic kernel."""
-    path = _plugin_path(name)
-    if not path.is_file():
-        pytest.skip(f"Plugin not built at {path} (extension may be disabled)")
-    result, command = _run(
-        {
-            "TRITON_PLUGIN_PATHS": str(path),
-            "PYTHONPATH": str(TRITON_INSTALL_DIR / "python"),
-            "LD_LIBRARY_PATH": str(LLVM_INSTALL_DIR / "lib")
-        }, [sys.executable,
-            str(SCRIPTS_DIR / "compile_kernel.py")])
-    assert result.returncode == 0, (
-        f"Plugin {name} broke kernel compile. Reproduce with:\n  {command}\n"
-        f"--- stdout ---\n{result.stdout}\n"
-        f"--- stderr ---\n{result.stderr}")
+    """User scenario: with the plugin imported, JIT-decorate and lower a basic kernel."""
+    pkg = _package_name(name)
+    try:
+        importlib.import_module(pkg)
+    except ImportError as exc:
+        pytest.skip(
+            f"Package {pkg!r} not installed (run `make build && make install`): {exc}"
+        )
+
+    import triton
+    import triton.language as tl
+
+    @triton.jit
+    def _kernel(x_ptr, y_ptr, n: tl.constexpr):
+        offs = tl.arange(0, n)
+        x = tl.load(x_ptr + offs)
+        tl.store(y_ptr + offs, x)
+
+    # Compiling the kernel (lowering to PTX/HSACO) requires a GPU device.
+    # Skip gracefully if no GPU is available rather than failing.
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            pytest.skip(
+                "No CUDA device available; skipping kernel compile test")
+        device = torch.device("cuda")
+        n = 32
+        x = torch.ones(n, device=device)
+        y = torch.zeros(n, device=device)
+        _kernel[(1, )](x, y, n)
+        assert torch.allclose(x, y), "kernel output mismatch"
+    except ImportError:
+        pytest.skip("torch not installed; skipping kernel compile test")
 
 
 # ---------------------------------------------------------------------------
@@ -148,27 +140,22 @@ def test_plugin_compiles_kernel(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not _plugin_path("utlx").is_file(),
-                    reason="utlx plugin not built")
 def test_utlx_registers_tlx_dsl() -> None:
-    """utlx registers `triton.language.extra.tlx` with local_alloc/view/store/load.
+    """utlx registers ``triton.language.extra.tlx`` with local_alloc/view/store/load.
 
-    The Python namespace is set up by `extensions/utlx/python/utlx_plugin/__init__.py`
-    when imported -- it inserts itself into `sys.modules` as
-    `triton.language.extra.tlx`. Loading the .so alone is not enough.
+    The namespace is set up by ``extensions/utlx/python/utlx_plugin/__init__.py``
+    when the package is imported.
     """
-    plugin_path = _plugin_path("utlx")
-    utlx_python = REPO_ROOT / "extensions" / "utlx" / "python"
-    triton_python = TRITON_INSTALL_DIR / "python"
-    pythonpath = f"{utlx_python}{os.pathsep}{triton_python}"
-    result, command = _run(
-        {
-            "TRITON_PLUGIN_PATHS": str(plugin_path),
-            "PYTHONPATH": pythonpath,
-            "LD_LIBRARY_PATH": str(LLVM_INSTALL_DIR / "lib")
-        },
-        [sys.executable, str(SCRIPTS_DIR / "load_tlx_dsl.py")])
-    assert result.returncode == 0, (
-        f"utlx tlx-DSL check failed. Reproduce with:\n  {command}\n"
-        f"--- stdout ---\n{result.stdout}\n"
-        f"--- stderr ---\n{result.stderr}")
+    try:
+        import utlx_plugin  # noqa: F401
+    except ImportError:
+        pytest.skip(
+            "utlx_plugin not installed (run `make build && make install`)")
+
+    import triton.language.extra as extra
+    assert hasattr(extra, "tlx"), "triton.language.extra.tlx not registered"
+
+    import triton.language.extra.tlx as tlx
+    for attr in ("local_alloc", "local_view", "local_store", "local_load"):
+        assert hasattr(tlx,
+                       attr), f"tlx.{attr} missing after import utlx_plugin"

@@ -15,8 +15,8 @@ import triton._C.libtriton as libtriton
 
 _HERE = Path(__file__).resolve().parent
 # The library filename is platform dependent (`.so`/`.dylib`/`.dll`).
-_PATTERNS = ("libarithmetic_intensity*.so", "libarithmetic_intensity*.dylib",
-             "arithmetic_intensity*.dll", "libarithmetic_intensity*.dll")
+_PATTERNS = ("lib*arithmetic_intensity*.so", "lib*arithmetic_intensity*.dylib",
+             "*arithmetic_intensity*.dll")
 
 
 def _find_plugin_library() -> Path:

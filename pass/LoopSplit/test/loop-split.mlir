@@ -1,4 +1,4 @@
-// RUN: triton-opt --split-input-file %s -triton-loop-split -canonicalize | FileCheck %s
+// RUN: loop_split.py %s | %filecheck %s
 
 tt.func @split_kernel_sgt(%arg0: tensor<256x!tt.ptr<f32>>, %arg1: i32, %mid: i32) -> tensor<256xf32> {
   %c0_i32 = arith.constant 0 : i32

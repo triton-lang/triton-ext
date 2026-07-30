@@ -23,9 +23,7 @@ install:
 
 .PHONY: test
 test:
-	@for EXT_DIR in $(shell ci/list_extensions.py path); do \
-		$(MAKE) -C $$EXT_DIR test; \
-	done
+	pytest
 
 .PHONY: clean
 clean:

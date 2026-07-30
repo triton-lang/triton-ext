@@ -1,6 +1,9 @@
-# Ignore lit-provided `config` builtin in Python analysis tools.
-[tool.ruff]
-builtins = ["config"]
-[[tool.mypy.overrides]]
-module = ["lit.cfg", "*.lit.local.cfg"]
-disable_error_code = ["name-defined"]
+# Anchor pytest's rootdir at the repository root so the top-level `conftest.py`
+# (which collects lit-style `.mlir` tests) is always loaded, even when running
+# `pytest test/` from within an extension that ships its own `pyproject.toml`.
+[tool.pytest.ini_options]
+minversion = "8.0"
+# `extensions/utlx/tlx` is a vendored upstream TLX tree with its own `*_test.py`
+# files (imported at module scope, requiring torch/GPU). It is not part of this
+# repo's suite -- utlx runs only `pytest test/` -- so keep it out of collection.
+addopts = "--ignore=extensions/utlx/tlx"

@@ -10,4 +10,4 @@ install:
 
 .PHONY: test
 test:
-	@echo TODO: no tests implemented
+	pytest test/ || [ $$? -eq 5 ]
