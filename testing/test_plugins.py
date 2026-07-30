@@ -26,8 +26,12 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from _pytest.mark.structures import ParameterSet
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -55,8 +59,8 @@ def _package_name(ext_name: str) -> str:
     return ext_name.replace("-", "_").replace(" ", "_")
 
 
-def _discover_plugins() -> list[pytest.ParameterSet]:
-    plugins: list[pytest.ParameterSet] = []
+def _discover_plugins() -> list[ParameterSet]:
+    plugins: list[ParameterSet] = []
     for cfg in extension.discover():
         if cfg.enabled:
             plugins.append(pytest.param(cfg.name, id=cfg.name))
