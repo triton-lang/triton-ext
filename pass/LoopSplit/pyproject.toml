@@ -1,0 +1,24 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "cmake>=3.20", "ninja"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "triton-loop-split"
+version = "0.1.0"
+description = "LoopSplit: a Triton loop-bisection pass distributed as a Plugin"
+requires-python = ">=3.9"
+
+[tool.triton-ext]
+status = "experimental"
+enabled = true
+
+[tool.scikit-build]
+cmake.version = ">=3.20"
+cmake.build-type = "Release"
+# Keep caches out of the wheel.
+wheel.exclude = ["**/__pycache__/**", "**/*.pyc"]
+
+# Bundle the pure-Python package. CMake installs libloop_split.so into
+# triton_loop_split/ using `install()` (see CMakeLists.txt).
+[tool.scikit-build.wheel.packages]
+triton_loop_split = "python/triton_loop_split"

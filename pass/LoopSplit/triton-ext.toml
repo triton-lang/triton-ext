@@ -1,4 +1,6 @@
 name = "loop_split"
 status = "experimental"
-enabled = true
+# Disabled in the integrated CMake build: this extension now builds as a
+# standalone wheel driven by its own pyproject.toml and CMakeLists.txt.
+enabled = false
 version = "0.1.0"
