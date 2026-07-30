@@ -1,7 +1,5 @@
 name: CI
-# A continuous integration workflow for triton-ext. This workflow builds triton-ext's dependencies in workspace
-# directories: LLVM (`llvm-<hash>-<os>-<arch>`) and Triton (`triton-<hash>-<os>-<arch>`), then builds the triton-ext
-# extensions.
+# A continuous integration workflow for triton-ext.
 
 on:
   push:
@@ -45,13 +43,15 @@ jobs:
       - name: Run manifest doctests
         run: python ci/extension.py
       - name: Parse manifests
-        run: python ci/check-extensions.py
+        run: python ci/list_extensions.py
 
   build:
     name: Build on ${{ matrix.config.runner }}
     runs-on: ${{ matrix.config.runs_on }}
     timeout-minutes: 300
     defaults: {run: {shell: bash}}
+    env:
+      VERBOSE: 1
 
     strategy:
       fail-fast: true
@@ -86,59 +86,33 @@ jobs:
           echo "python version: $(python --version)"
           echo "python location: $(which python)"
 
-      - name: Collect commit hashes
+      - name: Document commit hashes
         id: hashes
         # See `update-triton.yml` for where this commit hash is updated.
         run: |
           TRITON_HASH=$(cat ci/triton-hash.txt)
-          echo "triton_hash=$TRITON_HASH" >> $GITHUB_OUTPUT
           echo "Triton hash: $TRITON_HASH"
 
-          LLVM_HASH=$(python ci/fetch-llvm-hash.py $TRITON_HASH)
-          echo "llvm_hash=$LLVM_HASH" >> $GITHUB_OUTPUT
+          LLVM_HASH=$(python ci/fetch_llvm_hash.py $TRITON_HASH)
           echo "LLVM hash: $LLVM_HASH"
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-        # Both LLVM and Triton builds use sccache, so we set it up at the beginning of the workflow.
-
-      - name: Build LLVM
-        id: build-llvm
-        uses: ./.github/actions/build-llvm
-        with:
-          llvm_hash: ${{ steps.hashes.outputs.llvm_hash }}
-
       - name: Download LLVM artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python ci/download-artifact.py ${{ steps.build-llvm.outputs.llvm_install_dir }}
+        run:
+          python ci/download_llvm.py
 
-      - name: Build Triton
-        id: build-triton
-        uses: ./.github/actions/build-triton
-        with:
-          triton_hash: ${{ steps.hashes.outputs.triton_hash }}
-          llvm_install_dir: ${{ github.workspace }}/${{ steps.build-llvm.outputs.llvm_install_dir }}
-
-      - name: Download Triton artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Download and install Triton wheel
         run: |
-          python ci/download-artifact.py ${{ steps.build-triton.outputs.triton_install_dir }}
+          WHEEL=$(python ci/download_triton_wheel.py nightly)
+          pip install $WHEEL
 
       - name: Build Triton extensions
-        run: >
-          make LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
-               TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
-               EXTRA_CMAKE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
+        run: make build
+
+      - name: Install Triton extensions
+        run: make install
 
       - name: Run tests
-        env:
-          PYTHONPATH: ${{ github.workspace }}/${{ steps.build-triton.outputs.triton_install_dir }}/python
-        run: >
-          make test LLVM_INSTALL_DIR="${{ steps.build-llvm.outputs.llvm_install_dir }}"
-                    TRITON_INSTALL_DIR="${{ steps.build-triton.outputs.triton_install_dir }}"
+        run: make test
 
       - name: List files
         run: du -d 3 -h .

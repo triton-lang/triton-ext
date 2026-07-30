@@ -1,42 +1,47 @@
 #!/usr/bin/env python3
 """
-Create an automation PR for a Triton pin change. It looks at the `triton-hash.txt` file and, if it has changes, pushes
-a branch and a PR for that branch to the `origin` remote.
+Create an automation PR for a Triton pin change. It looks at the
+`triton-hash.txt` file and, if it has changes, pushes a branch and a PR for that
+branch to the `origin` remote.
 
-This script requires the `gh` CLI tool to interact with the GitHub API. This is available in GitHub Actions, but users
-running this locally will need to install it (https://cli.github.com) and authenticate (`gh auth login`) prior to use.
+This script requires the `gh` CLI tool to interact with the GitHub API. This is
+available in GitHub Actions, but users running this locally will need to install
+it (https://cli.github.com) and authenticate (`gh auth login`) prior to use.
 
-This script takes no input can be configured with environment variables:
-- `DRY_RUN`: if set, the script will not push changes or create a PR (e.g., `DRY_RUN=1`).
-- `VERBOSE`: if set, enables debug logging (e.g., `VERBOSE=1`).
+This script takes no input can be configured with environment variables: -
+`DRY_RUN`: if set, the script will not push changes or create a PR (e.g.,
+`DRY_RUN=1`). - `VERBOSE`: if set, enables debug logging (e.g., `VERBOSE=1`).
 
 Usage:
-	[DRY_RUN={1|0}] [VERBOSE={1|0}] python ci/create-triton-pin-pr.py
+    [DRY_RUN={1|0}] [VERBOSE={1|0}] python ci/create-triton-pin-pr.py
 """
 
-import common
-import os
 import logging
+import os
 import subprocess
 import sys
+
+import common
+
+LOG = logging.getLogger(os.path.basename(__file__))
 
 
 def exec(args: list[str],
          check: bool = True,
          capture_output: bool = False) -> subprocess.CompletedProcess:
     """Run a shell command and return the completed process."""
-    logging.debug(f"> {' '.join(args)}")
+    LOG.debug(f"> {' '.join(args)}")
     try:
         return subprocess.run(args,
                               check=check,
                               text=True,
                               capture_output=capture_output)
     except subprocess.CalledProcessError as e:
-        logging.error(f"Command failed: {e}")
+        LOG.error(f"Command failed: {e}")
         if e.stdout:
-            logging.error(f"stdout: {e.stdout}")
+            LOG.error(f"stdout: {e.stdout}")
         if e.stderr:
-            logging.error(f"stderr: {e.stderr}")
+            LOG.error(f"stderr: {e.stderr}")
         raise
 
 
@@ -111,9 +116,9 @@ def main(dry_run: bool):
         return
 
     hash = open(file).read().strip()
-    logging.debug(f"Updating Triton pin to {hash}")
+    LOG.debug(f"Updating Triton pin to {hash}")
     if not hash:
-        logging.error(f"Error: Triton hash is empty in {file}")
+        LOG.error(f"Error: Triton hash is empty in {file}")
         sys.exit(1)
 
     short_hash = hash[:8]
@@ -126,9 +131,7 @@ def main(dry_run: bool):
 
 
 if __name__ == "__main__":
-    logging.getLogger().name = os.path.basename(__file__)
     if common.env2bool("VERBOSE"):
         logging.basicConfig(level=logging.DEBUG)
     dry_run = common.env2bool("DRY_RUN")
-
     main(dry_run)

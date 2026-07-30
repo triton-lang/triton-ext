@@ -20,7 +20,7 @@ jobs:
         id: hash
         shell: bash
         run: |
-          TRITON_HASH=$(python ci/fetch-triton-hash.py)
+          TRITON_HASH=$(python ci/fetch_triton_hash.py)
           echo "TRITON_HASH=$TRITON_HASH" >> $GITHUB_ENV
           echo "Triton hash: $TRITON_HASH"
 
@@ -37,4 +37,4 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python ci/create-triton-pin-pr.py "$TRITON_HASH"
+        run: python ci/create_triton_pin_pr.py "$TRITON_HASH"
