@@ -13,21 +13,6 @@ from pathlib import Path
 
 import triton._C.libtriton as libtriton
 
-_HERE = Path(__file__).resolve().parent
-# The library filename is platform dependent (`.so`/`.dylib`/`.dll`).
-_PATTERNS = ("lib*arithmetic_intensity*.so", "lib*arithmetic_intensity*.dylib",
-             "*arithmetic_intensity*.dll")
-
-
-def _find_plugin_library() -> Path:
-    for pattern in _PATTERNS:
-        matches = sorted(_HERE.glob(pattern))
-        if matches:
-            return matches[0]
-    raise ImportError(
-        f"arithmetic_intensity plugin library not found next to {_HERE}; "
-        "was the package built (e.g. `pip install .`)?")
-
-
-PLUGIN_LIBRARY = _find_plugin_library()
+PLUGIN_DIR = Path(__file__).resolve().parent
+PLUGIN_LIBRARY = PLUGIN_DIR / "libarithmetic_intensity.so"
 libtriton.passes.plugin.extend_with(str(PLUGIN_LIBRARY))  # adds passes
