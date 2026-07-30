@@ -12,18 +12,38 @@ namespace triton::ext::support {
 
 using namespace mlir::triton;
 
-static std::unordered_map<std::string, std::pair<plugin::AddPassCallback,
-                                                 plugin::RegisterPassCallback>>
-    passMap;
-static std::unordered_map<std::string, plugin::RegisterDialectCallback>
-    dialectMap;
-static std::unordered_map<std::string, plugin::AddOpCallback> opMap;
+// These registries are accessed both from static initializers in other
+// translation units (via the `exportPass`/`exportDialect`/`exportOp` calls
+// below) and from `tritonGetPluginInfo`. When the whole plugin is linked into a
+// single shared library, the static-initialization order across translation
+// units is unspecified, so a global map could be used before it is constructed
+// (yielding a modulo-by-zero SIGFPE inside `unordered_map`). Wrap each map in a
+// function-local static so it is constructed on first use regardless of order.
+static std::unordered_map<
+    std::string,
+    std::pair<plugin::AddPassCallback, plugin::RegisterPassCallback>> &
+passMap() {
+  static std::unordered_map<
+      std::string,
+      std::pair<plugin::AddPassCallback, plugin::RegisterPassCallback>>
+      map;
+  return map;
+}
+static std::unordered_map<std::string, plugin::RegisterDialectCallback> &
+dialectMap() {
+  static std::unordered_map<std::string, plugin::RegisterDialectCallback> map;
+  return map;
+}
+static std::unordered_map<std::string, plugin::AddOpCallback> &opMap() {
+  static std::unordered_map<std::string, plugin::AddOpCallback> map;
+  return map;
+}
 
 Result exportPass(const std::string passName,
                   plugin::RegisterPassCallback registerFunc,
                   plugin::AddPassCallback addFunc) {
   LLVM_DEBUG(llvm::dbgs() << "internally exporting pass: " << passName << "\n");
-  passMap[passName] = {addFunc, registerFunc};
+  passMap()[passName] = {addFunc, registerFunc};
   return TP_SUCCESS;
 }
 
@@ -31,13 +51,13 @@ Result exportDialect(const std::string dialectName,
                      plugin::RegisterDialectCallback insertFunc) {
   LLVM_DEBUG(llvm::dbgs() << "internally exporting dialect: " << dialectName
                           << "\n");
-  dialectMap[dialectName] = insertFunc;
+  dialectMap()[dialectName] = insertFunc;
   return TP_SUCCESS;
 }
 
 Result exportOp(const std::string opName, plugin::AddOpCallback addFunc) {
   LLVM_DEBUG(llvm::dbgs() << "internally exporting op: " << opName << "\n");
-  opMap[opName] = addFunc;
+  opMap()[opName] = addFunc;
   return TP_SUCCESS;
 }
 } // namespace triton::ext::support
@@ -56,9 +76,9 @@ static const char *PLUGIN_NAME = "triton-ext-todo";
 static const char *VERSION = "0.1.0";
 
 TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
-  auto passes = new plugin::PassInfo[passMap.size()];
+  auto passes = new plugin::PassInfo[passMap().size()];
   size_t numPasses = 0;
-  for (const auto &pair : passMap) {
+  for (const auto &pair : passMap()) {
     const std::string &passName = pair.first;
     auto registerFunc = pair.second.second;
     auto addFunc = pair.second.first;
@@ -66,18 +86,18 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
         plugin::PassInfo{passName.c_str(), VERSION, addFunc, registerFunc};
   }
 
-  auto dialects = new plugin::DialectInfo[dialectMap.size()];
+  auto dialects = new plugin::DialectInfo[dialectMap().size()];
   size_t numDialects = 0;
-  for (const auto &pair : dialectMap) {
+  for (const auto &pair : dialectMap()) {
     const std::string &dialectName = pair.first;
     auto registerFunc = pair.second;
     dialects[numDialects++] =
         plugin::DialectInfo{dialectName.c_str(), VERSION, registerFunc};
   }
 
-  auto ops = new plugin::OpInfo[opMap.size()];
+  auto ops = new plugin::OpInfo[opMap().size()];
   size_t numOps = 0;
-  for (const auto &pair : opMap) {
+  for (const auto &pair : opMap()) {
     const std::string &opName = pair.first;
     auto addFunc = pair.second;
     ops[numOps++] = plugin::OpInfo{opName.c_str(), addFunc};
