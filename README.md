@@ -33,7 +33,8 @@ The upstream infrastructure is documented:
 
 Extensions live in subdirectories, each built as a separate Triton wheel:
 
-- **[`backend/`](./backend/)**: For new Triton backends (e.g., a new device).
+- **[`backend/`](./backend/)**: For new Triton backends (e.g., a new device
+  target).
 
 - **[`dialect/`](./dialect/)**: For adding MLIR dialects to Triton.
 
