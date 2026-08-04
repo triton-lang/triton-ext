@@ -63,15 +63,18 @@ Extensions live in subdirectories, each built as a separate Triton wheel:
 ## Build
 
 This extension repository is designed to be built out-of-tree. It expects to be
-pointed to both LLVM compilation artifacts (`LLVM_INSTALL_DIR`) and an installed
-Triton wheel (`TRITON_INSTALL_DIR`).
+pointed to both LLVM compilation artifacts and an installed Triton wheel. List
+available extensions with [`list_extensions.py`][list_extensions].
 
 To build the extensions:
 
-1. **Build LLVM**: Build LLVM as shared libraries and install it to a known
-   location; see the CI [action][build-llvm] for reference. Alternately,
-   download pre-built LLVM binaries from GitHub: run
-   `ci/download-artifact.py llvm` [^list-artifacts].
+1. **Build LLVM**, one of the following ways:
+
+   - *download pre-built*: run [`download_llvm.py`][download_llvm], optionally
+     specifying a specific upstream build.
+   - *build locally*: run something like the upstream
+     [`build-llvm-project.sh`][build_llvm] and set `LLVM_INSTALL_DIR` in the
+     environment.
 
 1. **Build Triton**, one of the following ways:
 
@@ -80,19 +83,18 @@ To build the extensions:
      `pip install triton-*.whl`. To list available wheels, run
      [`ci/list_triton_wheels.py`][list_triton].
    - *build locally*: run `TRITON_EXT_ENABLED=1 python setup.py bdist_wheel` in
-     the Triton source tree, then `pip install triton-*.whl` here.
+     the Triton source tree, then `pip install triton-*.whl` here. To use a
+     non-installed version, set `TRITON_WHEEL_DIR` in the environment.
 
 1. **Build extensions**:
 
    ```bash
-   export LLVM_INSTALL_DIR=/path/to/llvm/install
-   export TRITON_INSTALL_DIR=/path/to/triton/install
    make build
    ```
 
-   Note that if `LLVM_INSTALL_DIR` and `TRITON_INSTALL_DIR` are not set, the
-   `Makefile` will helpfully [search] for them in the project directory. To
-   build a single extension run `make build-<extension>`.
+   Optionally set `LLVM_INSTALL_DIR` and `TRITON_WHEEL_DIR` to custom locations;
+   by default triton-ext will helpfully [search] for them in the project
+   directory.
 
 A sample build might look like:
 
@@ -135,9 +137,10 @@ import triton-<extension>
 ```
 
 [arithmetic-intensity]: ./pass/ArithmeticIntensity/
-[build-llvm]: ./.github/actions/build-llvm/action.yml
+[build_llvm]: https://github.com/triton-lang/triton/blob/main/scripts/build-llvm-project.sh
 [download_llvm]: ./ci/download_llvm.py
 [download_triton]: ./ci/download_triton_wheel.py
+[list_extensions]: ./ci/list_extensions.py
 [list_triton]: ./ci/list_triton_wheels.py
 [search]: ./ci/pick_local_artifact.py
 [slides-jan-2026]: https://docs.google.com/presentation/d/1dnm8uhvabdwqsQAsaPM7IRpEh2tktQ91E1d40r91n1M
