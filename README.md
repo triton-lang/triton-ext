@@ -77,13 +77,10 @@ To build the extensions:
 
    - *download pre-built*: run [`download_triton_wheel.py`][download_triton],
      optionally with a specific `<version>+git<commit>` pattern, and
-     `pip install triton-*.whl`[^list-wheels].
+     `pip install triton-*.whl`. To list available wheels, run
+     [`ci/list_triton_wheels.py`][list_triton].
    - *build locally*: run `TRITON_EXT_ENABLED=1 python setup.py bdist_wheel` in
      the Triton source tree, then `pip install triton-*.whl` here.
-
-\[^list-wheels\]: GitHub artifacts are only available for a limited set of
-commits, OSes, and HW architectures. To list available artifacts, run
-[`ci/list_triton_wheels.py`][list_triton].
 
 1. **Build extensions**:
 
