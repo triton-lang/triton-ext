@@ -16,15 +16,13 @@
 - Next, retrieve the latest Triton and LLVM binaries for building extensions:
 
   ```bash
-  python ci/download-artifact.py llvm
-  python ci/download-artifact.py triton
+  python ci/download_triton_wheel.py
+  python ci/download_llvm.py
   ```
 
-  If the user wants a specific version, read the documentation of
-  `ci/download-artifact.py` to specify the commit, OS, and architecture; e.g.,
-  `python ci/download-artifact.py llvm-abc1234-linux-x64`. Note that available
-  artifacts are limited; to list available artifacts, run
-  `ci/fetch-artifacts.py`.
+  If the user wants a specific version, read the documentation of these scripts.
+  Note that available artifacts are limited; to list available artifacts, run
+  `ci/list_triton_wheels.py`.
 
 ## Build
 

@@ -7,7 +7,7 @@ that specific revision (i.e.,
 `https://github.com/triton-lang/triton/blob/${triton_rev}/cmake/llvm-hash.txt`).
 
 Usage:
-    python fetch-llvm-hash.py [<triton-rev>]
+    python fetch_llvm_hash.py [<triton-rev>]
 """
 
 import sys
