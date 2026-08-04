@@ -105,6 +105,8 @@ def open_pr(branch, short_hash, hash, dry_run: bool):
         title,
         "--body",
         body,
+        "--label",
+        "ci",
     ])
 
 
