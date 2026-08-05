@@ -28,7 +28,6 @@ Usage (NOTE: quote the pattern to avoid shell expansion):
 import logging
 import os
 import sys
-from fnmatch import fnmatch
 
 import common
 import list_triton_wheels as wheels
@@ -62,30 +61,6 @@ def normalize_arch(arch):
         return "aarch64"
     LOG.error(f"Unrecognised arch: {arch!r}; expected 'x64' or 'arm64'")
     sys.exit(1)
-
-
-def select_wheel(candidates: list[wheels.Wheel],
-                 pattern: str) -> wheels.Wheel | None:
-    """
-    Return the first wheel in `candidates` that matches the `pattern`.
-
-    >>> select_wheel([], "triton-*") is None
-    True
-    >>> select_wheel([wheels.Wheel("triton-3.8.0-cp314-...whl", "https://...")], "triton-*").version()
-    '3.8.0'
-    >>> select_wheel([
-    ...   wheels.Wheel("triton-3.8.0+gitf6ef5434-...x86_64.whl", "https://..."),
-    ...   wheels.Wheel("triton-3.8.0+gitf6ef5434-...aarch64.whl", "https://..."),
-    ... ], "triton-*f6ef5434*aarch64*").filename
-    'triton-3.8.0+gitf6ef5434-...aarch64.whl'
-    >>>
-    """
-    LOG.debug(f"Searching for pattern: {pattern}")
-    for wheel in candidates:
-        if fnmatch(wheel.filename, pattern):
-            LOG.debug(f"Found: {wheel}")
-            return wheel
-    return None
 
 
 def download_wheel(url, filename, channel):
@@ -123,11 +98,11 @@ def main(
         print(USAGE, file=sys.stderr)
         sys.exit(1)
 
-    candidates = wheels.run(channel)
-    wheel = select_wheel(candidates, pattern)
-    if not wheel:
+    candidates = wheels.run(channel, pattern)
+    if not candidates:
         LOG.error(f"No wheel found matching pattern: {pattern}")
         sys.exit(1)
+    wheel = candidates[0]
 
     if not dry_run:
         download_wheel(wheel.url, wheel.filename, channel)

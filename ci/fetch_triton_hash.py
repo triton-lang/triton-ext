@@ -17,6 +17,7 @@ from datetime import datetime
 
 import common
 import list_triton_wheels as wheels
+import probe_sysinfo
 
 LOG = logging.getLogger(os.path.basename(__file__))
 
@@ -75,8 +76,11 @@ def run(repo: str, depth: int) -> str | None:
         commits = scan(tmpdir)
         sorted_by_date = sorted(commits, key=lambda x: x.date, reverse=True)
 
-    candidates = wheels.run("nightly")
-    LOG.debug(f"Found {len(candidates)} nightly wheels")
+    _, probed_arch = probe_sysinfo.run()
+    arch = "x86_64" if probed_arch == "x64" else "aarch64"
+    arch_pattern = f"*_{arch}*.whl"
+    candidates = wheels.run("nightly", arch_pattern)
+    LOG.debug(f"Found {len(candidates)} nightly wheels for {arch}")
     for commit in sorted_by_date:
         LOG.debug(f"Checking commit: {commit.hash} ({commit.date})")
         short = commit.hash[:8]

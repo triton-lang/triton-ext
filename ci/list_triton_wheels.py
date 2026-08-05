@@ -11,7 +11,7 @@ fetches a list of wheels for a given channel (a `PEP 503`_ index). When run as a
 script it prints the retrieved wheel names to stdout.
 
 Usage:
-    python ci/list_triton_wheels.py [nightly|release]
+    python ci/list_triton_wheels.py [nightly|release] ['wheel-pattern']
 
 .. _feed: https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/Triton-Nightly/pypi/simple/triton/
 .. _PEP 503: https://peps.python.org/pep-0503/
@@ -22,6 +22,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from html.parser import HTMLParser
 
 import requests
@@ -78,8 +79,7 @@ class Wheel:
         ('cp314', 'cp314', 'linux_x86_64')
         """
         stem = self.filename.rsplit(".", 1)[0]
-        interpreter, abi, platform, remaining = stem.split("-")[2:]
-        assert not remaining
+        interpreter, abi, platform = stem.split("-")[2:]
         return (interpreter, abi, platform)
 
 
@@ -129,11 +129,32 @@ def _parse_anchors(html: str) -> list[Wheel]:
     return parser.results
 
 
-def run(channel) -> list[Wheel]:
-    """Return all wheel entries for the given channel."""
+def _filter_wheels(candidates: list[Wheel], pattern: str) -> list[Wheel]:
+    """
+    Return the subset of `candidates` whose filenames match `pattern`.
+
+    >>> _filter_wheels([], "triton-*")
+    []
+    >>> _filter_wheels([Wheel("triton-3.8.0-cp314-...whl", "https://...")], "triton-*")[0].version()
+    '3.8.0'
+    >>> wheels = [
+    ...   Wheel("triton-3.8.0+gitf6ef5434-...x86_64.whl", "https://..."),
+    ...   Wheel("triton-3.8.0+gitf6ef5434-...aarch64.whl", "https://..."),
+    ... ]
+    >>> _filter_wheels(wheels, "triton-*f6ef5434*aarch64*")[0].filename
+    'triton-3.8.0+gitf6ef5434-...aarch64.whl'
+    """
+    return [w for w in candidates if fnmatch(w.filename, pattern)]
+
+
+def run(channel, pattern=None) -> list[Wheel]:
+    """Return all wheel entries for the given channel, optionally filtered by pattern."""
     html = _fetch_index(channel)
     wheels = _parse_anchors(html)
     LOG.debug(f"Parsed {len(wheels)} wheel anchors from {channel} index")
+    if pattern:
+        wheels = _filter_wheels(wheels, pattern)
+        LOG.debug(f"Filtered to {len(wheels)} wheels matching: {pattern}")
     return wheels
 
 
@@ -152,9 +173,11 @@ if __name__ == "__main__":
 
     channel = sys.argv[1] if len(sys.argv) > 1 else "nightly"
     if channel not in CHANNELS:
-        print("Usage: python ci/list_triton_wheels.py [nightly|release]",
-              file=sys.stderr)
+        print(
+            "Usage: python ci/list_triton_wheels.py [nightly|release] ['wheel-pattern']",
+            file=sys.stderr)
         sys.exit(1)
 
-    for wheel in run(channel):
+    pattern = sys.argv[2] if len(sys.argv) > 2 else None
+    for wheel in run(channel, pattern):
         print(wheel)
