@@ -25,6 +25,7 @@ Usage (NOTE: quote the pattern to avoid shell expansion):
     python ci/download_triton_wheel.py [channel] ['wheel-pattern']
 """
 
+import doctest
 import logging
 import os
 import sys
@@ -141,9 +142,8 @@ if __name__ == "__main__":
     if common.env2bool("VERBOSE"):
         logging.basicConfig(level=logging.DEBUG)
 
-    if common.env2bool("TEST"):
-        import doctest
-        results = doctest.testmod()
+    if common.env2bool("DOCTEST"):
+        results = doctest.testmod()  # type: ignore[attr-defined]
         sys.exit(int(results.failed > 0))
 
     dry_run = common.env2bool("DRY_RUN")

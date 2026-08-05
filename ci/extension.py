@@ -6,11 +6,14 @@ This also understands parsing a CODEOWNERS file to associate a list of owners
 with an extension: see :parse_codeowners: and :owners_for:.
 """
 
+import doctest
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import common
 import tomllib
 
 VALID_STATUS = {"experimental", "stable"}
@@ -184,6 +187,6 @@ def discover() -> list[Manifest]:
 
 
 if __name__ == "__main__":
-    """Running this file will run the inline doctests."""
-    import doctest
-    doctest.testmod()
+    if common.env2bool("DOCTEST"):
+        results = doctest.testmod()  # type: ignore[attr-defined]
+        sys.exit(int(results.failed > 0))

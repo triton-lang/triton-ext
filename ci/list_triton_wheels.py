@@ -18,6 +18,7 @@ Usage:
 .. _PyPI: https://pypi.org/simple/triton/
 """
 
+import doctest
 import logging
 import os
 import sys
@@ -78,8 +79,7 @@ class Wheel:
         ('cp314', 'cp314', 'linux_x86_64')
         """
         stem = self.filename.rsplit(".", 1)[0]
-        interpreter, abi, platform, remaining = stem.split("-")[2:]
-        assert not remaining
+        interpreter, abi, platform = stem.split("-")[2:]
         return (interpreter, abi, platform)
 
 
@@ -145,9 +145,8 @@ if __name__ == "__main__":
     if common.env2bool("VERBOSE"):
         logging.basicConfig(level=logging.DEBUG)
 
-    if common.env2bool("TEST"):
-        import doctest
-        results = doctest.testmod()
+    if common.env2bool("DOCTEST"):
+        results = doctest.testmod()  # type: ignore[attr-defined]
         sys.exit(int(results.failed > 0))
 
     channel = sys.argv[1] if len(sys.argv) > 1 else "nightly"

@@ -63,5 +63,11 @@ repos:
         entry: ci/list_extensions.py
         language: python
         pass_filenames: false
+      - id: doctests
+        name: run doctests
+        entry: ci/doctests.py
+        language: python
+        additional_dependencies: [requests]
+        pass_filenames: false
 
 exclude: '^$'
