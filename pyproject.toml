@@ -3,7 +3,10 @@
 # `pytest test/` from within an extension that ships its own `pyproject.toml`.
 [tool.pytest.ini_options]
 minversion = "8.0"
-# `extensions/utlx/tlx` is a vendored upstream TLX tree with its own `*_test.py`
-# files (imported at module scope, requiring torch/GPU). It is not part of this
-# repo's suite -- utlx runs only `pytest test/` -- so keep it out of collection.
+# Test collection is whitelisted to enabled extensions' `test/` dirs plus the
+# repo-level `testing/` suite (see `conftest.py`), so a disabled `utlx` is
+# already pruned. This ignore stays correct if utlx is re-enabled: its `tlx`
+# tree is a vendored upstream TLX checkout with its own `*_test.py` files
+# (imported at module scope, requiring torch/GPU) that are not part of this
+# repo's suite -- utlx runs only `pytest test/`.
 addopts = "--ignore=extensions/utlx/tlx"

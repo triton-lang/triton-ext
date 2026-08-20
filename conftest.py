@@ -20,14 +20,6 @@ from pathlib import Path
 
 import pytest
 
-# Directories that never contain first-party tests but may hold stray ``.mlir``
-# files (downloaded artifacts, build trees, caches, virtualenvs).
-_EXCLUDE_DIRS = {
-    ".git", ".venv", "venv", "build", "dist", ".mypy_cache", ".pytest_cache",
-    ".ruff_cache", "__pycache__"
-}
-_EXCLUDE_PREFIXES = ("llvm-", "triton-")
-
 _RUN_RE = re.compile(r"//\s*RUN:\s*(.+?)\s*$", re.MULTILINE)
 # Bare ``name.py`` tokens (not preceded by ``/`` or the python ``-m`` form).
 _PY_TOKEN_RE = re.compile(r"(?<![\w./])([\w.-]+\.py)\b")
@@ -37,23 +29,48 @@ _FILECHECK = f"{shlex.quote(sys.executable)} -m filecheck --enable-var-scope"
 _REPO_ROOT = Path(__file__).resolve().parent
 
 
-def excluded(path: Path) -> bool:
-    # Only consider components *below* the repo root: the repo directory itself
-    # is named ``triton-ext``, which would otherwise match ``triton-`` and
-    # exclude everything.
+def _allowed_roots() -> list[Path] | None:
+    """
+    Whitelist directories under which tests are collected:
+
+    - `<root>/<extension>/test`
+    - `<root>/testing`
+
+    Returns ``None`` if extension discovery fails; fall back to collecting
+    everything rather than silently collecting nothing.
+    """
+    sys.path.insert(0, str(_REPO_ROOT / "ci"))
     try:
-        rel = path.resolve().relative_to(_REPO_ROOT)
-    except ValueError:
+        import extension  # noqa: E402  (ci/ is added to sys.path above)
+
+        roots = [(_REPO_ROOT / "testing").resolve()]
+        for manifest in extension.discover():
+            if manifest.enabled:
+                roots.append((_REPO_ROOT / manifest.path / "test").resolve())
+        return roots
+    except Exception:  # pragma: no cover - discovery should not normally fail
+        return None
+
+
+_ALLOWED_ROOTS = _allowed_roots()
+
+
+def pytest_ignore_collect(collection_path, config):
+    """
+    Prune collection to the whitelisted roots (see :func:`_allowed_roots`).
+    """
+    if _ALLOWED_ROOTS is None:
         return False
-    for part in rel.parts:
-        if part in _EXCLUDE_DIRS or part.startswith(_EXCLUDE_PREFIXES):
-            return True
-    return False
+    path = Path(collection_path).resolve()
+    for root in _ALLOWED_ROOTS:
+        if path.is_relative_to(root) or root.is_relative_to(path):
+            return False
+    return True
 
 
 def pytest_collect_file(parent, file_path):
     path = Path(file_path)
-    if path.suffix == ".mlir" and not excluded(path):
+    if path.suffix == ".mlir":
         return MlirFile.from_parent(parent, path=file_path)
     return None
 
