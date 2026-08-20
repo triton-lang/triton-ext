@@ -3,7 +3,8 @@
 Report every extension's metadata, or fail if any extension is misconfigured.
 
 Optionally, pass a `<field>` argument to print only the field for each
-extension: `name`, `path`, `status`, `enabled`, `version`, or `owners`.
+extension: `name`, `path`, `status`, `enabled`, `version`, or `owners`. When a
+`<field>` argument is passed, only enabled extensions are printed.
 
 Usage:
     python ci/list_extensions.py [<field>]
@@ -45,7 +46,8 @@ def run(field: str | None):
                 raise ValueError(
                     f"Invalid field '{field}', must be one of: "
                     f"{', '.join(ext.__dataclass_fields__.keys())}")
-            print(as_str(ext, field))
+            if ext.enabled:
+                print(as_str(ext, field))
         else:
             print(
                 f"{as_str(ext, 'name'):<20} {as_str(ext, 'version'):<7} {as_str(ext, 'enabled'):<9} {as_str(ext, 'path'):<24} owners: {as_str(ext, 'owners'):<20}"
