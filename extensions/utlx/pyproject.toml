@@ -10,7 +10,7 @@ requires-python = ">=3.9"
 
 [tool.triton-ext]
 status = "experimental"
-enabled = true
+enabled = false
 
 [tool.scikit-build]
 cmake.version = ">=3.20"
