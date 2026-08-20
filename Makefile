@@ -12,13 +12,13 @@ list:
 .PHONY: build
 build:
 	@for EXT_DIR in $(shell ci/list_extensions.py path); do \
-		$(MAKE) -C $$EXT_DIR build; \
+		$(MAKE) -C $$EXT_DIR build || exit $$?; \
 	done
 
 .PHONY: install
 install:
 	@for EXT_DIR in $(shell ci/list_extensions.py path); do \
-		$(MAKE) -C $$EXT_DIR install; \
+		$(MAKE) -C $$EXT_DIR install || exit $$?; \
 	done
 
 .PHONY: test
