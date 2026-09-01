@@ -34,12 +34,14 @@ def cuda_parse_arch(arch):
 
 @tl.builtin
 def cluster_cta_rank(_semantic=None):
-    return tl.tensor(_semantic.builder.utlx_cluster_cta_rank([]), tl.int32)
+    return tl.tensor(_semantic.builder.create_utlx_cluster_cta_rank([]),
+                     tl.int32)
 
 
 @tl.builtin
 def cluster_size_1d(_semantic=None):
-    return tl.tensor(_semantic.builder.utlx_cluster_size_1d([]), tl.int32)
+    return tl.tensor(_semantic.builder.create_utlx_cluster_size_1d([]),
+                     tl.int32)
 
 
 @tl.builtin
@@ -48,8 +50,8 @@ def thread_id(axis, _semantic=None):
     if axis not in (0, 1, 2):
         raise ValueError(f"thread_id axis must be 0, 1, or 2 but got {axis}")
     return tl.tensor(
-        _semantic.builder.utlx_thread_id([_semantic.builder.get_int32(axis)]),
-        tl.int32)
+        _semantic.builder.create_utlx_thread_id(
+            [_semantic.builder.get_int32(axis)]), tl.int32)
 
 
 @tl.builtin
@@ -107,7 +109,7 @@ def get_fp8_format_name(dtype: tl.dtype, _semantic=None) -> tl.constexpr:
 
 @tl.builtin
 def clock64(_semantic=None):
-    return tl.tensor(_semantic.builder.utlx_clock64([]), tl.int64)
+    return tl.tensor(_semantic.builder.create_utlx_clock64([]), tl.int64)
 
 
 @tl.builtin
@@ -145,7 +147,7 @@ def stoch_round(
         result_ty = dst_ty
         dst_ir_ty = dst_ty.to_ir(_semantic.builder)
     # Use fp_to_fp with rounding=RS (stochastic), mode=2
-    dst = _semantic.builder.utlx_fp_to_fp_with_rbits([
+    dst = _semantic.builder.create_utlx_fp_to_fp_with_rbits([
         _semantic.builder.get_null_value(dst_ir_ty), src.handle,
         rand_bits.handle,
         _semantic.builder.get_int32(2)

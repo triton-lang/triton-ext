@@ -12,7 +12,7 @@ def _alloc_clc_responses(num_responses: tl.constexpr,
                          _semantic=None) -> tlx.clc_response:
     layout = tlx.swizzled_shared_layout_encoding.make_default(rank=1)
     num_responses_val = tl._unwrap_if_constexpr(num_responses)
-    handle = _semantic.builder.utlx_alloc_clc_responses(
+    handle = _semantic.builder.create_utlx_alloc_clc_responses(
         [_semantic.builder.get_int32(int(num_responses_val))])
     return tlx.clc_response(handle, num_responses_val, layout)
 
@@ -20,14 +20,14 @@ def _alloc_clc_responses(num_responses: tl.constexpr,
 @tl.builtin
 def _clc_issue(clc_response_addr, barrier, _semantic=None):
     assert isinstance(clc_response_addr, tlx.clc_response)
-    _semantic.builder.utlx_async_clc_try_cancel(
+    _semantic.builder.create_utlx_async_clc_try_cancel(
         [barrier.handle, clc_response_addr.handle])
 
 
 @tl.builtin
 def _clc_query(clc_response_addr, _semantic=None):
     assert isinstance(clc_response_addr, tlx.clc_response)
-    x = _semantic.builder.utlx_clc_query([clc_response_addr.handle])
+    x = _semantic.builder.create_utlx_clc_query([clc_response_addr.handle])
     return tl.tensor(x, tl.int32)
 
 
@@ -62,7 +62,7 @@ def clc_producer(context,
     response = local_view(context._clc_responses, k, _semantic=_semantic)
 
     if multi_ctas:
-        cta_rank = _semantic.builder.utlx_cluster_cta_rank([])
+        cta_rank = _semantic.builder.create_utlx_cluster_cta_rank([])
         zero = _semantic.builder.get_int32(0)
         pred_cta0_handle = _semantic.builder.create_icmpEQ(cta_rank, zero)
         pred_cta0 = tl.tensor(pred_cta0_handle, tl.int1)

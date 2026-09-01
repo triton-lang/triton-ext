@@ -63,7 +63,7 @@ def inspect_stages_hook(self=None,
             # Phase 1: Plugin ConvertTritonToTritonGPU
             pm = ir.pass_manager(mod.context)
             pm.enable_debug()
-            passes.plugin.utlx_convert_triton_to_tritongpu(
+            passes.plugin.add_utlx_convert_triton_to_tritongpu(
                 pm, [
                     f"hip:{target}",
                     str(options.num_warps),
@@ -84,7 +84,7 @@ def inspect_stages_hook(self=None,
             amd.passes.ttgpuir.add_accelerate_matmul(
                 pm, options.arch, options.matrix_instr_nonkdim, options.kpack)
             # uTLX: fix MemDesc encodings to match DotOp operand requirements
-            passes.plugin.utlx_insert_and_propagate_layout(pm, [])
+            passes.plugin.add_utlx_insert_and_propagate_layout(pm, [])
 
             passes.ttgpuir.add_remove_layout_conversions(pm)
             amd.passes.ttgpuir.add_optimize_epilogue(pm)
@@ -151,7 +151,7 @@ def inspect_stages_hook(self=None,
             mod = self.make_ttir(mod, metadata, opt, cap)
             pm = ir.pass_manager(mod.context)
             pm.enable_debug()
-            passes.plugin.utlx_convert_triton_to_tritongpu(
+            passes.plugin.add_utlx_convert_triton_to_tritongpu(
                 pm,
                 [f"cuda:{cap}",
                  str(opt.num_warps), '32',
@@ -170,8 +170,8 @@ def inspect_stages_hook(self=None,
         def make_llir_wrapper(mod, metadata):
             pm = ir.pass_manager(mod.context)
             pm.enable_debug()
-            passes.plugin.utlx_storage_alias_lowering(pm, [])
-            passes.plugin.utlx_rewrite_local_alias(pm, [])
+            passes.plugin.add_utlx_storage_alias_lowering(pm, [])
+            passes.plugin.add_utlx_rewrite_local_alias(pm, [])
             pm.run(mod, 'utlx_storage_alias')
             return original_llir(mod, metadata)
 

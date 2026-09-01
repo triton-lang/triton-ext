@@ -352,7 +352,7 @@ class reuse_group:
         group_size_ir = builder.get_int32(self._group_size)
 
         args = [group_kind_ir, group_size_ir] + ir_elements
-        return builder.utlx_reuse_group(args)
+        return builder.create_utlx_reuse_group(args)
 
 
 class buffered_tensor(tl.base_value):
@@ -618,7 +618,7 @@ class storage_alias_spec(tl.base_value):
 
         overlap_def_ir = overlap_def.to_ir(_semantic.builder)
         # Call the plugin custom op
-        _semantic.builder.utlx_set_buffer_overlap(
+        _semantic.builder.create_utlx_set_buffer_overlap(
             [self._handle, overlap_def_ir])
 
     def _flatten_ir(self, handles):
