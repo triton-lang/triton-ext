@@ -25,5 +25,5 @@ This library is built as part of the project build; see top-level
    [example](../pass/LoopSplit/LoopSplit.cpp)).
 
 1. Inject your extension into Triton at runtime (e.g.,
-   `TRITON_PASS_PLUGIN_PATH=/path/to/libmy_pass.so python ...`); this library
+   `TRITON_PLUGIN_PATHS=/path/to/libmy_pass.so python ...`); this library
    ensures Triton can discover and load your extension.

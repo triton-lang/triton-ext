@@ -5,6 +5,7 @@ triton-*/
 .venv/
 *.tar.gz
 *.pyc
+__pycache__/
 
 # Python packaging / compiled extension artifacts.
 *.egg-info/

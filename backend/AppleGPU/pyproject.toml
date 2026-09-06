@@ -1,0 +1,24 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "cmake>=3.20", "ninja"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "triton-apple-backend"
+version = "0.1.0"
+description = "Apple GPU backend for Triton (Metal)"
+requires-python = ">=3.10"
+
+[project.entry-points."triton.backends"]
+apple = "triton_apple_backend"
+
+[tool.triton-ext]
+status = "experimental"
+enabled = true
+
+[tool.scikit-build]
+cmake.version = ">=3.20"
+cmake.build-type = "Release"
+wheel.exclude = ["**/__pycache__/**", "**/*.pyc", "lib/**"]
+
+[tool.scikit-build.wheel.packages]
+triton_apple_backend = "python/triton_apple_backend"

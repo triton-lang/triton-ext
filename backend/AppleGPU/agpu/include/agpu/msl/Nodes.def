@@ -1,0 +1,25 @@
+// Nodes.def - the node table. Every node kind in the AST is declared here and
+// nowhere else.
+
+#ifndef EXPR_NODE
+#define EXPR_NODE(Name, Class)
+#endif
+#ifndef STMT_NODE
+#define STMT_NODE(Name, Class)
+#endif
+
+EXPR_NODE(VarRef, VarRef)
+EXPR_NODE(Literal, Literal)
+EXPR_NODE(Binary, Binary)
+EXPR_NODE(Cast, Cast)
+EXPR_NODE(Subscript, Subscript)
+EXPR_NODE(Member, Member)
+EXPR_NODE(Deref, Deref)
+
+STMT_NODE(Decl, Decl)
+STMT_NODE(Assign, Assign)
+STMT_NODE(If, If)
+STMT_NODE(Function, Function)
+
+#undef EXPR_NODE
+#undef STMT_NODE
