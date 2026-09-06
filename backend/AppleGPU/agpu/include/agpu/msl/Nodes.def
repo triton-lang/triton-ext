@@ -1,0 +1,20 @@
+// Nodes.def - the node table, for macros that need no end marker.
+//
+// This is NodesClosed.def's list with NODE_END neutralised. Adding a node
+// means editing NodesClosed.def only.
+//
+// Macros a caller may define (all optional, unset ones expand to nothing):
+//
+//   EXPR_NODE(Name, Class)              an expression kind
+//   EXPR_CHILD(Class, field)            a single Expr* child
+//   EXPR_CHILD_LIST(Class, field)       a vector of Expr*
+//
+//   STMT_NODE(Name, Class)              a statement kind
+//   STMT_CHILD_EXPR(Class, field)       a single Expr* child
+//   STMT_CHILD_EXPR_LIST(Class, field)  a vector of Expr*
+//   STMT_CHILD_STMT(Class, field)       a single Stmt* child
+//   STMT_CHILD_BLOCK(Class, field)      a Block
+//   STMT_CHILD_BLOCK_LIST(Class, f, m)  a vector whose elements hold a Block
+
+#define NODE_END
+#include "NodesClosed.def"
