@@ -1,86 +1,16 @@
-// AgpuEmitter - the walk core: dispatch registration, the op walk, what the
-// walk knows about a value, and the module entry point.
 #include "AgpuEmitter.h"
+#include "AgpuLog.h"
 
 #include "agpu/core/Names.h"
+#include "agpu/emit/EmitPrune.h"
 #include "agpu/msl/Printer.h"
-#include "agpu/plan/Terminators.h"
+#include "agpu/plan/Vestigial.h"
 
 #include <sstream>
 
 namespace mlir::triton::applegpu::bridge {
 
 namespace am = agpu::msl;
-
-void AgpuEmitter::markBasePointer(agpu::ValueId v) { body_.basePtrs.insert(v); }
-
-void AgpuEmitter::inheritBasePointer(agpu::ValueId from, agpu::ValueId to) {
-  if (body_.basePtrs.count(from))
-    body_.basePtrs.insert(to);
-}
-void AgpuEmitter::inheritOffset(agpu::ValueId from, int64_t fromReg,
-                                agpu::ValueId to, int64_t toReg) {
-  const auto off = body_.offsetOf.find({from, fromReg});
-  if (off == body_.offsetOf.end())
-    return;
-  body_.offsetOf[{to, toReg}] = off->second;
-}
-
-am::Expr *AgpuEmitter::addressAt(agpu::ValueId ptr, int64_t reg) {
-  am::Context &mc = agpu_.context();
-  const am::Str *base = body_.sym.regAt(ptr, (std::size_t)reg);
-  if (!base)
-    return nullptr;
-  const auto off = body_.offsetOf.find({ptr, reg});
-  if (off != body_.offsetOf.end())
-    return mc.subscript(mc.var(*base), mc.var(off->second.name));
-
-  if (body_.basePtrs.count(ptr))
-    return mc.subscript(mc.var(*base), mc.lit(0));
-  return nullptr;
-}
-
-bool AgpuEmitter::addressesAreRedundant(Value ptr) {
-  auto ptrTy =
-      ptr ? dyn_cast<RankedTensorType>(ptr.getType()) : RankedTensorType();
-  if (!ptrTy)
-    return true;
-  const LinearLayout ll = gpu::toLinearLayout(ptrTy);
-  MLIRContext *ctx = ptrTy.getContext();
-  return freeBitsOf(ll, ctx, lldim::Lane) != 0 ||
-         freeBitsOf(ll, ctx, lldim::Warp) != 0;
-}
-
-am::Expr *AgpuEmitter::maskAt(const agpu::OpView &o, std::size_t maskIndex,
-                              int64_t reg) {
-  if (o.operands.size() <= maskIndex)
-    return nullptr;
-  const am::Str *m = body_.sym.regAt(o.operands[maskIndex], (std::size_t)reg);
-  return m ? agpu_.context().var(*m) : nullptr;
-}
-
-agpu::CoordSource AgpuEmitter::coordSourceOf(RankedTensorType ty) {
-  agpu::CoordSource cs;
-  cs.hoist = &body_.hoist;
-  const LinearLayout ll = gpu::toLinearLayout(ty);
-  for (int d = 0; d < ty.getRank(); ++d)
-    if (const std::optional<StringAttr> dim = outDimAt(ll, d))
-      cs.dims.push_back(layoutSourceOf(ll, ty.getContext(), *dim).basis());
-  return cs;
-}
-
-am::Expr *AgpuEmitter::coordOf(Value v, int reg, int axis) {
-  auto rt = dyn_cast<RankedTensorType>(v.getType());
-  if (!rt)
-    return nullptr;
-  const LinearLayout ll = gpu::toLinearLayout(rt);
-  const std::optional<StringAttr> dim = outDimAt(ll, axis);
-  if (!dim)
-    return nullptr;
-  const agpu::LayoutBasis lb =
-      layoutSourceOf(ll, rt.getContext(), *dim).basis();
-  return body_.hoist.coord(agpu_.context(), lb, reg);
-}
 
 namespace {
 
@@ -126,9 +56,17 @@ std::vector<ConstantValue> constantsOf(arith::ConstantOp k) {
 void AgpuEmitter::registerHandlers() {
   registerArithHandlers();
   registerValueHandlers();
+  registerRebindHandler();
+  registerCallHandler();
+  registerTileHandlers();
+  registerInterleaveHandler();
+  registerDotHandler();
   registerRangeHandler();
   registerAddPtrHandler();
+  registerAtomicHandlers();
   registerMemoryHandler();
+  registerMemDescHandler();
+  registerBarrierHandler();
 }
 
 int64_t AgpuEmitter::numWarps() const {
@@ -144,6 +82,36 @@ agpu::ValueId AgpuEmitter::idOf(Value v) {
   const agpu::ValueId id = nextId_++;
   ids_[v] = id;
   return id;
+}
+
+bool AgpuEmitter::willHaveScalarName(Value v, Operation *useSite) const {
+  const auto it = ids_.find(v);
+  if (it != ids_.end() && body_.sym.scalarName(it->second) != nullptr)
+    return true;
+
+  if (isa<RankedTensorType>(v.getType()))
+    return false;
+
+  if (auto arg = dyn_cast<BlockArgument>(v))
+    return isa<triton::FuncOp>(arg.getOwner()->getParentOp());
+
+  Operation *def = v.getDefiningOp();
+  if (!def)
+    return false;
+
+  for (Operation *scope = useSite; scope; scope = scope->getParentOp())
+    if (def->getParentRegion() == scope->getParentRegion())
+      return def->getBlock() != scope->getBlock() ||
+             def->isBeforeInBlock(scope);
+  return false;
+}
+
+agpu::ValueNames AgpuEmitter::freshNames(Value v, int64_t count) {
+  agpu::ValueNames out;
+  const agpu::ValueId id = idOf(v);
+  for (int64_t r = 0; r < count; ++r)
+    out.push_back(nameFor('v', id, r));
+  return out;
 }
 
 LogicalResult AgpuEmitter::bindArgs(triton::FuncOp func,
@@ -174,6 +142,12 @@ LogicalResult AgpuEmitter::bindArgs(triton::FuncOp func,
 }
 
 agpu::Decision AgpuEmitter::walkOp(Operation *op) {
+  if (body_.absorbedOps.count(op))
+    return agpu::Decision::emitted();
+
+  if (agpu::isVestigial(opName(op)))
+    return agpu::Decision::emitted();
+
   for (Value v : op->getResults()) {
     const agpu::ValueId id = idOf(v);
     valueFor_[id] = v;
@@ -183,10 +157,47 @@ agpu::Decision AgpuEmitter::walkOp(Operation *op) {
     }
   }
 
-  // OpView holds no Operation * on purpose, so that agpu/bind/ builds and
-  // tests without MLIR. Attributes a handler needs are read out here into
-  // `ints`; one arm per op the dispatch table covers. An op with no handler
-  // declines by name.
+  // An op lowers here, outside the dispatch table, when it needs a region to
+  // walk or an attribute OpView cannot carry. OpView holds no
+  // Operation * on purpose, so that agpu/bind/ builds and tests without MLIR,
+  // which is what makes these inexpressible as table handlers. The dyn_casts
+  // further down read attributes into `ints` and still dispatch; only the ones
+  // here return early.
+  if (auto typed = dyn_cast<triton::AssertOp>(op))
+    return emitted(emitAssertOp(typed), op, "tt.assert");
+  if (auto typed = dyn_cast<triton::PrintOp>(op))
+    return emitted(emitPrintOp(typed), op, "tt.print");
+  if (auto typed = dyn_cast<LLVM::AssumeOp>(op))
+    return emitted(emitAssumeOp(typed), op, "llvm.intr.assume");
+  if (auto typed = dyn_cast<scf::ForOp>(op))
+    return emitted(emitForOp(typed), op, "scf.for");
+  if (auto typed = dyn_cast<scf::IfOp>(op))
+    return emitted(emitIfOp(typed), op, "scf.if");
+  if (auto typed = dyn_cast<scf::WhileOp>(op))
+    return emitted(emitWhileOp(typed), op, "scf.while");
+
+  if (isa<triton::ReduceOp, triton::ScanOp>(op)) {
+    body_.pool.carve(poolNeedOf(op));
+    auto red = dyn_cast<triton::ReduceOp>(op);
+    const agpu::Decision d =
+        red ? emitReduceOp(red) : emitScanOp(cast<triton::ScanOp>(op));
+    return emitted(d, op, opName(op));
+  }
+
+  if (auto map = dyn_cast<triton::MapElementwiseOp>(op))
+    return emitted(emitMapOp(map), op, "tt.map_elementwise");
+
+  const agpu::OpView view = opViewOf(op);
+  body_.pool.carve(poolNeedOf(op));
+
+  if (agpu_.gates.on(agpu::Gate::TraceOps))
+    traceOp(op, view);
+
+  std::string who;
+  return emitted(table_.runNamed(view, who), op, view.name);
+}
+
+agpu::OpView AgpuEmitter::opViewOf(Operation *op) {
   agpu::OpView view;
   view.name = opName(op);
   for (Value v : op->getOperands())
@@ -195,10 +206,32 @@ agpu::Decision AgpuEmitter::walkOp(Operation *op) {
     view.ints.push_back(mr.getStart());
   if (auto cmp = dyn_cast<arith::CmpIOp>(op))
     view.ints.push_back((int64_t)cmp.getPredicate());
+  if (auto cmp = dyn_cast<arith::CmpFOp>(op))
+    view.ints.push_back((int64_t)cmp.getPredicate());
+  if (auto fp = dyn_cast<triton::FpToFpOp>(op))
+    if (const std::optional<triton::RoundingMode> rm = fp.getRounding())
+      view.ints.push_back((int64_t)*rm);
+  if (auto fp4 = dyn_cast<triton::gpu::Fp4ToFpOp>(op))
+    view.ints.push_back((int64_t)fp4.getAxis());
+  if (auto ga = dyn_cast<triton::GatherOp>(op))
+    view.ints.push_back((int64_t)ga.getAxis());
+  if (auto cas = dyn_cast<triton::AtomicCASOp>(op))
+    view.ints.push_back((int64_t)cas.getSem());
+  if (auto rmw = dyn_cast<triton::AtomicRMWOp>(op)) {
+    view.ints.push_back((int64_t)rmw.getAtomicRmwOp());
+    view.ints.push_back((int64_t)rmw.getSem());
+  }
   if (auto pid = dyn_cast<triton::GetProgramIdOp>(op))
     view.ints.push_back((int64_t)pid.getAxisAsInt());
   if (auto np = dyn_cast<triton::GetNumProgramsOp>(op))
     view.ints.push_back((int64_t)np.getAxisAsInt());
+  if (auto bar = dyn_cast<gpu::BarrierOp>(op))
+    view.ints.push_back((int64_t)(uint32_t)bar.getAddrSpace());
+  // metal::clamp is min(max(...)) and drops NaN.
+  if (auto cl = dyn_cast<triton::ClampFOp>(op))
+    view.ints.push_back(cl.getPropagateNan() == triton::PropagateNan::ALL);
+  if (auto call = dyn_cast<triton::CallOp>(op))
+    view.text = call.getCallee();
   std::vector<ConstantValue> konst;
   if (auto k = dyn_cast<arith::ConstantOp>(op))
     konst = constantsOf(k);
@@ -209,22 +242,44 @@ agpu::Decision AgpuEmitter::walkOp(Operation *op) {
     if (!konst.empty())
       constantFor_[id] = konst;
   }
+  return view;
+}
 
-  std::string who;
-  return emitted(table_.runNamed(view, who), op, view.name);
+void AgpuEmitter::traceOp(Operation *op, const agpu::OpView &view) {
+  std::ostringstream os;
+  os << view.name;
+  for (Value v : op->getOperands())
+    if (auto t = dyn_cast<RankedTensorType>(v.getType()))
+      os << "  in=" << t.getShape()[0] << "x"
+         << (t.getRank() > 1 ? t.getShape()[1] : 1) << "/" << registerCount(t);
+  for (Value v : op->getResults())
+    if (auto t = dyn_cast<RankedTensorType>(v.getType()))
+      os << "  out=" << t.getShape()[0] << "x"
+         << (t.getRank() > 1 ? t.getShape()[1] : 1) << "/" << registerCount(t);
+  os << "\n";
+  appendLog(agpu::Gate::TraceOps, os.str());
 }
 
 agpu::Decision AgpuEmitter::declineOp(Operation *op, const agpu::Decision &d,
                                       std::string_view name) {
-  agpu_.declines.record(d, agpu::DeclineSite{std::string(name)});
+  agpu_.declines.record(d, agpu::DeclineSite{std::string(name), ""});
 
-  op->emitError() << "AgpuEmitter: " << d.message();
-  return d;
+  const std::string what = d.keepLooking()
+                               ? "no handler for " + std::string(name)
+                           : d.isBug() ? "handler failure " + d.message()
+                                       : d.message();
+  // compiler.py scans stderr for an out-of-budget message. Full detail goes
+  // to AGPU_DECLINE_LOG.
+  op->emitError() << "AgpuEmitter: " << what;
+  appendLog(agpu::Gate::DeclineLog, std::string(name) + "\t" + what + "\n");
+  return d.recorded();
 }
 
 agpu::Decision AgpuEmitter::walkBlock(Block &block, am::Block &out) {
   const CurBlock here(*this, out);
   for (Operation &op : block) {
+    // By name: `hasTrait` compares a TypeID the plugin and the host generate
+    // separately, so it answers false wherever they do not share one.
     if (agpu::isTerminator(opName(&op)))
       continue;
     if (const agpu::Decision d = walkOp(&op); !d.ok())
@@ -233,42 +288,112 @@ agpu::Decision AgpuEmitter::walkBlock(Block &block, am::Block &out) {
   return agpu::Decision::emitted();
 }
 
-// MSL has no goto, so a multi-block body needs the dispatch-loop lowering that
-// arrives with control flow.
-agpu::Decision AgpuEmitter::walkWholeRegion(Region &region, am::Block &out) {
-  if (!region.hasOneBlock())
-    return declined("region", "a multi-block body needs a dispatch loop");
-  return walkBlock(region.front(), out);
+// Fires only when the panel dots alone clear the shrink thresholds, a lower
+// bound of what the measured body would show, so it never rolls a kernel the
+// measured path would keep unrolled.
+agpu::RollPrediction AgpuEmitter::predictRollFor(triton::FuncOp func) {
+  agpu::PanelMmaSize u, ro;
+  func.walk([&](triton::DotOp dot) {
+    const DotShape shape = dotShapeOf(dot);
+    if (!shape.aTy)
+      return;
+    const agpu::Plan plan = agpu_.planFor(dotFactsOf(shape));
+    if (plan.kind != agpu::Plan::Kind::Panel)
+      return;
+    const agpu::PanelMmaSize du =
+        agpu::predictPanelDotSize(plan.facts, plan.panel().panel, false);
+    const agpu::PanelMmaSize dr =
+        agpu::predictPanelDotSize(plan.facts, plan.panel().panel, true);
+    u.decls += du.decls;
+    u.fragDecls += du.fragDecls;
+    u.mma += du.mma;
+    ro.decls += dr.decls;
+    ro.fragDecls += dr.fragDecls;
+    ro.mma += dr.mma;
+  });
+
+  agpu::RollPrediction out;
+  out.declDelta = u.decls - ro.decls;
+  out.fragDelta = u.fragDecls - ro.fragDecls;
+  out.mmaDelta = u.mma - ro.mma;
+  out.roll = u.load() > agpu::kDeclBudget &&
+             u.fragDecls >= agpu::kRollFragFloor && u.load() > ro.load();
+  return out;
 }
 
-// Hoisted coordinate declarations first, then the body: each references only
-// names declared before it.
+// Pool views, then live buffers, then coordinates, then body: each references
+// only names declared before it.
 agpu::BuiltBody AgpuEmitter::buildKernelBody(Region &region) {
+  // MSL has no goto; a multi-block body lowers to a dispatch loop instead.
   am::Block body;
   if (!walkWholeRegion(region, body).ok()) {
     bodyOk_ = false;
     return agpu::BuiltBody{std::move(body)};
   }
 
-  am::Block out;
+  am::Block out = poolDecls();
+  for (am::Stmt *s : body_.liveDecls)
+    out.push_back(s);
   for (am::Stmt *s : body_.hoist.decls)
     out.push_back(s);
   for (am::Stmt *s : body)
     out.push_back(s);
 
-  return agpu::BuiltBody{std::move(out)};
+  // A convert_layout absorbed by a later dot leaves its scatter-barrier-gather
+  // emitted but unread. Metal drops the dead registers but not the barriers.
+  agpu::pruneDead(out);
+  return agpu::BuiltBody{std::move(out), body_.pool.usedBytes()};
 }
 
 LogicalResult AgpuEmitter::emit() {
+  appendLog(agpu::Gate::DeclineLog, "(enter)\temit\n");
   registerHandlers();
+
+  llvm::DenseSet<StringRef> callTargets;
+  mod_.walk([&](triton::CallOp call) {
+    callTargets.insert(call.getCalleeAttr().getValue());
+  });
+
+  clampOf_.clear();
+  clampPoison_.clear();
+  cDirectOf_.clear();
+  for (auto func : mod_.getOps<triton::FuncOp>())
+    scanPool(func);
+
+  // Callees before callers: MSL needs the prototype at the call site.
+  if (failed(addDeviceFnsInCallOrder(callTargets)))
+    return failure();
 
   bool any = false;
   for (auto func : mod_.getOps<triton::FuncOp>()) {
+    if (callTargets.contains(func.getSymName()))
+      continue;
+
     agpu::KernelFacts facts;
     facts.name = agpu::kernelSymbol(func.getSymName());
-    if (failed(bindArgs(func, facts.args)))
+    if (failed(bindArgs(func, facts.args))) {
+      appendLog(agpu::Gate::DeclineLog,
+                "(args)\t" + func.getSymName().str() +
+                    ": an argument type has no representation\n");
       return failure();
+    }
     facts.numWarps = numWarps();
+    facts.debug.print = printBindingOf(func);
+    // A callee's assert reaches the buffer through this kernel's parameter, so
+    // the binding follows the module and not this body alone.
+    facts.debug.assertion = agpu_.asserts.asserts() ? agpu::DebugBinding::Bound
+                                                    : assertBindingOf(func);
+
+    const agpu::CoherencePlan coherence =
+        agpu::planCoherence(coherenceFactsOf(func));
+    coherentArgs_.clear();
+    for (std::size_t i = 0; i < facts.args.size(); ++i) {
+      facts.args[i].coherent = coherence.needsCoherent((int)i);
+      if (facts.args[i].coherent)
+        coherentArgs_.insert((int)i);
+    }
+
+    facts.predictedRoll = predictRollFor(func);
 
     // Captured by value: the callback runs during print(), after this loop
     // returns.
@@ -277,9 +402,13 @@ LogicalResult AgpuEmitter::emit() {
     Block &entry = func.getBody().front();
 
     agpu_.addKernel(facts,
-                    [this, afterArgs, argPtrs, &entry,
-                     declineMark = std::optional<std::size_t>()](
-                        am::Context &) mutable -> agpu::BuiltBody {
+                    [this, afterArgs, argPtrs, &entry, coherent = coherentArgs_,
+                     declineMark = std::optional<std::size_t>(),
+                     printMark = std::optional<std::size_t>(),
+                     assertMark = std::optional<std::size_t>()](
+                        am::Context &, bool rollK) mutable -> agpu::BuiltBody {
+                      coherentArgs_ = coherent;
+                      rollK_ = rollK;
                       body_ = BodyState{afterArgs, argPtrs};
                       // Marking keeps earlier kernels' entries through this
                       // kernel's rebuild, and the second pass does not
@@ -288,21 +417,60 @@ LogicalResult AgpuEmitter::emit() {
                         declineMark = agpu_.declines.size();
                       else
                         agpu_.declines.truncate(*declineMark);
+                      if (!printMark)
+                        printMark = agpu_.prints.siteCount();
+                      else
+                        agpu_.prints.truncate(*printMark);
+                      if (!assertMark)
+                        assertMark = agpu_.asserts.siteCount();
+                      else
+                        agpu_.asserts.truncate(*assertMark);
                       return buildKernelBody(*entry.getParent());
                     });
     any = true;
   }
 
-  if (!any)
+  if (!any) {
+    appendLog(agpu::Gate::DeclineLog,
+              "(module)\tno kernel: every function is a call target\n");
     return failure();
+  }
 
   std::ostringstream out;
   const agpu::ModuleResult mr = agpu_.print(out);
+
+  if (agpu_.gates.on(agpu::Gate::FuncBudgetDebug)) {
+    for (const agpu::KernelResult &kr : mr.kernels) {
+      if (!kr.fn)
+        continue;
+      llvm::errs() << "[budget] "
+                   << agpu::budgetReport(std::string_view(kr.fn->name), kr.size,
+                                         kr.shrink, kr.reemitted)
+                   << "\n";
+    }
+  }
+
+  if (agpu_.gates.on(agpu::Gate::DeclineLog)) {
+    std::ostringstream os;
+    agpu_.declines.printSummary(os);
+    if (!mr.ok())
+      os << "(module)\t" << mr.decision.message() << "\n";
+    if (!bodyOk_ && agpu_.declines.empty())
+      os << "(module)\ta body failed with no decline recorded\n";
+    appendLog(agpu::Gate::DeclineLog, os.str());
+  }
 
   if (!bodyOk_)
     return failure();
 
   if (!mr.ok()) {
+    // The host and autotuner read these attributes without parsing the
+    // diagnostic.
+    const auto i64 = mlir::IntegerType::get(mod_.getContext(), 64);
+    mod_->setAttr(agpu::kPoolNeededAttr,
+                  mlir::IntegerAttr::get(i64, mr.pool.total().count()));
+    mod_->setAttr(agpu::kPoolLimitAttr,
+                  mlir::IntegerAttr::get(i64, agpu::kTGResidentBudgetBytes));
     mod_.emitError() << "AgpuEmitter: " << mr.decision.message();
     return failure();
   }

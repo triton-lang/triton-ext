@@ -4,6 +4,9 @@
 
 #include "agpu/emit/KernelAbi.h"
 #include "agpu/msl/Context.h"
+#include "agpu/msl/GuardFuse.h"
+#include "agpu/msl/GuardSink.h"
+#include "agpu/plan/ShrinkPlan.h"
 
 #include <algorithm>
 #include <functional>
@@ -14,21 +17,34 @@ namespace agpu {
 // address; the pool declaration is sized from this after the body is built.
 struct BuiltBody {
   msl::Block stmts;
+  int64_t poolBytes = 0;
 
   BuiltBody() = default;
   BuiltBody(msl::Block b) : stmts(std::move(b)) {}
+  BuiltBody(msl::Block b, int64_t pool)
+      : stmts(std::move(b)), poolBytes(pool) {}
 };
 
-using BodyFn = std::function<BuiltBody(msl::Context &)>;
+// Called by `emitKernel`, possibly twice: once to measure, again if the size
+// policy asks for the rolled form (`rollK`).
+using BodyFn = std::function<BuiltBody(msl::Context &, bool rollK)>;
 
 struct KernelFacts {
   msl::Str name;
   std::vector<KernelArg> args;
   int64_t numWarps = 1;
+  int64_t poolBytes = 0;
+  int64_t coreBudget = kTGCoreBudgetBytes;
+  DebugChannels debug;
+  RollPrediction predictedRoll;
 };
 
 struct KernelResult {
   msl::Function *fn = nullptr;
+  msl::FuncSize size;
+  ShrinkPlan shrink;
+  bool reemitted = false;
+  int64_t poolBytes = 0;
   Decision decision = Decision::failed();
 
   bool ok() const { return fn != nullptr && decision.ok(); }
@@ -65,14 +81,29 @@ inline void addParams(msl::Function *fn, const std::vector<KernelArg> &args,
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (abi.placements[i].slot != ArgSlot::Buffer)
       continue;
+    const unsigned quals =
+        args[i].coherent ? msl::Type::Coherent : msl::Type::QualNone;
     fn->params.push_back(msl::Function::Param{
-        mslTypeOf(args[i].elem).pointerTo(msl::AddrSpace::Device), args[i].name,
-        A::buffer(abi.placements[i].index)});
+        mslTypeOf(args[i].elem).pointerTo(msl::AddrSpace::Device, quals),
+        args[i].name, A::buffer(abi.placements[i].index)});
   }
   if (abi.hasArgBuffer)
     fn->params.push_back(msl::Function::Param{
         msl::Type::scalar(msl::Scalar::U8).pointerTo(msl::AddrSpace::Constant),
         nm.argBuffer, A::buffer(abi.argBufferIndex)});
+
+  // Metal requires atomic_uint* for the atomic fetch-add the allocator uses.
+  if (abi.hasPrintBuffer)
+    fn->params.push_back(
+        msl::Function::Param{msl::Type::named(msl::builtin::atomic::Uint)
+                                 .pointerTo(msl::AddrSpace::Device),
+                             nm.printBuffer, A::buffer(abi.printBufferIndex)});
+
+  if (abi.hasAssertBuffer)
+    fn->params.push_back(msl::Function::Param{
+        msl::Type::named(msl::builtin::atomic::Uint)
+            .pointerTo(msl::AddrSpace::Device),
+        nm.assertBuffer, A::buffer(abi.assertBufferIndex)});
 
   const msl::Type u3 = msl::Type::vector(msl::Scalar::U32, 3);
   fn->params.push_back(msl::Function::Param{
@@ -84,26 +115,109 @@ inline void addParams(msl::Function *fn, const std::vector<KernelArg> &args,
 }
 
 // Declared as bytes and cast at each use: the pool holds tiles of several
+// element types at once.
+inline void emitPoolDecl(msl::Context &c, msl::Block &body, int64_t poolBytes,
+                         const KernelNames &nm) {
+  if (poolBytes <= 0)
+    return;
+  body.push_back(c.arrayDecl(msl::Type::scalar(msl::Scalar::I8)
+                                 .inAddrSpace(msl::AddrSpace::Threadgroup),
+                             nm.pool, poolBytes));
+}
+
 inline KernelResult emitKernel(msl::Context &c, const KernelFacts &f,
                                const BodyFn &buildBody,
                                const KernelNames &nm = {}) {
   KernelResult r;
-  const KernelAbi abi = planKernelAbi(f.args, f.numWarps);
+  const KernelAbi abi = planKernelAbi(f.args, f.numWarps, f.debug);
   r.decision = abiDecision(abi);
   if (!r.decision.ok())
     return r;
 
-  BuiltBody built = buildBody(c);
+  auto assemble = [&](bool rollK) {
+    BuiltBody built = buildBody(c, rollK);
+    msl::Block body;
+    emitArgUnpack(c, body, f.args, abi, nm);
+    emitLaneWarpPrologue(c, body, nm);
+    for (msl::Stmt *s : built.stmts)
+      body.push_back(s);
+    built.stmts = std::move(body);
+    return built;
+  };
+
   msl::Block body;
-  emitArgUnpack(c, body, f.args, abi, nm);
-  emitLaneWarpPrologue(c, body, nm);
-  for (msl::Stmt *s : built.stmts)
-    body.push_back(s);
+  int64_t bodyPool = 0;
+  // A predicted roll builds the rolled form first and checks the same
+  // predicates against the inferred unrolled size. A wrong prediction falls
+  // through to the measured path below, so the answer is unchanged.
+  if (f.predictedRoll.roll) {
+    BuiltBody rolled = assemble(/*rollK=*/true);
+    const msl::FuncSize after = msl::measure(rolled.stmts);
+    const msl::FuncSize before = unrolledFrom(after, f.predictedRoll);
+    const ShrinkPlan plan = planShrink(before);
+    if (plan.needsReemit() && shrinkHelped(before, after)) {
+      body = std::move(rolled.stmts);
+      bodyPool = rolled.poolBytes;
+      r.size = after;
+      r.shrink = plan;
+      r.reemitted = true;
+    }
+  }
+
+  if (!r.reemitted) {
+    BuiltBody flat = assemble(/*rollK=*/false);
+    body = std::move(flat.stmts);
+    bodyPool = flat.poolBytes;
+    r.size = msl::measure(body);
+    r.shrink = planShrink(r.size);
+
+    if (r.shrink.needsReemit()) {
+      BuiltBody rolled = assemble(/*rollK=*/true);
+      const msl::FuncSize after = msl::measure(rolled.stmts);
+      if (shrinkHelped(r.size, after)) {
+        body = std::move(rolled.stmts);
+        bodyPool = rolled.poolBytes;
+        r.size = after;
+        r.reemitted = true;
+      }
+    }
+  }
+
+  if (r.shrink.fuseGuards) {
+    // Sink first: fusion only merges adjacent guards. Folded literals only;
+    // anything else yields an invalid set (not disjoint from anything) and the
+    // sink stops.
+    auto literalCoords = [](msl::Expr *e) {
+      if (e && e->kind == msl::ExprKind::Literal) {
+        auto *l = static_cast<msl::Literal *>(e);
+        if (l->form == msl::Literal::Form::Int)
+          return exactCoord((std::int32_t)l->intValue);
+      }
+      return unknownCoords();
+    };
+    // To a fixpoint, bounded by statement count so a non-converging shape
+    // stops.
+    for (std::size_t pass = 0; pass < body.size(); ++pass)
+      if (msl::sinkGuardedStores(body, literalCoords) == 0)
+        break;
+    msl::fuseGuards(c, body);
+  }
+
+  r.poolBytes = std::max(f.poolBytes, bodyPool);
+  if (r.poolBytes > 0) {
+    msl::Block withPool;
+    emitPoolDecl(c, withPool, r.poolBytes, nm);
+    for (msl::Stmt *s : body)
+      withPool.push_back(s);
+    body = std::move(withPool);
+  }
 
   msl::Function *fn = c.function();
   fn->isKernel = true;
   fn->name = f.name;
   addParams(fn, f.args, abi, nm);
+  if (shouldPinThreadgroupSize(r.poolBytes, f.coreBudget, abi.launchThreads))
+    fn->qualifier = msl::Attribute::maxThreads(abi.launchThreads);
   fn->body = std::move(body);
 
   r.fn = fn;

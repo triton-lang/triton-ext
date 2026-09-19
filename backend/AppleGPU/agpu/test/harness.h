@@ -24,10 +24,15 @@ inline const char *&currentCase() {
   return s;
 }
 
+inline std::string &caseSuffix() {
+  static std::string s;
+  return s;
+}
+
 inline void fail(const char *file, int line, const std::string &what) {
   ++failures();
-  std::printf("  FAIL  %s\n        %s:%d\n        %s\n", currentCase(), file,
-              line, what.c_str());
+  std::printf("  FAIL  %s%s\n        %s:%d\n        %s\n", currentCase(),
+              caseSuffix().c_str(), file, line, what.c_str());
 }
 
 template <class T> std::string show(const T &v) { return std::to_string(v); }
@@ -47,6 +52,17 @@ template <class T> std::string show(const std::vector<T> &v) {
 template <class A, class B> std::string show(const std::pair<A, B> &p) {
   return "(" + show(p.first) + ", " + show(p.second) + ")";
 }
+template <class T, unsigned N>
+std::string show(const agpu::msl::SmallVector<T, N> &v) {
+  std::string s = "{";
+  for (std::size_t i = 0; i < v.size(); ++i) {
+    if (i)
+      s += ", ";
+    s += show(v[i]);
+  }
+  return s + "}";
+}
+
 template <class A, class B>
 void checkEq(const A &a, const B &b, const char *ea, const char *eb,
              const char *file, int line) {
@@ -63,6 +79,34 @@ inline void checkTrue(bool c, const char *e, const char *file, int line) {
     fail(file, line, std::string("expected true: ") + e);
 }
 
+inline void checkHas(const std::string &hay, const std::string &needle,
+                     const char *eh, const char *file, int line) {
+  ++checks();
+  if (hay.find(needle) == std::string::npos)
+    fail(file, line,
+         std::string(eh) + " contains " + show(needle) +
+             "\n        in: " + hay);
+}
+
+inline void checkLacks(const std::string &hay, const std::string &needle,
+                       const char *eh, const char *file, int line) {
+  ++checks();
+  if (hay.find(needle) != std::string::npos)
+    fail(file, line,
+         std::string(eh) + " does not contain " + show(needle) +
+             "\n        in: " + hay);
+}
+
+// Names the row a table-driven case is on, so a failure points at the input
+// rather than at the loop.
+struct SubCase {
+  std::string saved;
+  explicit SubCase(const std::string &label) : saved(caseSuffix()) {
+    caseSuffix() = saved + " [" + label + "]";
+  }
+  ~SubCase() { caseSuffix() = saved; }
+};
+
 inline int report(const char *suite) {
   if (failures() == 0)
     std::printf("PASS  %s (%d checks)\n", suite, checks());
@@ -78,5 +122,10 @@ inline int report(const char *suite) {
 #define CHECK_EQ(a, b)                                                         \
   ::agpu_test::checkEq((a), (b), #a, #b, __FILE__, __LINE__)
 #define CHECK(c) ::agpu_test::checkTrue((c), #c, __FILE__, __LINE__)
+#define CHECK_HAS(s, sub)                                                      \
+  ::agpu_test::checkHas((s), (sub), #s, __FILE__, __LINE__)
+#define CHECK_LACKS(s, sub)                                                    \
+  ::agpu_test::checkLacks((s), (sub), #s, __FILE__, __LINE__)
+#define SUBCASE(label) ::agpu_test::SubCase agpuSubCase__(label)
 
 #endif // AGPU_TEST_HARNESS_H

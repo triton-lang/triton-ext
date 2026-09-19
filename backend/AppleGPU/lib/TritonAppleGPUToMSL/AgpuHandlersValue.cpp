@@ -1,8 +1,9 @@
-// Handlers that introduce a value: grid query, splat, constant, range.
+// Handlers that introduce a value: grid query, splat, poison, constant, range.
 #include "AgpuEmitter.h"
 #include "AgpuOpTables.h"
 
 #include "agpu/emit/EmitGridBuiltins.h"
+#include "agpu/emit/EmitPoison.h"
 
 namespace mlir::triton::applegpu::bridge {
 
@@ -47,6 +48,28 @@ agpu::Decision AgpuEmitter::emitConstantOp(const agpu::OpView &o) {
   });
 }
 
+agpu::Decision AgpuEmitter::emitPoisonOp(const agpu::OpView &o) {
+  am::Context &mc = agpu_.context();
+  if (o.results.size() != 1)
+    return declined("ub.poison", "expected one result");
+  const Value res = mlirValueOf(o.results[0]);
+  if (!res)
+    return declined("ub.poison", "result type was never recorded");
+  const std::optional<agpu::ElemType> held = heldTypeFor(res);
+  if (!held)
+    return declined("ub.poison", "no representation for this type");
+
+  const am::Type ty = agpu::mslTypeOf(*held);
+  const bool isPtr = held->isPointer();
+  return emitPerRegister(o, registersHeldByType(res.getType()), *held, 'u',
+                         [&](int64_t) {
+                           RegValue v;
+                           v.value = isPtr ? agpu::poisonPointer(mc, ty)
+                                           : agpu::poisonValue(mc, *held);
+                           return v;
+                         });
+}
+
 agpu::Decision AgpuEmitter::emitSplatOp(const agpu::OpView &o) {
   const Ready ready = readyForCounted(o, 0, 1, 1, "the source was never bound");
   if (!ready.ok())
@@ -84,6 +107,12 @@ void AgpuEmitter::registerValueHandlers() {
                return emitSplatOp(o);
              }));
 
+  // A poisoned pointer is nullptr, so it faults at the dereference.
+  table_.add("poison",
+             agpu::forOps({"ub.poison"}, [this](const agpu::OpView &o) {
+               return emitPoisonOp(o);
+             }));
+
   table_.add("constant",
              agpu::forOps({"arith.constant"}, [this](const agpu::OpView &o) {
                return emitConstantOp(o);
@@ -109,6 +138,7 @@ agpu::Decision AgpuEmitter::emitMakeRangeOp(const agpu::OpView &o) {
     names.push_back(n);
   }
   body_.sym.bindRegs(o.results[0], std::move(names));
+  body_.affine[o.results[0]] = agpu::AffineFamily{{1}};
   return agpu::Decision::emitted();
 }
 

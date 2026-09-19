@@ -3,10 +3,24 @@
 
 #include "../TritonAppleGPUToMSL/AgpuEmitter.h"
 #include "TritonAppleGPUToMSL/Passes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/LinearLayoutConversions.h"
+#include "triton/Tools/LinearLayout.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
+#include <map>
+#include <set>
+
 #include <string>
 
 using namespace mlir;
@@ -56,6 +70,14 @@ public:
       return;
     }
     ss.flush();
+
+    // Tells the host launcher whether the whole grid must be resident at once.
+    const agpu::GridResidency residency =
+        agpu::residencyFor(bridge::launchFactsOf(mod));
+    mod->setAttr(
+        agpu::kGridResidencyAttr,
+        IntegerAttr::get(IntegerType::get(mod.getContext(), 1),
+                         residency == agpu::GridResidency::CoResident));
 
     if (mslDumpEnabled())
       llvm::errs() << "// -----// MSL Dump After EmitMSL "

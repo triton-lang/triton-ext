@@ -1,19 +1,130 @@
-// Device access handlers: addptr, load and store. Pointers are never
+// Device access handlers: addptr, load, store, barrier. Pointers are never
 // materialised; an access is base[off].
 #include "AgpuEmitter.h"
 #include "AgpuOpTables.h"
 
+#include "agpu/emit/EmitElection.h"
 #include "agpu/emit/EmitMove.h"
+#include "agpu/plan/BarrierPlan.h"
 
 namespace mlir::triton::applegpu::bridge {
 
 namespace am = agpu::msl;
 
+agpu::PtrDims AgpuEmitter::ptrDimsOf(Value ptr, const agpu::ElemType &elem) {
+  agpu::PtrDims out;
+  const auto rt =
+      ptr ? dyn_cast<RankedTensorType>(ptr.getType()) : RankedTensorType();
+  if (!rt)
+    return out;
+  AxisInfo *ai = axisInfo().getAxisInfo(ptr);
+  if (!ai)
+    return out;
+  const bool bytes = isTensorOfPointers(rt);
+  for (int d = 0; d < rt.getRank(); ++d)
+    out.push_back(agpu::ptrInfoFrom(
+        agpu::AxisReport{ai->getContiguity(d), ai->getDivisibility(d), bytes},
+        elem));
+  return out;
+}
+
+// Sets `bases` and `runtime`; leaves them empty for a value with no layout.
+std::vector<agpu::LayoutBasis> AgpuEmitter::layoutDimsOf(Value v) {
+  const auto rt =
+      v ? dyn_cast<RankedTensorType>(v.getType()) : RankedTensorType();
+  if (!rt)
+    return {};
+  const agpu::CoordSource cs = coordSourceOf(rt);
+  if ((int)cs.dims.size() != rt.getRank())
+    return {};
+  return cs.dims;
+}
+
+namespace {
+
+Value throughExpand(Value v) {
+  while (auto ed = v.getDefiningOp<ExpandDimsOp>())
+    v = ed.getSrc();
+  return v;
+}
+
+bool splatIntOf(Value v, int64_t &out) {
+  auto cst = v.getDefiningOp<arith::ConstantOp>();
+  auto dense =
+      cst ? dyn_cast<DenseElementsAttr>(cst.getValue()) : DenseElementsAttr();
+  if (!dense || !dense.isSplat())
+    return false;
+  auto i = dyn_cast<IntegerAttr>(dense.getSplatValue<Attribute>());
+  if (!i)
+    return false;
+  out = i.getInt();
+  return true;
+}
+
+} // namespace
+
+// A mask is a bound only when it reads `iota < constant` on one axis of the
+// laid-out tensor: the compared index is then the coordinate itself, so the
+// layout decides the mask and no lane can disagree.
+agpu::MaskBound AgpuEmitter::maskBoundOf(Value mask, Value laidOut) {
+  agpu::MaskBound b;
+  const auto lt = laidOut ? dyn_cast<RankedTensorType>(laidOut.getType())
+                          : RankedTensorType();
+  auto cmp = mask ? mask.getDefiningOp<arith::CmpIOp>() : arith::CmpIOp();
+  if (!lt || !cmp)
+    return b;
+
+  Value idx, limit;
+  if (cmp.getPredicate() == arith::CmpIPredicate::slt) {
+    idx = cmp.getLhs();
+    limit = cmp.getRhs();
+  } else if (cmp.getPredicate() == arith::CmpIPredicate::sgt) {
+    idx = cmp.getRhs();
+    limit = cmp.getLhs();
+  } else {
+    return b;
+  }
+  if (!splatIntOf(limit, b.limit))
+    return b;
+
+  Value src = throughExpand(idx);
+  auto mr = src.getDefiningOp<MakeRangeOp>();
+  if (!mr || mr.getStart() != 0)
+    return b;
+
+  const auto mt = dyn_cast<RankedTensorType>(mask.getType());
+  if (!mt || mt.getShape() != lt.getShape())
+    return b;
+
+  // The range is the one axis the mask varies along, so it is the only one
+  // whose extent it can be; an ambiguous shape is left unrecognised.
+  int dim = -1;
+  for (int d = 0; d < lt.getRank(); ++d) {
+    if (lt.getDimSize(d) != (int64_t)mr.getEnd())
+      continue;
+    if (dim >= 0)
+      return b;
+    dim = d;
+  }
+  if (dim < 0)
+    return b;
+
+  const std::vector<agpu::LayoutBasis> dims = layoutDimsOf(laidOut);
+  if ((int)dims.size() != lt.getRank())
+    return b;
+
+  b.known = true;
+  b.dim = dim;
+  b.dimSize = lt.getDimSize(dim);
+  b.basis = dims[(std::size_t)dim];
+  return b;
+}
+
 PtrOffset AgpuEmitter::offsetSum(agpu::ValueId basePtr, int64_t reg,
                                  const am::Str &added) {
   const auto prior = body_.offsetOf.find({basePtr, reg});
   if (prior == body_.offsetOf.end())
-    return PtrOffset{added, am::Context::i32()};
+    return PtrOffset{added, am::Context::i32(), false};
 
   const am::Str name = "off" + std::to_string(basePtr) + "_" +
                        std::to_string(reg) + "_" +
@@ -23,7 +134,23 @@ PtrOffset AgpuEmitter::offsetSum(agpu::ValueId basePtr, int64_t reg,
       agpu_.context().binary(am::BinOp::Add,
                              agpu_.context().var(prior->second.name),
                              agpu_.context().var(added))));
-  return PtrOffset{name, am::Context::i32()};
+  return PtrOffset{name, am::Context::i32(), true};
+}
+
+agpu::MoveFacts AgpuEmitter::moveFactsOf(Value ptr, Value laidOut,
+                                         const agpu::ElemType *elem,
+                                         int64_t regs, bool isStore) {
+  agpu::MoveFacts f;
+  f.regCount = regs;
+  f.isStore = isStore;
+  f.elemBits = elem ? elem->bits : 0; // unknown element: every access scalar
+  f.coherent = coherentBuffer(ptr);
+  if (elem)
+    f.ptr = ptrDimsOf(ptr, *elem);
+  const std::vector<agpu::LayoutBasis> dims = layoutDimsOf(laidOut);
+  f.bases = agpu::regBasesOf(dims);
+  f.runtime = agpu::runtimeSpanOf(dims);
+  return f;
 }
 
 agpu::Decision AgpuEmitter::emitLoad(const agpu::OpView &o,
@@ -45,15 +172,56 @@ agpu::Decision AgpuEmitter::emitLoad(const agpu::OpView &o,
     if (!addressAt(o.operands[0], r))
       return declined(o.name, "cannot build register " + std::to_string(r));
 
-  agpu::MoveFacts f;
-  f.regCount = ready.regs;
+  agpu::MoveFacts f =
+      moveFactsOf(mlirValueOf(o.operands[0]), mlirValueOf(o.results[0]),
+                  &ready.elem, ready.regs, /*isStore=*/false);
   f.hasMask = o.operands.size() > maskIndex;
   f.hasOther = hasOther;
+  if (f.hasMask)
+    f.bound = maskBoundOf(mlirValueOf(o.operands[maskIndex]),
+                          mlirValueOf(o.results[0]));
 
   agpu::MoveSite site;
-  site.elem = [this, ptr = o.operands[0]](int64_t r) {
-    return addressAt(ptr, r);
-  };
+  // When the pointer's registers are one affine family, materialise one base
+  // and subscript it by literal deltas, so each register costs no address of
+  // its own.
+  am::Str derivedBase;
+  std::vector<int64_t> deltas;
+  [&] {
+    const auto it = body_.affine.find(o.operands[0]);
+    if (it == body_.affine.end() || ready.regs < 2 || f.coherent)
+      return;
+    const Value pv = mlirValueOf(o.operands[0]);
+    auto rt =
+        pv ? dyn_cast<RankedTensorType>(pv.getType()) : RankedTensorType();
+    if (!rt || (int)it->second.scales.size() != rt.getRank())
+      return;
+    // Deltas are arithmetic differences of lane-0 coordinates; the layout
+    // composes over GF(2), so check the two agree.
+    if (!affineRegisterDeltas(rt, (int)ready.regs))
+      return;
+    if (!scaledRegisterDeltas(rt, ready.regs, it->second.scales, deltas))
+      return;
+    // uniformNameOf confirms one base for every register; a tile with two bases
+    // would read one buffer's deltas off another.
+    const am::Str *base = body_.sym.uniformNameOf(o.operands[0]);
+    const auto off = body_.offsetOf.find({o.operands[0], 0});
+    if (!base || off == body_.offsetOf.end())
+      return;
+    derivedBase =
+        derivedDevicePointer(*base, agpu_.context().var(off->second.name),
+                             ready.elem, "pl" + std::to_string(o.results[0]));
+  }();
+  if (!derivedBase.empty())
+    site.elem = [this, derivedBase, deltas](int64_t r) -> am::Expr * {
+      return agpu_.context().subscript(
+          agpu_.context().var(derivedBase),
+          agpu_.context().lit(deltas[(std::size_t)r]));
+    };
+  else
+    site.elem = [this, ptr = o.operands[0]](int64_t r) {
+      return addressAt(ptr, r);
+    };
   if (f.hasMask)
     site.guard = [this, &o, maskIndex](int64_t r) {
       return maskAt(o, maskIndex, r);
@@ -68,7 +236,8 @@ agpu::Decision AgpuEmitter::emitLoad(const agpu::OpView &o,
     site.values.push_back(names.back());
   }
 
-  agpu::emitMove(agpu_.context(), *cur_, f, site, ready.elem);
+  const agpu::MovePlan p = agpu::planMove(f);
+  agpu::emitMove(agpu_.context(), *cur_, f, p, site, ready.elem);
   body_.sym.bindRegs(o.results[0], std::move(names));
   return agpu::Decision::emitted();
 }
@@ -87,30 +256,32 @@ agpu::Decision AgpuEmitter::emitStore(const agpu::OpView &o,
   const Operand &val = ready.ops[1];
 
   // A layout not distributed over some lane/warp bit gives several threads the
-  // same address, and electing one writer is not in this stage.
-  if (addressesAreRedundant(ptrV))
-    return declined(o.name, "several threads address one element");
+  // same address, so elect one writer per store.
+  am::Expr *const elected = agpu::electionExpr(
+      agpu_.context(), agpu::electFor(spreadOf(ptrV)), agpu::ThreadNames{});
 
   for (int64_t r = 0; r < regs; ++r)
     if (!addressAt(ptr, r))
       return declined(o.name, "pointer has no recorded offset");
 
   const agpu::ElemType *ve = elemOf(o.operands[1]);
-  agpu::MoveFacts f;
-  f.regCount = regs;
-  f.isStore = true;
-  f.hasMask = o.operands.size() > maskIndex;
+  agpu::MoveFacts f = moveFactsOf(ptrV, ptrV, ve, regs, /*isStore=*/true);
+  f.hasMask = o.operands.size() > maskIndex || elected != nullptr;
+  f.guardHasRuntimeTerm = elected != nullptr;
+  if (o.operands.size() > maskIndex)
+    f.bound = maskBoundOf(mlirValueOf(o.operands[maskIndex]), ptrV);
 
   agpu::MoveSite site;
   site.elem = [this, ptr](int64_t r) { return addressAt(ptr, r); };
   if (f.hasMask)
-    site.guard = [this, &o, maskIndex](int64_t r) {
-      return maskAt(o, maskIndex, r);
+    site.guard = [this, &o, maskIndex, elected](int64_t r) {
+      return agpu_.context().allOf(elected, maskAt(o, maskIndex, r));
     };
   for (int64_t r = 0; r < regs; ++r)
-    site.values.push_back(val.at(r));
+    site.values.push_back(inIrType(o.operands[1], val.at(r)));
 
-  agpu::emitMove(agpu_.context(), *cur_, f, site, ve ? *ve : agpu::f32());
+  const agpu::MovePlan p = agpu::planMove(f);
+  agpu::emitMove(agpu_.context(), *cur_, f, p, site, ve ? *ve : agpu::f32());
 
   if (!o.results.empty())
     body_.sym.bindDataless(o.results[0]);
@@ -136,6 +307,42 @@ agpu::Decision AgpuEmitter::emitAddPtrOp(const agpu::OpView &o) {
   }
   body_.sym.bindRegs(o.results[0], std::move(names));
 
+  // The pointer's affine family follows Add's rule over base and offset.
+  {
+    const auto famOf = [&](std::size_t i) {
+      const auto it = body_.affine.find(o.operands[i]);
+      return it != body_.affine.end() ? it->second : agpu::AffineFamily{};
+    };
+    const auto uniformOp = [&](std::size_t i) {
+      const am::Str *first = body_.sym.regAt(o.operands[i], 0);
+      if (!first)
+        return false;
+      for (int64_t r = 1; r < ready.regs; ++r) {
+        const am::Str *n = body_.sym.regAt(o.operands[i], (std::size_t)r);
+        if (!n || *n != *first)
+          return false;
+      }
+      // A base whose offsets differ per register is not uniform even if
+      // its name repeats. Only addptr needs this: offsetOf is populated for
+      // pointer values alone, and the elementwise fold's operands are always
+      // arith results.
+      if (i == 0)
+        for (int64_t r = 0; r < ready.regs; ++r)
+          if (body_.offsetOf.count({o.operands[0], r}))
+            return famOf(0).ok();
+      return true;
+    };
+    const Value res = mlirValueOf(o.results[0]);
+    auto rt =
+        res ? dyn_cast<RankedTensorType>(res.getType()) : RankedTensorType();
+    if (rt) {
+      const agpu::AffineFamily fam =
+          agpu::foldFamily(agpu::EwOp::Add, famOf(0), uniformOp(0), famOf(1),
+                           uniformOp(1), nullptr, nullptr, (int)rt.getRank());
+      if (fam.ok())
+        body_.affine[o.results[0]] = fam;
+    }
+  }
   return agpu::Decision::emitted();
 }
 
@@ -149,12 +356,12 @@ void AgpuEmitter::registerAddPtrHandler() {
 
 agpu::Decision AgpuEmitter::emitMemoryOp(const agpu::OpView &o) {
   const bool isLoad = o.name == kLoad;
-  const std::size_t maskIndex = isLoad ? 1u : 2u;
+  const std::size_t maskAt = isLoad ? 1u : 2u;
 
-  if (!isLoad && o.operands.size() > maskIndex + 1)
+  if (!isLoad && o.operands.size() > maskAt + 1)
     return declined(o.name, "store with an unexpected extra operand");
 
-  return isLoad ? emitLoad(o, maskIndex) : emitStore(o, maskIndex);
+  return isLoad ? emitLoad(o, maskAt) : emitStore(o, maskAt);
 }
 
 void AgpuEmitter::registerMemoryHandler() {
@@ -164,6 +371,28 @@ void AgpuEmitter::registerMemoryHandler() {
              agpu::forOps({kLoad, "tt.store"}, [this](const agpu::OpView &o) {
                return emitMemoryOp(o);
              }));
+}
+
+agpu::Decision AgpuEmitter::emitBarrierOp(const agpu::OpView &o) {
+  am::Context &mc = agpu_.context();
+  const uint32_t spaces = o.name == kBarrier
+                              ? ((uint32_t)agpu::BarrierSpace::GlobalRead |
+                                 (uint32_t)agpu::BarrierSpace::GlobalWrite)
+                              : (uint32_t)o.intAt(0);
+  const agpu::BarrierPlan p = agpu::planBarrier(spaces);
+  cur_->push_back(mc.barrier(p.scope));
+  if (p.needsDeviceFence)
+    cur_->push_back(agpu::deviceFence(mc));
+  return agpu::Decision::emitted();
+}
+
+void AgpuEmitter::registerBarrierHandler() {
+  // threadgroup_barrier orders memory only within the threadgroup even with
+  // mem_device set, so a device-ordering barrier needs a fence behind it.
+  table_.add("barrier", agpu::forOps({"ttg.barrier", kBarrier},
+                                     [this](const agpu::OpView &o) {
+                                       return emitBarrierOp(o);
+                                     }));
 }
 
 } // namespace mlir::triton::applegpu::bridge

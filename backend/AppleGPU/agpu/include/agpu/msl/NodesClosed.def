@@ -1,0 +1,158 @@
+// NodesClosed.def - the node table, with an explicit NODE_END after each node.
+// Every node kind in the AST is declared here and nowhere else.
+
+#ifndef EXPR_NODE
+#define EXPR_NODE(Name, Class)
+#endif
+#ifndef EXPR_CHILD
+#define EXPR_CHILD(Class, field)
+#endif
+#ifndef EXPR_CHILD_LIST
+#define EXPR_CHILD_LIST(Class, field)
+#endif
+#ifndef STMT_NODE
+#define STMT_NODE(Name, Class)
+#endif
+#ifndef STMT_CHILD_EXPR
+#define STMT_CHILD_EXPR(Class, field)
+#endif
+#ifndef STMT_CHILD_EXPR_LIST
+#define STMT_CHILD_EXPR_LIST(Class, field)
+#endif
+#ifndef STMT_CHILD_STMT
+#define STMT_CHILD_STMT(Class, field)
+#endif
+#ifndef STMT_CHILD_BLOCK
+#define STMT_CHILD_BLOCK(Class, field)
+#endif
+#ifndef STMT_CHILD_BLOCK_LIST
+#define STMT_CHILD_BLOCK_LIST(Class, field, member)
+#endif
+#ifndef NODE_END
+#define NODE_END
+#endif
+
+// ── expressions ───────────────────────────────────────────────────────────
+
+EXPR_NODE(VarRef, VarRef)
+NODE_END
+
+EXPR_NODE(Literal, Literal)
+NODE_END
+
+EXPR_NODE(Unary, Unary)
+EXPR_CHILD(Unary, operand)
+NODE_END
+
+EXPR_NODE(Binary, Binary)
+EXPR_CHILD(Binary, lhs)
+EXPR_CHILD(Binary, rhs)
+NODE_END
+
+EXPR_NODE(Ternary, Ternary)
+EXPR_CHILD(Ternary, cond)
+EXPR_CHILD(Ternary, whenTrue)
+EXPR_CHILD(Ternary, whenFalse)
+NODE_END
+
+EXPR_NODE(Cast, Cast)
+EXPR_CHILD(Cast, operand)
+NODE_END
+
+EXPR_NODE(Call, Call)
+EXPR_CHILD_LIST(Call, args)
+NODE_END
+
+EXPR_NODE(Subscript, Subscript)
+EXPR_CHILD(Subscript, base)
+EXPR_CHILD(Subscript, index)
+NODE_END
+
+EXPR_NODE(Member, Member)
+EXPR_CHILD(Member, base)
+NODE_END
+
+EXPR_NODE(Deref, Deref)
+EXPR_CHILD(Deref, operand)
+NODE_END
+
+EXPR_NODE(AddrOf, AddrOf)
+EXPR_CHILD(AddrOf, operand)
+NODE_END
+
+// ── statements ────────────────────────────────────────────────────────────
+
+STMT_NODE(Decl, Decl)
+STMT_CHILD_EXPR(Decl, init)
+NODE_END
+
+STMT_NODE(ArrayDecl, ArrayDecl)
+STMT_CHILD_EXPR_LIST(ArrayDecl, init)
+NODE_END
+
+STMT_NODE(Assign, Assign)
+STMT_CHILD_EXPR(Assign, target)
+STMT_CHILD_EXPR(Assign, value)
+NODE_END
+
+STMT_NODE(ExprStmt, ExprStmt)
+STMT_CHILD_EXPR(ExprStmt, expr)
+NODE_END
+
+STMT_NODE(Return, Return)
+STMT_CHILD_EXPR(Return, value)
+STMT_CHILD_EXPR_LIST(Return, structFields)
+NODE_END
+
+STMT_NODE(Break, Break)
+NODE_END
+
+STMT_NODE(Continue, Continue)
+NODE_END
+
+STMT_NODE(Barrier, Barrier)
+NODE_END
+
+STMT_NODE(If, If)
+STMT_CHILD_EXPR(If, cond)
+STMT_CHILD_BLOCK(If, thenBody)
+STMT_CHILD_BLOCK(If, elseBody)
+NODE_END
+
+STMT_NODE(For, For)
+STMT_CHILD_STMT(For, init)
+STMT_CHILD_EXPR(For, cond)
+STMT_CHILD_STMT(For, step)
+STMT_CHILD_BLOCK(For, body)
+NODE_END
+
+STMT_NODE(While, While)
+STMT_CHILD_EXPR(While, cond)
+STMT_CHILD_BLOCK(While, body)
+NODE_END
+
+STMT_NODE(Scope, Scope)
+STMT_CHILD_BLOCK(Scope, body)
+NODE_END
+
+STMT_NODE(StateMachine, StateMachine)
+STMT_CHILD_BLOCK_LIST(StateMachine, cases, body)
+NODE_END
+
+STMT_NODE(Function, Function)
+STMT_CHILD_BLOCK(Function, body)
+NODE_END
+
+STMT_NODE(StructDecl, StructDecl)
+NODE_END
+
+#undef EXPR_NODE
+#undef EXPR_CHILD
+#undef EXPR_CHILD_LIST
+#undef STMT_NODE
+#undef STMT_CHILD_EXPR
+#undef STMT_CHILD_EXPR_LIST
+#undef STMT_CHILD_STMT
+#undef STMT_CHILD_BLOCK
+#undef STMT_CHILD_BLOCK_LIST
+#undef NODE_END

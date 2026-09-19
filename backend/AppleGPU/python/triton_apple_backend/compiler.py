@@ -10,8 +10,10 @@ import re
 import subprocess
 import tempfile
 
-from triton.backends.compiler import BaseBackend, GPUTarget
+from triton.backends.compiler import BaseBackend, GPUTarget, Language
 from triton._C.libtriton import ir, passes
+from triton_apple_backend.device_assert import extract_assert_layout_text
+from triton_apple_backend.device_print import extract_print_layout_text
 from triton_apple_backend.hw_constants import SG_FRAG_DIM as _SG_FRAG_DIM
 from triton_apple_backend.hw_constants import TARGET as _TARGET
 from triton_apple_backend.hw_constants import target_arch as _target_arch
@@ -19,6 +21,13 @@ from triton_apple_backend import PLUGIN_LIBRARY
 from triton_apple_backend.hw_constants import WARP_SIZE as _WARP_SIZE
 
 _plugin = passes.plugin
+
+# Set by the emit-msl pass; also spelled in agpu/plan/LaunchPlan.h.
+_GRID_RESIDENCY_ATTR = 'applegpu.grid_coresident'
+
+# Also spelled in agpu/plan/PoolPlan.h.
+_POOL_NEEDED_ATTR = 'applegpu.pool_needed_bytes'
+_POOL_LIMIT_ATTR = 'applegpu.pool_limit_bytes'
 
 _MSL_PREAMBLE_END = 'using namespace metal;\n'
 
@@ -38,6 +47,11 @@ def _disable_fp_contraction(msl):
             "the fp-contract pragma to")
     at += len(_MSL_PREAMBLE_END)
     return msl[:at] + pragma + msl[at:]
+
+
+def _pmaybe_enable_debug(pm):
+    if os.environ.get('TRITON_MSL_DEBUG'):
+        pm.enable_debug()
 
 
 def _metallib_from_source(msl):
@@ -74,7 +88,7 @@ class MetalOptions:
     # SIMD width is 32 on every Apple GPU family; the emitter hardcodes it.
     warp_size: int = _inert(_WARP_SIZE)
 
-    # Triton requires these fields; the emitter does not read them here.
+    # Must equal kSgFragDim in MSLConstants.h.
     simdgroup_m: int = _inert(_SG_FRAG_DIM)
     simdgroup_n: int = _inert(_SG_FRAG_DIM)
     simdgroup_k: int = _inert(_SG_FRAG_DIM)
@@ -151,8 +165,19 @@ class MetalBackend(BaseBackend):
     def load_dialects(self, ctx):
         ir.load_dialects(ctx)
 
+    # Environment gates that change emitted code and so must enter the cache
+    # key. Empty: every remaining gate only changes what is printed.
+    # `agpu/test/test_gates.cpp` reads this tuple as text and fails if any
+    # gate in `core/Gates.h` appears here.
+    CODEGEN_ENV = ()
+
     def hash(self):
         h = hashlib.sha256()
+        for name in self.CODEGEN_ENV:
+            # Gates are read with `getenv(...) != nullptr`, so `NAME=` (set,
+            # empty) must hash differently from unset.
+            present = name in os.environ
+            h.update(f"{name}={present}:{os.environ.get(name, '')}".encode())
         if PLUGIN_LIBRARY is not None:
             st = PLUGIN_LIBRARY.stat()
             h.update(
@@ -166,7 +191,7 @@ class MetalBackend(BaseBackend):
 
     def make_ttir(self, mod, metadata, options):
         pm = ir.pass_manager(mod.context)
-        pm.enable_debug()
+        _pmaybe_enable_debug(pm)
         passes.common.add_inliner(pm)
         passes.ttir.add_rewrite_tensor_descriptor_to_pointer(pm)
         passes.common.add_canonicalizer(pm)
@@ -181,7 +206,7 @@ class MetalBackend(BaseBackend):
 
     def make_ttgir(self, mod, metadata, options):
         pm = ir.pass_manager(mod.context)
-        pm.enable_debug()
+        _pmaybe_enable_debug(pm)
 
         passes.ttir.add_convert_to_ttgpuir(pm, _target_arch(options.arch),
                                            options.num_warps,
@@ -190,8 +215,16 @@ class MetalBackend(BaseBackend):
         passes.ttgpuir.add_coalesce(pm)
         passes.ttgpuir.add_remove_layout_conversions(pm)
         passes.ttgpuir.add_optimize_thread_locality(pm)
+        _plugin.add_accelerate_matmul(pm)
 
         passes.ttgpuir.add_remove_layout_conversions(pm)
+        passes.ttgpuir.add_optimize_dot_operands(pm, True)
+        passes.common.add_cse(pm)
+        passes.common.add_symbol_dce(pm)
+
+        # Must run after the final remove_layout_conversions or it gets
+        # reverted.
+        _plugin.add_store_shuffle_layout(pm)
         passes.common.add_cse(pm)
         passes.common.add_symbol_dce(pm)
 
@@ -217,18 +250,29 @@ class MetalBackend(BaseBackend):
         with tempfile.NamedTemporaryFile(suffix='.metal', delete=False) as f:
             msl_path = f.name
         pm = ir.pass_manager(mod.context)
-        pm.enable_debug()
+        _pmaybe_enable_debug(pm)
         _plugin.add_emit_msl(pm, [msl_path])
         try:
             pm.run(mod, 'make_msl')
-        except Exception:
+        except Exception as e:
             os.unlink(msl_path)
+            # The autotuner catches OutOfResources to prune a config that
+            # wants more threadgroup memory than the hardware has.
+            needed = mod.get_int_attr(_POOL_NEEDED_ATTR)
+            limit = mod.get_int_attr(_POOL_LIMIT_ATTR)
+            if needed and limit:
+                from triton.runtime.errors import OutOfResources
+                raise OutOfResources(needed, limit,
+                                     "MSL threadgroup memory") from e
             raise
         with open(msl_path, 'r') as f:
             msl = f.read()
         os.unlink(msl_path)
         if not options.enable_fp_fusion:
             msl = _disable_fp_contraction(msl)
+        if os.environ.get('TRITON_MSL_DEBUG'):
+            print("=== emitted MSL ===")
+            print(msl)
         m = re.search(r'kernel void (\w+)\(', msl)
         if not m:
             raise RuntimeError("no 'kernel void' entry found in emitted MSL")
@@ -236,6 +280,7 @@ class MetalBackend(BaseBackend):
             if os.path.isdir(dump):
                 # Keyed on the input (ttgir + options), so two emitters' runs
                 # of one kernel get the same name.
+                import hashlib
                 key = hashlib.sha1((str(_ttgir_for_dump) +
                                     options.hash()).encode()).hexdigest()[:8]
                 dump = os.path.join(dump, f'{m.group(1)}.{key}')
@@ -245,19 +290,67 @@ class MetalBackend(BaseBackend):
                 with open(dump + suffix, 'w') as df:
                     df.write(text)
         metadata["name"] = m.group(1)
-        # Overwrites make_ttgir's ttg.shared on purpose. The emitter declares
-        # no threadgroup parameter, so the launcher must bind no threadgroup
-        # memory; a nonzero value here would set a length for a slot the
-        # kernel does not have. Revisit with the first shared-memory op.
         metadata["shared"] = 0
+        # Metal has no cooperative launch and does not preempt a spinning
+        # threadgroup, so a grid wider than the co-resident capacity never
+        # completes. The launcher rejects such a grid using this.
+        metadata["cross_tg_barrier"] = bool(
+            mod.get_int_attr(_GRID_RESIDENCY_ATTR))
+        # Text: metadata round-trips through JSON into the compile cache.
+        # None when the kernel does not print/assert, which
+        # also tells the launcher not to bind a buffer.
+        metadata["print_layout"] = extract_print_layout_text(msl)
+        metadata["assert_layout"] = extract_assert_layout_text(msl)
         return msl
 
     def make_msl_metallib(self, msl, metadata, options):
-        return _metallib_from_source(msl)
+        # Emit MSL but never hand it to Metal, for kernels whose Metal compile
+        # crashes the compiler service.
+        if os.environ.get('TRITON_MSL_NO_COMPILE') == '1':
+            return b''
+
+        # Metal fast-math assumes no NaN/Inf and reassociates FP, so it
+        # miscompiles kernels over Inf/NaN or relying on RTNE.
+        fail_dir = os.environ.get('METAL_PSO_FAIL_DIR')
+        if not fail_dir:
+            return _metallib_from_source(msl)
+        try:
+            return _metallib_from_source(msl)
+        except Exception:
+            import hashlib
+            os.makedirs(fail_dir, exist_ok=True)
+            key = hashlib.sha1(msl.encode()).hexdigest()[:12]
+            with open(os.path.join(fail_dir, key + '.metal'), 'w') as f:
+                f.write(msl)
+            raise
+
+    def gluon_to_ttgir(self, src, metadata, options):
+        mod = src
+        pm = ir.pass_manager(mod.context)
+        _pmaybe_enable_debug(pm)
+
+        passes.gluon.add_inliner(pm)
+        passes.gluon.add_infer_coalesced_encodings(pm)
+        passes.gluon.add_resolve_auto_encodings(pm)
+        passes.gluon.add_canonicalizer(pm)
+        passes.common.add_sccp(pm)
+        passes.ttir.add_loop_aware_cse(pm)
+        passes.gluon.add_canonicalizer(pm)
+        passes.ttgpuir.add_combine_tensor_select_and_if(pm)
+
+        pm.run(mod, 'gluon_to_ttgir')
+        metadata["tensordesc_meta"] = mod.get_tensordesc_metadata()
+        return mod
 
     def add_stages(self, stages, options, language):
-        stages["ttir"] = lambda src, meta: self.make_ttir(src, meta, options)
-        stages["ttgir"] = lambda src, meta: self.make_ttgir(src, meta, options)
+        if language == Language.GLUON:
+            stages["ttgir"] = lambda src, meta: self.gluon_to_ttgir(
+                src, meta, options)
+        else:
+            stages["ttir"] = lambda src, meta: self.make_ttir(
+                src, meta, options)
+            stages["ttgir"] = lambda src, meta: self.make_ttgir(
+                src, meta, options)
         stages["msl"] = lambda src, meta: self.make_msl(src, meta, options)
         stages["metallib"] = lambda src, meta: self.make_msl_metallib(
             src, meta, options)

@@ -74,6 +74,10 @@ private:
   int depth_ = 0;
   // Cleared by the next indent(), so an `else if` stays on one line.
   bool skipIndent_ = false;
+  bool barrierPending_ = false;
+  Barrier::Scope pendingScope_ = Barrier::Scope::Threadgroup;
+
+  void flushBarrier();
 };
 
 // A null clause is legal: `for (;;)`.

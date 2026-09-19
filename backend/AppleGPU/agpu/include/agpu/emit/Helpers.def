@@ -1,0 +1,30 @@
+// Helpers.def - the prelude helper table. HELPER(Name) is both the enumerator
+// and the `hn::` constant, so the two cannot desync.
+
+#ifndef HELPER
+#define HELPER(Name)
+#endif
+
+HELPER(AtomicRmwF32)
+HELPER(Erf)
+HELPER(Cbrt)
+HELPER(RtneIntHalf)
+HELPER(RtneIntBfloat)
+HELPER(RtneHalf)
+HELPER(RtneBfloat)
+HELPER(RtzHalf)
+HELPER(RtzBfloat)
+HELPER(AtomicRmwPacked16)
+HELPER(Fp8PackE4M3)
+HELPER(Fp8UnpackE4M3)
+HELPER(Fp8PackE5M2)
+HELPER(Fp8UnpackE5M2)
+HELPER(Fp8PackE4B8)
+HELPER(Fp8UnpackE4B8)
+HELPER(Fp8PackE5B16)
+HELPER(Fp8UnpackE5B16)
+HELPER(Fp4Unpack)
+HELPER(PrintAppend)
+HELPER(AssertRecord)
+
+#undef HELPER

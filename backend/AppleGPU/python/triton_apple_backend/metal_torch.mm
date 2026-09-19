@@ -387,9 +387,44 @@ static PyObject *py_is_available(PyObject *self, PyObject *Py_UNUSED(args)) {
   return PyBool_FromLong(MTLCreateSystemDefaultDevice() != nil);
 }
 
+// The address a shader dereferences: data_ptr() is the MTLBuffer object.
+static PyObject *py_gpu_address(PyObject *self, PyObject *args) {
+  return guarded([&]() -> PyObject * {
+    PyObject *arg = NULL;
+    if (!PyArg_ParseTuple(args, "O", &arg))
+      return NULL;
+    if (!THPVariable_Check(arg)) {
+      PyErr_SetString(PyExc_TypeError, "expected a tensor");
+      return NULL;
+    }
+
+    at::Tensor t = THPVariable_Unpack(arg);
+    if (!t.defined() || !t.has_storage()) {
+      PyErr_SetString(PyExc_RuntimeError,
+                      "tensor is undefined or has no storage");
+      return NULL;
+    }
+    if (!t.is_mps()) {
+      PyErr_Format(PyExc_RuntimeError, "tensor must be on MPS device, got %s",
+                   t.device().str().c_str());
+      return NULL;
+    }
+
+    id<MTLBuffer> buf = getMTLBufferStorage(t);
+    if (!buf) {
+      PyErr_SetString(PyExc_RuntimeError, "tensor has no Metal buffer");
+      return NULL;
+    }
+    const uint64_t addr =
+        [buf gpuAddress] + (uint64_t)(t.storage_offset() * t.element_size());
+    return PyLong_FromUnsignedLongLong(addr);
+  });
+}
+
 static PyMethodDef module_methods[] = {
     {"load_metallib", py_load_metallib, METH_VARARGS, NULL},
     {"is_available", py_is_available, METH_NOARGS, NULL},
+    {"gpu_address", py_gpu_address, METH_VARARGS, NULL},
     {NULL}};
 
 static struct PyModuleDef module_def = {

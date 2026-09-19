@@ -32,6 +32,17 @@ struct KernelArg {
   bool isPointer = false;
 
   // Qualifies the parameter type, so it covers every access through it.
+  bool coherent = false;
+};
+
+enum class DebugBinding {
+  None,
+  Bound,
+};
+
+struct DebugChannels {
+  DebugBinding print = DebugBinding::None;
+  DebugBinding assertion = DebugBinding::None;
 };
 
 enum class ArgSlot {
@@ -55,17 +66,25 @@ struct KernelAbi {
   bool hasArgBuffer = false;
   int64_t argBufferIndex = 0;
 
+  bool hasPrintBuffer = false;
+  int64_t printBufferIndex = 0;
+
+  // Separate from the print ring, which can drop records. See
+  // plan/AssertPlan.h.
+  bool hasAssertBuffer = false;
+  int64_t assertBufferIndex = 0;
+
   int64_t launchThreads = 0;
 
   bool usable() const { return bufferCount <= kMaxBuffers; }
 };
 
 // Pointers take buffer bindings in order; scalars pack into one constant
-// buffer at their natural alignment. Any later buffer appends after these, so
-// adding one cannot renumber a pointer binding. The launcher's `ptr_args`
-// order is positional.
+// buffer at their natural alignment; debug buffers (print, then assert) come
+// last, so adding one cannot renumber a pointer binding. The launcher's
+// `ptr_args` order is positional.
 inline KernelAbi planKernelAbi(const std::vector<KernelArg> &args,
-                               int64_t numWarps) {
+                               int64_t numWarps, DebugChannels debug = {}) {
   KernelAbi abi;
   abi.launchThreads = threadsFor(numWarps);
   abi.placements.resize(args.size());
@@ -96,6 +115,14 @@ inline KernelAbi planKernelAbi(const std::vector<KernelArg> &args,
   if (anyScalar)
     abi.argBufferIndex = buffer++;
 
+  abi.hasPrintBuffer = debug.print == DebugBinding::Bound;
+  if (abi.hasPrintBuffer)
+    abi.printBufferIndex = buffer++;
+
+  abi.hasAssertBuffer = debug.assertion == DebugBinding::Bound;
+  if (abi.hasAssertBuffer)
+    abi.assertBufferIndex = buffer++;
+
   abi.bufferCount = buffer;
   return abi;
 }
@@ -105,6 +132,14 @@ inline Decision abiDecision(const KernelAbi &abi) {
     return Decision::emitted();
   return Decision::declined("kernelAbi",
                             "more buffer bindings than Metal allows");
+}
+
+// Unpinned, the compiler budgets registers for a worst-case threadgroup and
+// can cap the pipeline below the actual launch, failing at dispatch with
+// OutOfResources.
+inline bool shouldPinThreadgroupSize(int64_t poolBytes, int64_t coreBudget,
+                                     int64_t launchThreads) {
+  return launchThreads > kAlwaysAdmittedThreads || poolBytes * 2 > coreBudget;
 }
 
 } // namespace agpu

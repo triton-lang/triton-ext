@@ -64,6 +64,11 @@ public:
     return it == map_.end() ? nullptr : &it->second;
   }
 
+  std::size_t regCount(ValueId v) const {
+    const ValueNames *n = namesOf(v);
+    return n ? n->size() : 0;
+  }
+
   // Register `r`, with a splat read as broadcasting. Null for unbound,
   // dataless, or an index past a genuine tensor.
   const msl::Str *regAt(ValueId v, std::size_t r) const {
@@ -73,6 +78,24 @@ public:
     if (n->size() == 1)
       return &(*n)[0];
     return r < n->size() ? &(*n)[r] : nullptr;
+  }
+
+  const msl::Str *scalarName(ValueId v) const {
+    const ValueNames *n = namesOf(v);
+    return n && n->size() == 1 ? &(*n)[0] : nullptr;
+  }
+
+  // The one name every register carries, or null when they differ or the value
+  // is unbound/dataless. A pointer tensor over one buffer binds this way: each
+  // register holds the base's name, with per-element offsets beside it.
+  const msl::Str *uniformNameOf(ValueId v) const {
+    const ValueNames *n = namesOf(v);
+    if (!n || n->empty())
+      return nullptr;
+    for (const msl::Str &s : *n)
+      if (s != (*n)[0])
+        return nullptr;
+    return &(*n)[0];
   }
 
   // The names this value introduced (a splat, rename, or addptr binds a name

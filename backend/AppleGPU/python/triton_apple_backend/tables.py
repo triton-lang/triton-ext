@@ -1,9 +1,8 @@
 """Kernel-argument type tables.
 
-A scalar type must appear in both, so a type in one and not the other is a
-launch-time failure. Only SCALAR_PACK_INFO describes the packed buffer;
-TY_TO_CPP answers Triton's `map_python_to_cpp_type`, whose widths are its own
-(`i1` is an `int32_t` there, one byte here).
+A scalar type must appear in both: ty_to_cpp spells the launcher's parameter
+and _SCALAR_PACK_INFO says how to pack it, so a type in one and not the other
+is a launch-time failure.
 """
 
 TY_TO_CPP = {
