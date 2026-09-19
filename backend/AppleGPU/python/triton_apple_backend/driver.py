@@ -42,7 +42,7 @@ class _TorchRuntime:
         return self.torch.device("mps", 0)
 
     def empty_cache(self):
-        return self.torch.empty(256 * 1024 * 1024 // 4,
+        return self.torch.empty(32 * 1024 * 1024 // 4,
                                 dtype=self.torch.int32,
                                 device='mps')
 
@@ -348,6 +348,51 @@ class MetalLauncher:
             launch_exit_hook(launch_metadata)
 
 
+def _mps_do_bench(fn,
+                  warmup=25,
+                  rep=100,
+                  grad_to_none=None,
+                  quantiles=None,
+                  return_mode="mean"):
+    """`triton.testing.do_bench`, with the cache flush kept out of the window.
+
+    An MPS event pair times the whole command buffer the events sit in, so a
+    flush encoded before `start.record()` is charged to the measurement: a
+    256MB fill reads as about 1.5ms on every kernel. Synchronizing after the
+    flush closes that buffer, and again after `end.record()` resolves the
+    timestamps.
+    """
+    import torch
+    from triton.testing import _summarize_statistics
+
+    cache = _runtime().empty_cache()
+
+    def timed_once():
+        if grad_to_none is not None:
+            for x in grad_to_none:
+                x.grad = None
+        cache.zero_()
+        torch.mps.synchronize()
+        start = torch.mps.Event(enable_timing=True)
+        end = torch.mps.Event(enable_timing=True)
+        start.record()
+        fn()
+        end.record()
+        torch.mps.synchronize()
+        return start.elapsed_time(end)
+
+    fn()
+    torch.mps.synchronize()
+
+    estimate_ms = max(timed_once(), 1e-3)
+    for _ in range(max(1, int(warmup / estimate_ms))):
+        fn()
+    torch.mps.synchronize()
+
+    times = [timed_once() for _ in range(max(1, int(rep / estimate_ms)))]
+    return _summarize_statistics(times, quantiles, return_mode)
+
+
 class MetalDriver(DriverBase):
 
     def __init__(self):
@@ -385,8 +430,7 @@ class MetalDriver(DriverBase):
         return 0
 
     def get_benchmarker(self):
-        from triton.testing import do_bench
-        return do_bench
+        return _mps_do_bench
 
     def get_empty_cache_for_benchmark(self):
         return _runtime().empty_cache()
