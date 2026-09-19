@@ -6,7 +6,7 @@ so these run without threadgroup memory.
 
 import pytest
 
-torch = pytest.importorskip("torch", reason="the dispatch path is torch's")
+torch = pytest.importorskip("torch", reason="needs torch")
 
 if not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
     pytest.skip("needs an Apple GPU", allow_module_level=True)

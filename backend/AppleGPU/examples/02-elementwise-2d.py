@@ -55,7 +55,7 @@ def add_2d_kernel(x_ptr, y_ptr, out_ptr, M, N, BLOCK_M: tl.constexpr,
 def add_2d(x: torch.Tensor, y: torch.Tensor):
     M, N = x.shape
     out = torch.empty_like(x)
-    BLOCK_M, BLOCK_N = 32, 32
+    BLOCK_M, BLOCK_N = 64, 64
     grid = (triton.cdiv(M, BLOCK_M), triton.cdiv(N, BLOCK_N))
     add_2d_kernel[grid](x, y, out, M, N, BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N)
     return out
