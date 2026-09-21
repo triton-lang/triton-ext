@@ -91,6 +91,23 @@ cd $PROJECT_ROOT/triton-ext/extensions/utlx/test
 python -m pytest -v
 ```
 
+## Building against a Triton release
+
+`ci/download_triton_wheel.py` fetches a nightly, which carries the C++ headers
+an extension build needs. A wheel built from a Triton *release* tag does not:
+the `wheel_headers` cmake install component postdates v3.8.0. Build the wheel
+with `TRITON_EXT_ENABLED=1`, install it, then stage the headers:
+
+```bash
+(cd triton && TRITON_EXT_ENABLED=1 python setup.py bdist_wheel)
+pip install --force-reinstall --no-deps triton/dist/triton-*.whl
+python triton-ext/ci/stage_triton_headers.py ./triton
+```
+
+Pin the release when the plugin has to load into the stock PyPI wheel: the
+plugin resolves Triton and MLIR symbols from `libtriton` at `dlopen`, so it has
+to be built against the same commit. `triton==3.8.0` is `c01b6774`.
+
 ## Testing against the TLX op library
 
 The TLX op library (`tlx.ops.mm`, `tlx.ops.flash_attn`, ...) and its tests live
