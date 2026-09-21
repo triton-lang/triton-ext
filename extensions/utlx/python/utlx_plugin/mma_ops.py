@@ -129,16 +129,28 @@ def async_dot(
         acc_handle = require_tmem_layout_col_stride(acc, 1, _semantic.builder)
         handles = [t.handle for t in mBarriers]
         force_async or len(handles) > 0
-        use_acc_handle = None
-        if use_acc is not None:
-            if isinstance(use_acc, tl.tensor):
-                use_acc_handle = use_acc.handle
-            else:
-                use_acc_handle = _semantic.builder.get_int1(use_acc.value)
-        # Use gluon: create_tcgen05_mma(a, b, acc, useAcc, pred, mbarriers, mbarrier_preds, two_ctas, multicast)
+        # `useAcc` and `pred` are plain (non-optional) operands of
+        # ttng.tcgen05_mma; an omitted one means "unconditional", i.e. a true
+        # constant. Meta's binding defaults them internally, upstream's does
+        # not, so materialise them here.
+        if use_acc is None:
+            use_acc_handle = _semantic.builder.get_int1(True)
+        elif isinstance(use_acc, tl.tensor):
+            use_acc_handle = use_acc.handle
+        else:
+            use_acc_handle = _semantic.builder.get_int1(use_acc.value)
+        pred_handle = pred if pred is not None else _semantic.builder.get_int1(
+            True)
+        # ttng.tcgen05_mma pairs each completion barrier with its own
+        # predicate; the op's printer asserts the two lists are the same
+        # length. Nothing here predicates individual barriers, so arrive on
+        # all of them.
+        barrier_preds = [_semantic.builder.get_int1(True) for _ in handles]
+        # create_tcgen05_mma(a, b, acc, useAcc, pred, mbarriers, mbarrier_preds, two_ctas, multicast)
         _semantic.builder.create_tcgen05_mma(A_handle, B_handle, acc_handle,
-                                             use_acc_handle, pred, handles, [],
-                                             two_ctas, False)
+                                             use_acc_handle, pred_handle,
+                                             handles, barrier_preds, two_ctas,
+                                             False)
         return tl.tensor(acc_handle, tl.void)
     else:
         # Create NvidiaMma encoding and apply it to acc via combined custom op
@@ -230,18 +242,20 @@ def async_dot_scaled(
 
     acc_handle = require_tmem_layout_col_stride(acc, 1, _semantic.builder)
     bar_handles = [t.handle for t in mBarriers]
-    use_acc_handle = None
-    if use_acc is not None:
-        if isinstance(use_acc, tl.tensor):
-            use_acc_handle = use_acc.handle
-        else:
-            use_acc_handle = _semantic.builder.get_int1(use_acc.value)
+    if use_acc is None:
+        use_acc_handle = _semantic.builder.get_int1(True)
+    elif isinstance(use_acc, tl.tensor):
+        use_acc_handle = use_acc.handle
+    else:
+        use_acc_handle = _semantic.builder.get_int1(use_acc.value)
+    pred_handle = pred if pred is not None else _semantic.builder.get_int1(True)
+    barrier_preds = [_semantic.builder.get_int1(True) for _ in bar_handles]
     # Use gluon: create_tcgen05_mma_scaled
     _semantic.builder.create_tcgen05_mma_scaled(A_handle, B_handle, acc_handle,
                                                 A_scale_handle, B_scale_handle,
                                                 A_type, B_type, use_acc_handle,
-                                                pred, bar_handles, [],
-                                                two_ctas)
+                                                pred_handle, bar_handles,
+                                                barrier_preds, two_ctas)
     return tl.tensor(acc_handle, tl.void)
 
 

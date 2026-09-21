@@ -207,13 +207,42 @@ knobs.runtime.add_stages_inspection_hook = custom_stages.inspect_stages_hook
 
 
 def _register_compiler_dispatch():
-    """Register compiler dispatch for warp specialization (lazy)."""
+    """Route `with tlx.async_task(s)(...)` to the warp-specialization codegen.
+
+    Meta's Triton exposes a `WITH_DISPATCH` table in the code generator for
+    exactly this. Upstream has no such table and its `visit_With` simply
+    instantiates the context manager and inlines the body -- which for
+    `async_tasks` means the producer, MMA and epilogue tasks all run in one
+    serial instruction stream and the kernel deadlocks on the first mbarrier
+    wait, with no diagnostic. Fall back to intercepting `visit_With`.
+    """
+    from .compiler.dispatch import TLX_WITH_DISPATCH
+
     try:
         from triton.compiler.code_generator import WITH_DISPATCH
-        from .compiler.dispatch import TLX_WITH_DISPATCH
         WITH_DISPATCH.update(TLX_WITH_DISPATCH)
+        return
     except (ImportError, AttributeError):
         pass
+
+    import ast as _ast
+    from triton.compiler import code_generator as _cg
+
+    if getattr(_cg.CodeGenerator, "_utlx_with_dispatch", False):
+        return
+    _orig_visit_With = _cg.CodeGenerator.visit_With
+
+    def visit_With(self, node):
+        if len(node.items) == 1:
+            call = node.items[0].context_expr
+            if isinstance(call, _ast.Call):
+                handler = TLX_WITH_DISPATCH.get(self.visit(call.func))
+                if handler is not None:
+                    return handler(self, node)
+        return _orig_visit_With(self, node)
+
+    _cg.CodeGenerator.visit_With = visit_With
+    _cg.CodeGenerator._utlx_with_dispatch = True
 
 
 _register_compiler_dispatch()
@@ -262,6 +291,12 @@ def _make_tlx_op_builder():
             return _bm(self, *args, **kwargs)
 
         namespace[name] = _delegate
+
+    # A stock Triton has no `make_*_encoding_attr` builder methods -- those are
+    # registered by Meta's in-tree tlx. Supply them on top of the equivalent
+    # gluon `get_*_layout` constructors. No-op when the host already has them.
+    from . import layout_compat
+    layout_compat.install(namespace, gluon)
 
     return type("TLXOpBuilder", (gluon, ), namespace)
 
@@ -327,3 +362,8 @@ PLUGIN_DIR = _compat.PLUGIN_DIR
 PLUGIN_LIBRARY = _compat.PLUGIN_LIBRARY
 _compat.register_plugin(PLUGIN_LIBRARY)
 _compat.install_semantic_helpers()
+
+# TMA descriptor types need an explicit shared layout on a Triton whose
+# descriptor-encoding pass never sees TLX's copies.
+from . import descriptor_compat as _descriptor_compat  # noqa: E402
+_descriptor_compat.install()

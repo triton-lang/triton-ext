@@ -27,6 +27,7 @@
 #include "triton/Dialect/TritonGPU/Transforms/TritonGPUConversion.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
+#include "tlx/dialect/include/IR/Dialect.h"
 #include "triton/Tools/LayoutUtils.h"
 
 // ---------------------------------------------------------------------------
@@ -821,6 +822,25 @@ void populateCFPatterns(TritonGPUTypeConverter &typeConverter,
 // TLXConvertTritonToTritonGPU pass — plugin wrapper around the above
 // ===========================================================================
 
+namespace {
+/// `tlx.release_layout` -> `ttg.convert_layout` into the converted result type.
+struct TLXReleaseLayoutPattern
+    : public mlir::OpConversionPattern<mlir::triton::tlx::ReleaseLayoutOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(mlir::triton::tlx::ReleaseLayoutOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rewriter) const override {
+    auto newType = getTypeConverter()->convertType(op.getType());
+    if (!newType)
+      return mlir::failure();
+    rewriter.replaceOpWithNewOp<mlir::triton::gpu::ConvertLayoutOp>(
+        op, newType, adaptor.getSrc());
+    return mlir::success();
+  }
+};
+} // namespace
+
 class TLXConvertTritonToTritonGPU
     : public PassWrapper<TLXConvertTritonToTritonGPU, OperationPass<ModuleOp>> {
 public:
@@ -904,6 +924,15 @@ public:
     populateSCFPatterns(typeConverter, patterns);
     populateCFPatterns(typeConverter, patterns);
     patterns.insert<GenericOpPattern<ub::PoisonOp>>(typeConverter, context);
+    // `tlx.release_layout` drops a pinned encoding so ordinary Triton ops can
+    // consume the value. Its result is deliberately unencoded, which is fine
+    // in TTIR but invalid once everything else is TTGIR -- the conversion
+    // would otherwise leave the op alone and materialise a cast from an
+    // unencoded tensor, which no verifier accepts. Turn it into the layout
+    // change it actually describes, targeting whatever encoding the type
+    // converter picked for the result.
+    patterns.insert<TLXReleaseLayoutPattern>(typeConverter, context);
+    convTarget.addIllegalOp<mlir::triton::tlx::ReleaseLayoutOp>();
 
     // Set module attributes (same as upstream ConvertTritonToTritonGPU).
     Builder b(&getContext());

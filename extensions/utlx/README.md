@@ -91,4 +91,42 @@ cd $PROJECT_ROOT/triton-ext/extensions/utlx/test
 python -m pytest -v
 ```
 
+## Testing against the TLX op library
+
+The TLX op library (`tlx.ops.mm`, `tlx.ops.flash_attn`, ...) and its tests live
+in [TLX], not in any wheel. `testing/install_tlx_ops_overlay.py` copies that
+library into an environment running stock Triton plus this plugin, so those
+tests can be run against it. See [`testing/README.md`](./testing/README.md).
+
+Blackwell (sm100) matmul, end to end, from nothing:
+
+```bash
+# 1. the environment: stock Triton, straight from PyTorch
+python3.12 -m venv .venv && . .venv/bin/activate
+pip install torch numpy pytest              # torch 2.14 -> triton 3.8.0
+
+# 2. the plugin. The PyPI wheel is x86-64 only and predates the work below,
+#    so build one from this tree (see "Build a plugable Triton" above) and:
+pip install path/to/dist/triton_utlx-*.whl
+
+# 3. the op library and its tests
+git clone --filter=blob:none https://github.com/facebookexperimental/triton fb-triton
+git clone --filter=blob:none https://github.com/triton-lang/triton-ext
+python triton-ext/extensions/utlx/testing/install_tlx_ops_overlay.py \
+    --fb-triton ./fb-triton
+
+# 4. run
+cd fb-triton/python/test/unit/tlx_ops
+python -m pytest test_mm_sm100.py -q -rs
+```
+
+On a GB200 (sm100) this reports **130 passed, 6 skipped**. The skips are the
+`NUM_CTAS=2` shapes, which the op declines with a reason -- see
+[`testing/README.md`](./testing/README.md) for why they are out of reach
+without changes to Triton itself.
+
+The plugin caches compiled kernels under `~/.triton/cache`, keyed on
+`custom_stages.py` only: if you edit anything else in the plugin, clear that
+cache or you will be re-running an old cubin.
+
 [tlx]: https://github.com/facebookexperimental/triton

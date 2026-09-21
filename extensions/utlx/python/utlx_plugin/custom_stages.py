@@ -151,11 +151,21 @@ def inspect_stages_hook(self=None,
             mod = self.make_ttir(mod, metadata, opt, cap)
             pm = ir.pass_manager(mod.context)
             pm.enable_debug()
+            # Settle layouts first, while the `tlx.require_layout` anchors the
+            # propagation keys off are still present -- the conversion erases
+            # them, and the pass bails out when it finds none.
+            passes.plugin.utlx_insert_and_propagate_layout(pm, [])
             passes.plugin.utlx_convert_triton_to_tritongpu(
                 pm,
                 [f"cuda:{cap}",
                  str(opt.num_warps), '32',
                  str(opt.num_ctas)])
+            # (was: settle the layouts the conversion leaves open -- in particular
+            # rewrite `tlx.release_layout` into a `ttg.convert_layout` with a
+            # real destination encoding. Without this the op survives into
+            # TTGIR, where its unencoded result is invalid and the first
+            # verifier to look at it fails the pipeline. The AMD path has
+            # always run this; the NVIDIA path did not.)
             pm.run(mod, 'utlx_conversion')
             return mod
 

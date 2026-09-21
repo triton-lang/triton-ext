@@ -355,7 +355,27 @@ class reuse_group:
         return builder.utlx_reuse_group(args)
 
 
-class buffered_tensor(tl.base_value):
+class tlx_value(tl.base_value):
+    """`tl.base_value` with a working default `_set_name`.
+
+    Triton's code generator names the IR values behind an assignment target by
+    calling `_set_name`, which `base_value` leaves abstract -- the core value
+    types (tensor, tuple, ...) each override it for nicer per-field names, but
+    the TLX value types below only implement `_flatten_ir`, so binding one to a
+    name in a kernel raises a bare `NotImplementedError`.
+
+    Name every underlying handle instead, which is what the generator did
+    before per-type naming was introduced.
+    """
+
+    def _set_name(self, builder, name: str) -> None:
+        handles = []
+        self._flatten_ir(handles)
+        for handle in handles:
+            handle.set_loc(builder.create_name_loc(name, handle.get_loc()))
+
+
+class buffered_tensor(tlx_value):
     """A tensor allocated in a manually managed buffer (SMEM or TMEM)."""
 
     def __init__(
@@ -455,7 +475,7 @@ class buffered_tensor_type(tl.block_type):
         return value, cursor + 1
 
 
-class mbarrier(tl.base_value):
+class mbarrier(tlx_value):
     """An mbarrier allocated in shared memory."""
 
     def __init__(
@@ -488,10 +508,14 @@ class mbarrier_type(buffered_tensor_type):
         self.is_warp_barrier = is_warp_barrier
 
     def to_ir(self, builder):
-        if self.num >= 1:
-            shape = [self.num]
-        else:
-            shape = self.shape
+        # An array of `num` barriers is `{num, 1} x i64`, matching what
+        # `utlx_alloc_barriers` allocates, and a single-barrier view (num == 0)
+        # is the `{1}` that indexing it yields. Declaring the array as a flat
+        # `{num}` instead -- as this used to -- makes every `memdesc_index` on
+        # a barrier passed across a function boundary a rank-1 -> rank-1 index,
+        # which `ttg.memdesc_index` rejects.
+        shape = ([self.num] + list(self.shape)) if self.num >= 1 else list(
+            self.shape)
         assert self.layout is not None
         layout_ir = self.layout.to_ir(builder)
         return builder.get_shared_mem_desc_ty(self.element_ty.to_ir(builder),
@@ -506,7 +530,7 @@ class mbarrier_type(buffered_tensor_type):
         return value, cursor + 1
 
 
-class clc_response(tl.base_value):
+class clc_response(tlx_value):
     """A CLC response object."""
 
     def __init__(self, handle, num: int,
@@ -573,7 +597,7 @@ class reuse_group_ir_type(tl.base_type):
         return f"reuse_group_{self._group_kind.value}"
 
 
-class storage_alias_spec(tl.base_value):
+class storage_alias_spec(tlx_value):
     """A storage alias specification for buffer sharing."""
 
     def __init__(
@@ -672,7 +696,7 @@ class storage_alias_spec_type(tl.base_type):
         return value, cursor + 1
 
 
-class async_token(tl.base_value):
+class async_token(tlx_value):
     """Tracks and synchronizes asynchronous operations."""
 
     def __init__(self, handle):
@@ -704,7 +728,7 @@ class async_token_type(tl.base_type):
         return async_token(handles[cursor]), cursor + 1
 
 
-class tensor_descriptor_ptr(tl.base_value):
+class tensor_descriptor_ptr(tlx_value):
 
     def __init__(self, handle, num: int, descriptor_size: int):
         super().__init__()

@@ -788,6 +788,10 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
        utlx::createRequireWithLayoutCarrier},
       {"utlx_alloc_clc_responses", utlx::createAllocClcResponses},
       {"utlx_clc_query", utlx::createClcQuery},
+      {"utlx_tmem_subslice", utlx::createTMemSubslice},
+      {"utlx_tmem_load", utlx::createTMemLoad},
+      {"utlx_tmem_store", utlx::createTMemStore},
+      {"utlx_memdesc_reinterpret", utlx::createMemDescReinterpret},
       // Thread/cluster ops
       {"utlx_cluster_cta_rank", utlx::createClusterCtaRank},
       {"utlx_thread_id", utlx::createThreadId},
@@ -807,7 +811,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       dialects,
       1, // numDialects
       ops,
-      48, // numOps
+      sizeof(ops) / sizeof(ops[0]), // numOps
       TRITON_VERSION,
   };
   return &info;

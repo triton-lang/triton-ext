@@ -22,6 +22,9 @@ namespace ttg = mlir::triton::gpu;
 namespace ttng = mlir::triton::nvidia_gpu;
 namespace tlx = mlir::triton::tlx;
 
+// Defined below; declared here so earlier op builders can use it.
+static std::optional<int64_t> extractConstInt(mlir::Value v);
+
 // ---------------------------------------------------------------------------
 // Helper: create an op by runtime name lookup
 // ---------------------------------------------------------------------------
@@ -138,13 +141,164 @@ void utlx::createClusterSize1D(TritonOpBuilder &self,
     operands[0] = op->getResult(0);
 }
 
+/// True when `opName` is registered in this build's dialect registry.
+static bool isOpRegistered(mlir::OpBuilder &builder, llvm::StringRef opName) {
+  return static_cast<bool>(
+      mlir::RegisteredOperationName::lookup(opName, builder.getContext()));
+}
+
 /// utlx_async_clc_try_cancel(mbarAlloc, clcResAlloc)
+///
+/// triton-fb spells this `ttng.async_clc_try_cancel(mbar, result)`. Upstream
+/// Triton has the same instruction as `ttng.clc_try_cancel(result, mbar)` --
+/// identical semantics (async write of the 16-byte CLC response to SMEM, with
+/// the mbarrier signalled on completion), operands the other way round.
 void utlx::createAsyncCLCTryCancel(TritonOpBuilder &self,
                                    std::vector<mlir::Value> &operands) {
-  if (operands.size() < 2)
+  // operands[0] is the result slot the host prepends (null for a void op);
+  // the DSL's arguments start at index 1.
+  if (operands.size() < 3)
     return;
-  createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                  "ttng.async_clc_try_cancel", {}, {operands[0], operands[1]});
+  auto &builder = self.getBuilder();
+  auto loc = self.getLastLoc();
+  mlir::Value mbarAlloc = operands[1];
+  mlir::Value clcResAlloc = operands[2];
+
+  if (isOpRegistered(builder, "ttng.async_clc_try_cancel")) {
+    createRuntimeOp(builder, loc, "ttng.async_clc_try_cancel", {},
+                    {mbarAlloc, clcResAlloc});
+    return;
+  }
+  createRuntimeOp(builder, loc, "ttng.clc_try_cancel", {},
+                  {clcResAlloc, mbarAlloc});
+}
+
+/// Emit the CLC query-cancel sequence and return the first CTA id (the x
+/// coordinate), or -1 if the try_cancel did not claim a cluster.
+///
+/// triton-fb fuses this into `ttng.clc_query_cancel -> (x, y, z)`, whose
+/// lowering seeds all three with -1 and overwrites them only under the
+/// `is_canceled` predicate. Upstream keeps the same three PTX steps as
+/// separate ops, so rebuild the fused semantics from them.
+static mlir::Value emitClcQueryCancelFirstCtaId(mlir::OpBuilder &builder,
+                                                mlir::Location loc,
+                                                mlir::Value clcResAlloc) {
+  auto i32Ty = builder.getI32Type();
+
+  if (isOpRegistered(builder, "ttng.clc_query_cancel")) {
+    auto *op = createRuntimeOp(builder, loc, "ttng.clc_query_cancel",
+                               {i32Ty, i32Ty, i32Ty}, {clcResAlloc});
+    if (!op || op->getNumResults() == 0)
+      return nullptr;
+    return op->getResult(0);
+  }
+
+  auto *loadOp = createRuntimeOp(builder, loc, "ttng.clc_load_result",
+                                 {builder.getIntegerType(128)}, {clcResAlloc});
+  if (!loadOp || loadOp->getNumResults() == 0)
+    return nullptr;
+  mlir::Value clcResult = loadOp->getResult(0);
+
+  auto *canceledOp = createRuntimeOp(builder, loc, "ttng.clc_is_canceled",
+                                     {builder.getI1Type()}, {clcResult});
+  if (!canceledOp || canceledOp->getNumResults() == 0)
+    return nullptr;
+  mlir::Value isCanceled = canceledOp->getResult(0);
+
+  auto dimAttr = mlir::triton::ProgramIDDimAttr::get(
+      builder.getContext(), mlir::triton::ProgramIDDim::X);
+  auto *ctaIdOp = createRuntimeOp(
+      builder, loc, "ttng.clc_get_program_id", {i32Ty}, {clcResult},
+      {builder.getNamedAttr("dim", dimAttr)});
+  if (!ctaIdOp || ctaIdOp->getNumResults() == 0)
+    return nullptr;
+
+  mlir::Value negOne = mlir::arith::ConstantIntOp::create(builder, loc, -1, 32);
+  return mlir::arith::SelectOp::create(builder, loc, isCanceled,
+                                       ctaIdOp->getResult(0), negOne);
+}
+
+/// utlx_tmem_subslice(result_slot, src, offset, size) -> MemDesc
+///
+/// `ttng.tmem_subslice` carries the slice width in its *result type* and only
+/// the offset as an attribute. triton-fb binds the convenient
+/// `(src, offset, size)` form to Python and derives the type; upstream binds
+/// only `(resultType, src, offset)`. Both builds have the C++ builder that
+/// does the derivation, so go through that and keep one DSL signature.
+void utlx::createTMemSubslice(TritonOpBuilder &self,
+                              std::vector<mlir::Value> &operands) {
+  if (operands.size() < 4)
+    return;
+  auto offset = extractConstInt(operands[2]);
+  auto size = extractConstInt(operands[3]);
+  if (!offset || !size)
+    return;
+  operands[0] = self.create<ttng::TMEMSubSliceOp>(
+      operands[1], static_cast<int>(*offset), static_cast<int>(*size));
+}
+
+/// utlx_memdesc_reinterpret(result_slot, src, elemTypeCarrier, shape...)
+///
+/// Reinterpret a memdesc with a new element type and shape, keeping its
+/// encoding, memory space and mutability. Upstream's `create_memdesc_reinterpret`
+/// wants the finished result type; deriving it needs the source's MemDescType,
+/// which is only reachable from C++.
+void utlx::createMemDescReinterpret(TritonOpBuilder &self,
+                                    std::vector<mlir::Value> &operands) {
+  if (operands.size() < 4)
+    return;
+  auto oldType = mlir::dyn_cast<ttg::MemDescType>(operands[1].getType());
+  if (!oldType)
+    return;
+  mlir::Type newElementType = operands[2].getType();
+
+  llvm::SmallVector<int64_t> newShape;
+  for (size_t i = 3; i < operands.size(); ++i) {
+    auto dim = extractConstInt(operands[i]);
+    if (!dim)
+      return;
+    newShape.push_back(*dim);
+  }
+
+  auto newType = ttg::MemDescType::get(newShape, newElementType,
+                                       oldType.getEncoding(),
+                                       oldType.getMemorySpace(),
+                                       oldType.getMutableMemory());
+  operands[0] = self.create<ttg::MemDescReinterpretOp>(newType, operands[1]);
+}
+
+/// utlx_tmem_load(result_slot, src, layoutCarrier[, token]) -> Tensor
+///
+/// The register layout of the loaded tensor comes from `layoutCarrier`, a
+/// value produced by `utlx_make_dummy_register_layout` whose type carries the
+/// encoding. Upstream's `create_tmem_load` binding takes an explicit result
+/// type but no dependency token, so build the op directly.
+void utlx::createTMemLoad(TritonOpBuilder &self,
+                          std::vector<mlir::Value> &operands) {
+  if (operands.size() < 3)
+    return;
+  mlir::Value src = operands[1];
+  mlir::Type resultTy = operands[2].getType();
+
+  if (operands.size() >= 4 && operands[3]) {
+    operands[0] = self.create<ttng::TMEMLoadOp>(resultTy, mlir::Type(), src,
+                                                operands[3]);
+    return;
+  }
+  operands[0] = self.create<ttng::TMEMLoadOp>(resultTy, src);
+}
+
+/// utlx_tmem_store(result_slot, dst, src)
+///
+/// `ttng.tmem_store` is predicated; the DSL always stores unconditionally, so
+/// materialise a true predicate here rather than in every caller (upstream's
+/// binding requires one, triton-fb's does not).
+void utlx::createTMemStore(TritonOpBuilder &self,
+                           std::vector<mlir::Value> &operands) {
+  if (operands.size() < 3)
+    return;
+  mlir::Value pred = self.create<mlir::arith::ConstantIntOp>(1, 1);
+  self.create<ttng::TMEMStoreOp>(operands[1], operands[2], pred);
 }
 
 /// utlx_clc_query_cancel(clcResAlloc) -> i32
@@ -152,11 +306,10 @@ void utlx::createCLCQueryCancel(TritonOpBuilder &self,
                                 std::vector<mlir::Value> &operands) {
   if (operands.size() < 2)
     return;
-  auto i32Ty = self.getBuilder().getI32Type();
-  auto *op = createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                             "ttng.clc_query_cancel", {i32Ty}, {operands[1]});
-  if (op && op->getNumResults() > 0)
-    operands[0] = op->getResult(0);
+  mlir::Value ctaId = emitClcQueryCancelFirstCtaId(
+      self.getBuilder(), self.getLastLoc(), operands[1]);
+  if (ctaId)
+    operands[0] = ctaId;
 }
 
 /// utlx_vote_ballot_sync(mask, pred) -> i32 or tensor
@@ -739,15 +892,24 @@ void utlx::createAllocClcResponses(TritonOpBuilder &self,
 
   auto *context = self.getBuilder().getContext();
   auto memorySpace = ttg::SharedMemorySpaceAttr::get(context);
-  // CLC responses are 128-bit (i128) entries
-  auto i128Type = self.getBuilder().getIntegerType(128, /*signed=*/false);
+  // A CLC response is an opaque 16-byte value. Spell it as two i64 lanes, not
+  // one i128: the CLC ops require their result buffer to be exactly
+  // `memdesc<2xi64>` (16-byte aligned), and a rank-2 `{n, 2}` allocation is
+  // what makes `memdesc_index` yield that -- indexing cannot reduce a rank-1
+  // allocation any further.
+  auto i64Type = self.getBuilder().getIntegerType(64);
 
-  auto cgaLayout = ttg::CGAEncodingAttr::get1CTALayout(context, 1);
+  // A rank-1 encoding against the rank-2 shape, matching how the barrier
+  // array is allocated: MemDescType wants the encoding rank to equal the
+  // shape rank or be one less, and keeping it one less is what lets a
+  // `memdesc_index` view reuse the same encoding at rank 1.
+  auto cgaLayout = ttg::CGAEncodingAttr::get1DLayout(context, 1);
   auto encoding =
       ttg::SwizzledSharedEncodingAttr::get(context, 1, 1, 1, {0}, cgaLayout);
 
-  auto memDescType = ttg::MemDescType::get({numResponses}, i128Type, encoding,
-                                           memorySpace, /*mutableMemory=*/true);
+  auto memDescType =
+      ttg::MemDescType::get({numResponses, 2}, i64Type, encoding, memorySpace,
+                            /*mutableMemory=*/true);
 
   operands[0] = self.create<ttg::LocalAllocOp>(memDescType);
 }
@@ -764,12 +926,9 @@ void utlx::createClcQuery(TritonOpBuilder &self,
   auto i32Ty = builder.getI32Type();
 
   // First query the cancel status
-  auto *queryOp = createRuntimeOp(builder, loc, "ttng.clc_query_cancel",
-                                  {i32Ty}, {operands[1]});
-  if (!queryOp || queryOp->getNumResults() == 0)
+  mlir::Value tileId = emitClcQueryCancelFirstCtaId(builder, loc, operands[1]);
+  if (!tileId)
     return;
-
-  mlir::Value tileId = queryOp->getResult(0);
 
   // Get cluster CTA rank
   auto *rankOp = createRuntimeOp(builder, loc, "nvg.cluster_id", {i32Ty}, {});

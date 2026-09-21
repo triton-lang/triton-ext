@@ -47,9 +47,40 @@ class async_task:
 
 
 class async_tasks:
+    """Context manager grouping the `async_task` blocks of one kernel.
 
-    def __init__(self):
-        pass
+    The keyword options are recorded as attributes on the generated
+    `ttg.warp_specialize` op (see `compiler/code_generator.py`); the codegen
+    reads them off the AST rather than from an instance, so this constructor
+    only has to accept and validate them.
+
+    Not every host Triton acts on every option -- see
+    `warp_spec_options.unsupported_options`.
+    """
+
+    def __init__(
+        self,
+        *args,
+        exclusive=False,
+        no_ending_cluster_sync=False,
+        mbarrier_try_wait_suspend_ns=None,
+        less_reg_mma=False,
+        **kwargs,
+    ):
+        self.exclusive = core._unwrap_if_constexpr(exclusive)
+        self.no_ending_cluster_sync = core._unwrap_if_constexpr(
+            no_ending_cluster_sync)
+        self.mbarrier_try_wait_suspend_ns = core._unwrap_if_constexpr(
+            mbarrier_try_wait_suspend_ns)
+        # Lower each MMA's SMEM operand descriptor with its own side-effecting
+        # address computation so LLVM cannot CSE it across distant MMAs.
+        self.less_reg_mma = core._unwrap_if_constexpr(less_reg_mma)
+        if self.mbarrier_try_wait_suspend_ns is not None:
+            if (not isinstance(self.mbarrier_try_wait_suspend_ns, int)
+                    or self.mbarrier_try_wait_suspend_ns < 0):
+                raise ValueError(
+                    "mbarrier_try_wait_suspend_ns must be a non-negative integer"
+                )
 
     def __enter__(self):
         return self

@@ -223,7 +223,9 @@ def dot_precheck(self,
 
     M = lhs.type.shape[-2]
     if tlx_paired_ctas:
-        assert M == 128, f"Currently only supports M=128 per CTA for pair-CTA mma, but got M={M}"
+        # rhs is [K, N/2] in two-CTA mode, so scale N back up. M per CTA is
+        # whatever the tile shape says -- tcgen05 pair-CTA MMA handles 64 as
+        # well as 128, and the in-tree semantic imposes no restriction here.
         N = 2 * rhs.type.shape[-1]
     else:
         N = rhs.type.shape[-1]
