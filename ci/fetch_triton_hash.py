@@ -98,7 +98,7 @@ if __name__ == "__main__":
         logging.basicConfig(level=logging.DEBUG)
 
     repo = os.getenv("REPO", "https://github.com/triton-lang/triton")
-    depth = int(os.getenv("DEPTH", "100"))
+    depth = int(os.getenv("DEPTH", "250"))
     sha = run(repo, depth)
     if sha:
         print(sha)
