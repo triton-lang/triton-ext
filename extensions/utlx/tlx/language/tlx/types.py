@@ -7,6 +7,21 @@ from triton._C.libtriton import ir
 from triton.language.core import _aggregate as aggregate
 
 
+class tlx_value(tl.base_value):
+    """Base for TLX values that wrap a single IR handle.
+
+    `tl.base_value._set_name` is abstract. Upstream's code generator calls it
+    on every value bound to a named variable, so without an implementation any
+    `x = tlx.local_alloc(...)` raises a bare `NotImplementedError`. Meta's fork
+    never hits this because its code generator does not name TLX values.
+    Mirrors `tl.tensor._set_name`.
+    """
+
+    def _set_name(self, builder, name: str) -> None:
+        self.handle.set_loc(
+            builder.create_name_loc(name, self.handle.get_loc()))
+
+
 class layout_encoding:
 
     def __init__(self):
@@ -562,7 +577,7 @@ class reuse_group_ir_type(tl.base_type):
         return f"reuse_group_{self._group_kind.value}"
 
 
-class storage_alias_spec(tl.base_value):
+class storage_alias_spec(tlx_value):
     """
     Definition of a storage alias specification.
 
@@ -768,7 +783,7 @@ class storage_alias_spec_type(tl.base_type):
         return value, cursor + 1
 
 
-class buffered_tensor(tl.base_value):
+class buffered_tensor(tlx_value):
     """
     A symbolic type representing a tensor allocated in a manually managed buffer
     such as shared memory (SMEM).
@@ -888,7 +903,7 @@ class buffered_tensor_type(tl.block_type):
         handles.append(self.handle)
 
 
-class mbarrier(tl.base_value):
+class mbarrier(tlx_value):
     """
     Define a mbarrier object
     """
@@ -952,7 +967,7 @@ class mbarrier_type(buffered_tensor_type):
         )
 
 
-class clc_response(tl.base_value):
+class clc_response(tlx_value):
     """
     Define a CLC response object
     """
@@ -1022,7 +1037,7 @@ class CLCPipelineContext:
         self._clc_responses = clc_responses
 
 
-class async_token(tl.base_value):
+class async_token(tlx_value):
     """
     Defines a type of value used to track and synchronize asynchronous operations.
     """
@@ -1060,7 +1075,7 @@ class async_token_type(tl.base_type):
         return async_token(handles[cursor]), cursor + 1
 
 
-class tensor_descriptor_ptr(tl.base_value):
+class tensor_descriptor_ptr(tlx_value):
     """
     A pointer type for tensor descriptors with 128-byte stride semantics.
     When performing pointer arithmetic (ptr + 1), the pointer advances by 128 bytes,

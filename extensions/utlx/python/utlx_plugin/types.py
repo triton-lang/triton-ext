@@ -13,6 +13,21 @@ from triton._C.libtriton import ir
 from triton.language.core import _aggregate as aggregate
 
 
+class tlx_value(tl.base_value):
+    """Base for TLX values that wrap a single IR handle.
+
+    `tl.base_value._set_name` is abstract. Upstream's code generator calls it
+    on every value bound to a named variable, so without an implementation any
+    `x = tlx.local_alloc(...)` raises a bare `NotImplementedError`. Meta's fork
+    never hits this because its code generator does not name TLX values.
+    Mirrors `tl.tensor._set_name`.
+    """
+
+    def _set_name(self, builder, name: str) -> None:
+        self.handle.set_loc(
+            builder.create_name_loc(name, self.handle.get_loc()))
+
+
 class layout_encoding:
 
     def __init__(self):
@@ -465,7 +480,7 @@ class reuse_group:
         return builder.utlx_reuse_group(args)
 
 
-class buffered_tensor(tl.base_value):
+class buffered_tensor(tlx_value):
     """A tensor allocated in a manually managed buffer (SMEM or TMEM)."""
 
     def __init__(
@@ -565,7 +580,7 @@ class buffered_tensor_type(tl.block_type):
         return value, cursor + 1
 
 
-class mbarrier(tl.base_value):
+class mbarrier(tlx_value):
     """An mbarrier allocated in shared memory."""
 
     def __init__(
@@ -616,7 +631,7 @@ class mbarrier_type(buffered_tensor_type):
         return value, cursor + 1
 
 
-class clc_response(tl.base_value):
+class clc_response(tlx_value):
     """A CLC response object."""
 
     def __init__(self, handle, num: int,
@@ -683,7 +698,7 @@ class reuse_group_ir_type(tl.base_type):
         return f"reuse_group_{self._group_kind.value}"
 
 
-class storage_alias_spec(tl.base_value):
+class storage_alias_spec(tlx_value):
     """A storage alias specification for buffer sharing."""
 
     def __init__(
@@ -782,7 +797,7 @@ class storage_alias_spec_type(tl.base_type):
         return value, cursor + 1
 
 
-class async_token(tl.base_value):
+class async_token(tlx_value):
     """Tracks and synchronizes asynchronous operations."""
 
     def __init__(self, handle):
@@ -814,7 +829,7 @@ class async_token_type(tl.base_type):
         return async_token(handles[cursor]), cursor + 1
 
 
-class tensor_descriptor_ptr(tl.base_value):
+class tensor_descriptor_ptr(tlx_value):
 
     def __init__(self, handle, num: int, descriptor_size: int):
         super().__init__()
