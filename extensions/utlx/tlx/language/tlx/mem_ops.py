@@ -519,8 +519,14 @@ def subslice(
     subslice_shape = [dim for dim in local_allocated_buffer.type.shape[:-1]
                       ] + [size]
     return tlx.buffered_tensor(
-        _semantic.builder.create_tmem_subslice(local_allocated_buffer.handle,
-                                               offset, size),
+        # utlx_tmem_subslice, not upstream's create_tmem_subslice: the
+        # upstream binding wants a caller-computed result type, and deriving it
+        # in the plugin preserves the source memdesc's encoding and alloc_shape.
+        _semantic.builder.utlx_tmem_subslice([
+            local_allocated_buffer.handle,
+            _semantic.builder.get_int32(int(tl._unwrap_if_constexpr(offset))),
+            _semantic.builder.get_int32(int(tl._unwrap_if_constexpr(size))),
+        ]),
         local_allocated_buffer.type.element_ty,
         subslice_shape,
         local_allocated_buffer.type.num,
@@ -543,8 +549,15 @@ def local_slice(
         assert shape[0] == buffer.type.shape[0]
         return subslice(buffer, offset[1], shape[1], _semantic=_semantic)
     else:
-        slice_handle = _semantic.builder.create_memdesc_subslice(
-            buffer.handle, offset, shape)
+        # See the note in subslice() on why this goes through the plugin op.
+        slice_handle = _semantic.builder.utlx_memdesc_subslice(
+            [buffer.handle] + [
+                _semantic.builder.get_int32(int(tl._unwrap_if_constexpr(o)))
+                for o in offset
+            ] + [
+                _semantic.builder.get_int32(int(tl._unwrap_if_constexpr(s)))
+                for s in shape
+            ])
         return tlx.buffered_tensor(
             slice_handle,
             buffer.type.scalar,

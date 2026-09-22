@@ -183,6 +183,64 @@ static void createLocalView(TritonOpBuilder &self,
       self.create<ttg::MemDescIndexOp>(memDescType, localAlloc, bufferIdx);
 }
 
+// --- utlx_tmem_subslice: Subslice a TMEM allocation along the last dim ---
+//
+// Upstream's create_tmem_subslice binding takes a caller-computed result type;
+// the fork's took (memdesc, offset, size) and derived it. Deriving it here
+// rather than in Python keeps the source's encoding, memory space, mutability
+// and alloc_shape exactly, which a Python-side reconstruction would have to
+// guess at -- TMEMSubSliceOp's own builder does the same cloneWith.
+static void createTMEMSubSlice(TritonOpBuilder &self,
+                               std::vector<mlir::Value> &operands) {
+  // operands[0] = result slot
+  // operands[1] = source memdesc
+  // operands[2] = offset, operands[3] = size
+  if (operands.size() < 4)
+    return;
+
+  auto offset = extractConstantInt(operands[2]);
+  auto size = extractConstantInt(operands[3]);
+  if (!offset || !size)
+    return;
+
+  operands[0] = self.create<ttng::TMEMSubSliceOp>(
+      operands[1], static_cast<int>(*offset), static_cast<int>(*size));
+}
+
+// --- utlx_memdesc_subslice: Rectangular subslice of a memdesc ---
+static void createMemDescSubslice(TritonOpBuilder &self,
+                                  std::vector<mlir::Value> &operands) {
+  // operands[0]                   = result slot
+  // operands[1]                   = source memdesc
+  // operands[2 .. 1+rank]         = per-dim offsets
+  // operands[2+rank .. 1+2*rank]  = per-dim sizes
+  if (operands.size() < 4)
+    return;
+
+  auto srcType = mlir::dyn_cast<ttg::MemDescType>(operands[1].getType());
+  if (!srcType)
+    return;
+
+  unsigned rank = srcType.getShape().size();
+  if (operands.size() != 2 + 2 * rank)
+    return;
+
+  llvm::SmallVector<int32_t> offsets;
+  llvm::SmallVector<int64_t> shape;
+  for (unsigned i = 0; i < rank; ++i) {
+    auto offset = extractConstantInt(operands[2 + i]);
+    auto dim = extractConstantInt(operands[2 + rank + i]);
+    if (!offset || !dim)
+      return;
+    offsets.push_back(static_cast<int32_t>(*offset));
+    shape.push_back(*dim);
+  }
+
+  auto resultType = srcType.cloneWith(shape, srcType.getElementType());
+  operands[0] =
+      self.create<ttg::MemDescSubsliceOp>(resultType, operands[1], offsets);
+}
+
 // --- utlx_local_store: Store register tensor into SMEM buffer ---
 static void createLocalStore(TritonOpBuilder &self,
                              std::vector<mlir::Value> &operands) {
@@ -757,6 +815,8 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_local_alloc", createLocalAllocSmem},
       {"utlx_local_alloc_tmem", createLocalAllocTmem},
       {"utlx_local_view", createLocalView},
+      {"utlx_tmem_subslice", createTMEMSubSlice},
+      {"utlx_memdesc_subslice", createMemDescSubslice},
       {"utlx_local_store", createLocalStore},
       {"utlx_local_load", createLocalLoad},
       {"utlx_alloc_barriers", createAllocBarriers},
