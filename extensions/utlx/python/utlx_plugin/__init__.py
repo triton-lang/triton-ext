@@ -382,3 +382,11 @@ PLUGIN_DIR = _compat.PLUGIN_DIR
 PLUGIN_LIBRARY = _compat.PLUGIN_LIBRARY
 _compat.register_plugin(PLUGIN_LIBRARY)
 _compat.install_semantic_helpers()
+
+# Accept TLX's ctas_per_cga launch option, converting it to the num_ctas
+# spelling upstream understands. Patches only Triton's Config and launch path,
+# so it is inert on a fork that already supports the option -- see
+# _ctas_per_cga for why a straight port is not possible.
+from . import _ctas_per_cga as _utlx_ctas_per_cga  # noqa: E402
+
+_utlx_ctas_per_cga.install()
