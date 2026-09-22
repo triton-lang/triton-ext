@@ -318,6 +318,14 @@ def _make_tlx_op_builder():
 
         namespace[name] = _delegate
 
+    # Stock Triton has none of the fork's make_*_encoding_attr factories, so
+    # every tlx layout encoding's to_ir() would fail. Rebuild them on the
+    # upstream get_*_layout getters.
+    from . import layout_compat
+    for name, fn in layout_compat.FACTORIES.items():
+        if not hasattr(gluon, name):
+            namespace[name] = fn
+
     return type("TLXOpBuilder", (gluon, ), namespace)
 
 
