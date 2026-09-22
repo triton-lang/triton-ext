@@ -241,6 +241,62 @@ static void createMemDescSubslice(TritonOpBuilder &self,
       self.create<ttg::MemDescSubsliceOp>(resultType, operands[1], offsets);
 }
 
+// --- utlx_tmem_load: Load a TMEM buffer into registers ---
+//
+// Upstream's create_tmem_load binding takes a distributed result type, i.e. a
+// concrete register layout, which uTLX does not have at this point: it defers
+// the choice to its own PropagateLayout pass by way of a DummyRegisterLayout
+// carrier, exactly as the fork's create_tmem_load(memdesc, layout, token) did.
+// Building the op here keeps that deferral instead of forcing a layout to be
+// computed up front.
+static void createTMEMLoad(TritonOpBuilder &self,
+                           std::vector<mlir::Value> &operands) {
+  // operands[0] = result slot
+  // operands[1] = source TMEM memdesc
+  // operands[2] = register-layout carrier; its tensor type holds the encoding
+  // operands[3] = optional async token
+  if (operands.size() < 3)
+    return;
+
+  auto srcType = mlir::dyn_cast<ttg::MemDescType>(operands[1].getType());
+  auto carrierType =
+      mlir::dyn_cast<mlir::RankedTensorType>(operands[2].getType());
+  if (!srcType || !carrierType)
+    return;
+
+  auto resultType = mlir::RankedTensorType::get(
+      srcType.getShape(), srcType.getElementType(), carrierType.getEncoding());
+
+  mlir::Value dep;
+  if (operands.size() > 3)
+    dep = operands[3];
+
+  auto loadOp = self.create<ttng::TMEMLoadOp>(
+      resultType, /*token=*/mlir::Type(), operands[1], dep);
+  operands[0] = loadOp.getResult();
+}
+
+// --- utlx_tmem_store: Store a register tensor into a TMEM buffer ---
+static void createTMEMStore(TritonOpBuilder &self,
+                            std::vector<mlir::Value> &operands) {
+  // operands[0] = result slot (unused; the op yields no tensor)
+  // operands[1] = destination TMEM memdesc
+  // operands[2] = source register tensor
+  if (operands.size() < 3)
+    return;
+
+  if (!mlir::isa<ttg::MemDescType>(operands[1].getType()))
+    return;
+
+  // Upstream's TMEMStoreOp takes a predicate the fork's builder did not. TLX
+  // stores are unconditional, so pass a constant true.
+  auto &builder = self.getBuilder();
+  mlir::Value pred = builder.create<mlir::arith::ConstantOp>(
+      self.getLastLoc(), builder.getBoolAttr(true));
+
+  self.create<ttng::TMEMStoreOp>(operands[1], operands[2], pred);
+}
+
 // --- utlx_local_store: Store register tensor into SMEM buffer ---
 static void createLocalStore(TritonOpBuilder &self,
                              std::vector<mlir::Value> &operands) {
@@ -817,6 +873,8 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_local_view", createLocalView},
       {"utlx_tmem_subslice", createTMEMSubSlice},
       {"utlx_memdesc_subslice", createMemDescSubslice},
+      {"utlx_tmem_load", createTMEMLoad},
+      {"utlx_tmem_store", createTMEMStore},
       {"utlx_local_store", createLocalStore},
       {"utlx_local_load", createLocalLoad},
       {"utlx_alloc_barriers", createAllocBarriers},

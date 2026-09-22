@@ -19,6 +19,26 @@ def _get_region_replica_id_stack() -> List[int]:
     return _tlx_state.region_replica_id_stack
 
 
+def _get_async_task_num_warps_stack() -> List[int]:
+    if not hasattr(_tlx_state, 'async_task_num_warps_stack'):
+        _tlx_state.async_task_num_warps_stack = []
+    return _tlx_state.async_task_num_warps_stack
+
+
+def current_num_warps(builder) -> int:
+    """Warp count of the enclosing tlx.async_task, else the kernel's.
+
+    A warp-specialized partition runs on its own warp count, and TMEM register
+    layouts depend on it, so `builder.options.num_warps` is the wrong answer
+    inside `with tlx.async_tasks(...)`. The fork reads this off the partition
+    being generated; upstream has no equivalent, so the emitter maintains it.
+    """
+    stack = _get_async_task_num_warps_stack()
+    if stack:
+        return int(stack[-1])
+    return int(builder.options.num_warps)
+
+
 def _get_sub_region_has_exception() -> bool:
     if not hasattr(_tlx_state, 'sub_region_has_exception'):
         _tlx_state.sub_region_has_exception = False
@@ -131,6 +151,7 @@ def visit_withAsyncTasks(self, node):
         ip, last_loc = self._get_insertion_point_and_loc()
 
         region_replica_id_stack = _get_region_replica_id_stack()
+        num_warps_stack = _get_async_task_num_warps_stack()
 
         def _flatten_value_handles(val):
             handles = []
@@ -272,11 +293,13 @@ def visit_withAsyncTasks(self, node):
             if not _get_async_task(self, stmt).is_default:
                 continue
             region_replica_id_stack.append(0)
+            num_warps_stack.append(self.builder.options.num_warps)
             self.builder.create_block_with_parent(ws_op.get_default_region(),
                                                   [])
             with enter_sub_region(self):
                 self.visit(stmt)
             self.builder.create_warp_yield([])
+            num_warps_stack.pop()
             region_replica_id_stack.pop()
 
         self.builder.create_block_with_parent(ws_op.get_partition_op_holder(),
@@ -292,6 +315,7 @@ def visit_withAsyncTasks(self, node):
             replicate_start = 1 if task.is_default else 0
             for i in range(replicate_start, task.replicate):
                 region_replica_id_stack.append(i)
+                num_warps_stack.append(taskNumWarps[index])
                 block = self.builder.create_block_with_parent(
                     partitions_op.get_region(index), arg_types)
                 index += 1
@@ -304,6 +328,7 @@ def visit_withAsyncTasks(self, node):
                     block.replace_use_in_block_with(handle,
                                                     block.get_argument(j))
                 self.builder.create_warp_return()
+                num_warps_stack.pop()
                 region_replica_id_stack.pop()
 
         self.builder.set_insertion_point_after(ws_op.get_operation())

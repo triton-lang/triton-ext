@@ -57,11 +57,41 @@ def _assert_blackwell_for_tmem(arch):
 
 def _create_tmem_compatible_tensor_layout(builder,
                                           tensor: tlx.buffered_tensor):
-    """Create a DummyRegisterLayout encoding for TMEM-compatible register layout."""
-    return builder.utlx_make_dummy_register_layout(
-        [builder.get_int32(int(s)) for s in tensor.shape] +
-        [_make_type_carrier(builder, tensor.dtype),
-         builder.get_int32(1)])  # tmemCompatible=True
+    """A value whose tensor type carries a TMEM-compatible register layout.
+
+    uTLX used to hand back a DummyRegisterLayout placeholder and let its own
+    PropagateLayout pass resolve it. Upstream never gets that far: the first
+    pass to ask the encoding for a linear layout hits
+    `toLinearLayout: "unknown layout"` and aborts the process, because
+    `#tlx.dummy_register_layout` implements no upstream layout interface. So
+    the concrete layout has to be computed here.
+
+    `compute_tmem_reg_layout` needs the warp count of the code that will run
+    the access, which inside `with tlx.async_tasks(...)` is the enclosing
+    task's, not the kernel's -- see `current_num_warps`.
+    """
+    from triton.experimental.gluon.language import distributed_type
+    from triton.experimental.gluon.language._semantic import (
+        _compute_tmem_reg_layout)
+    from triton.experimental.gluon.language.nvidia.blackwell import (
+        TensorMemoryLayout)
+
+    from .compiler.code_generator import current_num_warps
+
+    shape = [int(s) for s in tensor.shape]
+    if len(shape) != 2:
+        raise NotImplementedError(
+            f"TMEM access needs a 2D tile, got shape {shape}")
+
+    num_warps = current_num_warps(builder)
+    # col_stride=1 matches tensor_memory_layout_encoding.make_default, i.e. the
+    # packed layout uTLX allocates.
+    tmem_layout = TensorMemoryLayout(block=(shape[0], shape[1]), col_stride=1)
+    reg_layout = _compute_tmem_reg_layout(tensor.dtype, shape, shape,
+                                          tmem_layout, num_warps, "32x32b")
+    carrier_ty = distributed_type(tensor.dtype, shape, reg_layout)
+    # Only the type matters; the value is never read.
+    return builder.create_poison(carrier_ty.to_ir(builder))
 
 
 def _get_remote_cta_rank_handle(remote_cta_rank, _semantic):
@@ -562,8 +592,13 @@ def local_load(
         _assert_blackwell_for_tmem(_semantic.builder.options.arch)
         tmem_layout = _create_tmem_compatible_tensor_layout(
             _semantic.builder, src)
-        load_handle = _semantic.builder.create_tmem_load(
-            src.handle, tmem_layout, token.handle if token else None)
+        # utlx_tmem_load, not upstream's create_tmem_load: the upstream
+        # binding wants a concrete distributed result type, while uTLX defers
+        # the register layout to PropagateLayout via the carrier below.
+        load_args = [src.handle, tmem_layout]
+        if token is not None and token.handle is not None:
+            load_args.append(token.handle)
+        load_handle = _semantic.builder.utlx_tmem_load(load_args)
         output = _semantic.builder.utlx_release_layout([load_handle])
         return tl.tensor(output, block_type)
     else:
@@ -588,9 +623,10 @@ def local_store(
             _semantic.builder, dst)
         src_handle = _semantic.builder.utlx_require_with_layout_carrier(
             [src.handle, tmem_layout])
-        return tl.tensor(
-            _semantic.builder.create_tmem_store(dst.handle, src_handle),
-            tl.void)
+        # See the note in local_load; the plugin op also supplies the
+        # predicate operand that upstream's TMEMStoreOp requires.
+        _semantic.builder.utlx_tmem_store([dst.handle, src_handle])
+        return tl.tensor(src_handle, tl.void)
 
     _semantic.builder.utlx_local_store([dst.handle, src.handle])
     return tl.tensor(src.handle, tl.void)
