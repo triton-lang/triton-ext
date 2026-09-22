@@ -1,6 +1,79 @@
 """uTLX warp-level operations."""
 
+import triton
+import triton.language as tl_module
 import triton.language.core as tl
+
+
+@triton.jit
+def _warp_redux_max(x):
+    return tl_module.inline_asm_elementwise(
+        "{ .reg .b32 t; mov.b32 t, $1; redux.sync.max.f32 t, t, 0xFFFFFFFF; mov.b32 $0, t; }",
+        "=f,f",
+        [x],
+        dtype=tl.float32,
+        is_pure=True,
+        pack=1,
+    )
+
+
+@triton.jit
+def _warp_redux_min(x):
+    return tl_module.inline_asm_elementwise(
+        "{ .reg .b32 t; mov.b32 t, $1; redux.sync.min.f32 t, t, 0xFFFFFFFF; mov.b32 $0, t; }",
+        "=f,f",
+        [x],
+        dtype=tl.float32,
+        is_pure=True,
+        pack=1,
+    )
+
+
+@triton.jit
+def _warp_redux_abs_max(x):
+    return tl_module.inline_asm_elementwise(
+        "{ .reg .b32 t; mov.b32 t, $1; and.b32 t, t, 0x7FFFFFFF; redux.sync.max.f32 t, t, 0xFFFFFFFF; mov.b32 $0, t; }",
+        "=f,f",
+        [x],
+        dtype=tl.float32,
+        is_pure=True,
+        pack=1,
+    )
+
+
+@triton.jit
+def _warp_redux_abs_min(x):
+    return tl_module.inline_asm_elementwise(
+        "{ .reg .b32 t; mov.b32 t, $1; and.b32 t, t, 0x7FFFFFFF; redux.sync.min.f32 t, t, 0xFFFFFFFF; mov.b32 $0, t; }",
+        "=f,f",
+        [x],
+        dtype=tl.float32,
+        is_pure=True,
+        pack=1,
+    )
+
+
+@triton.jit
+def warp_redux(x, op: tl.constexpr):
+    """Warp-level reduction with implicit broadcast.
+
+    Each element is replaced with the reduction result across all 32 lanes in
+    its warp, replicated back to every lane -- no explicit broadcast needed.
+
+    ``redux.sync.{max,min}.f32`` requires sm_100 (Blackwell).
+
+    Args:
+        x: f32 tensor
+        op: "max", "min", "abs_max", or "abs_min"
+    """
+    if op == "abs_max":
+        return _warp_redux_abs_max(x)
+    elif op == "abs_min":
+        return _warp_redux_abs_min(x)
+    elif op == "max":
+        return _warp_redux_max(x)
+    elif op == "min":
+        return _warp_redux_min(x)
 
 
 @tl.builtin
