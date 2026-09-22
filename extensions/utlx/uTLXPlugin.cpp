@@ -377,8 +377,28 @@ static void createStorageAliasLocalAlloc(TritonOpBuilder &self,
 
   if (isTmem) {
     memorySpace = ttng::TensorMemorySpaceAttr::get(context);
-    // Use dummy TMEM layout for now; resolved during layout propagation
-    encoding = tlx::DummyTMEMLayoutAttr::get(context);
+    // Mirror createLocalAllocTmem. DummyTMEMLayoutAttr is only a placeholder
+    // for the sub-16-bit scale types that layout propagation later resolves to
+    // TensorMemoryScalesEncodingAttr; it is not a general "fill in later"
+    // encoding. Upstream's MemDescType verifier rejects it on sight
+    // ("#tlx.dummy_tmem_layout is not a valid encoding") and the failed
+    // invariant aborts the process, so for every ordinary element type the
+    // concrete encoding has to be built right here.
+    bool useDummyTmemLayout =
+        elemType.isIntOrFloat() && elemType.getIntOrFloatBitWidth() < 16;
+    if (useDummyTmemLayout) {
+      encoding = tlx::DummyTMEMLayoutAttr::get(context);
+    } else {
+      auto cgaLayout =
+          ttg::CGAEncodingAttr::get1CTALayout(context, perBufferRank);
+      llvm::SmallVector<int64_t> perBufferShape(fullShape.begin() + 1,
+                                                fullShape.end());
+      unsigned blockM = perBufferShape.size() >= 1 ? perBufferShape[0] : 1;
+      unsigned blockN = perBufferShape.size() >= 2 ? perBufferShape[1] : 1;
+      encoding = ttng::TensorMemoryEncodingAttr::get(context, blockM, blockN,
+                                                     /*colStride=*/1, cgaLayout,
+                                                     /*twoCTAs=*/false);
+    }
   } else {
     memorySpace = ttg::SharedMemorySpaceAttr::get(context);
     auto cgaLayout =

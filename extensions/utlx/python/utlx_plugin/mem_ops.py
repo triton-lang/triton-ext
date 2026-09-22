@@ -164,8 +164,13 @@ def _local_alloc_with_storage_alias(semantic, spec, dtype, full_shape,
     tensor_handle = semantic.builder.utlx_storage_alias_local_alloc(args)
 
     if is_tmem:
-        py_layout = tlx.tensor_memory_layout_encoding.make_default(
-            unwrapped_shape)
+        # Must agree with createStorageAliasLocalAlloc, which only emits the
+        # placeholder encoding for the sub-16-bit scale types.
+        if dtype.primitive_bitwidth < 16:
+            py_layout = tlx.DummyTMEMLayoutEncoding()
+        else:
+            py_layout = tlx.tensor_memory_layout_encoding.make_default(
+                unwrapped_shape)
     elif len(unwrapped_shape) == 1 or _detect_amd(semantic.builder):
         py_layout = tlx.swizzled_shared_layout_encoding.make_default(
             rank=len(unwrapped_shape))
