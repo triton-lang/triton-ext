@@ -47,9 +47,18 @@ class async_task:
 
 
 class async_tasks:
+    """Context manager grouping the `async_task` regions of one kernel.
 
-    def __init__(self):
-        pass
+    Normally intercepted at the AST level by ``visit_withAsyncTasks`` before it
+    is ever instantiated. Upstream Triton's ``visit_With`` constructs every
+    context manager as ``fn(*args, _semantic=..., **kws)``, so the signature has
+    to absorb ``_semantic`` and the option keywords for the paths that do build
+    one (a nested `with`, or a Triton whose ``visit_With`` we did not patch).
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
 
     def __enter__(self):
         return self

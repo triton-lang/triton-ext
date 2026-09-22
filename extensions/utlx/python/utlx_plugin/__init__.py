@@ -212,11 +212,56 @@ def _register_compiler_dispatch():
         from triton.compiler.code_generator import WITH_DISPATCH
         from .compiler.dispatch import TLX_WITH_DISPATCH
         WITH_DISPATCH.update(TLX_WITH_DISPATCH)
+        return True
     except (ImportError, AttributeError):
-        pass
+        return False
 
 
-_register_compiler_dispatch()
+def _patch_visit_with():
+    """Dispatch `with tlx.async_task(s)(...)` to TLX codegen on upstream Triton.
+
+    Meta's fork rewrites ``CodeGenerator.visit_With`` to look the context class
+    up in a ``WITH_DISPATCH`` registry and hand the *AST node* to the handler.
+    Upstream has no such registry: it instantiates every context manager as
+    ``fn(*args, _semantic=..., **kws)`` and then runs ``__enter__`` / body /
+    ``__exit__``. That protocol cannot express warp specialization, which has to
+    split the body across the regions of a ``ttg.warp_specialize`` op, so
+    ``visit_withAsyncTasks`` needs the unvisited statements.
+
+    Without this the failure is two-layered: constructing ``async_tasks``
+    raises on the unexpected ``_semantic`` keyword, and had it not, the body
+    would be emitted inline with no warp specialization at all.
+
+    Wrap ``visit_With`` so a TLX context manager reaches its AST-level handler
+    and every other `with` keeps upstream behaviour.
+    """
+    import ast
+    import triton.compiler.code_generator as _cg
+
+    if getattr(_cg.CodeGenerator, "_utlx_visit_with", False):
+        return
+
+    from .compiler.dispatch import TLX_WITH_DISPATCH
+    _orig_visit_With = _cg.CodeGenerator.visit_With
+
+    def _visit_With(self, node):
+        # Only a single-item `with` can be a TLX region; anything else (and any
+        # non-call context expression) is upstream's to handle.
+        if len(node.items) == 1:
+            context = node.items[0].context_expr
+            if isinstance(context, ast.Call):
+                handler = TLX_WITH_DISPATCH.get(self.visit(context.func))
+                if handler:
+                    return handler(self, node)
+        return _orig_visit_With(self, node)
+
+    _cg.CodeGenerator.visit_With = _visit_With
+    _cg.CodeGenerator._utlx_visit_with = True
+
+
+# Meta's fork owns visit_With, so only patch a Triton that has no registry.
+if not _register_compiler_dispatch():
+    _patch_visit_with()
 
 
 def _make_tlx_op_builder():
