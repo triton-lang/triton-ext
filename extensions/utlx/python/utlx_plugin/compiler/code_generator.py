@@ -216,77 +216,94 @@ def visit_withAsyncTasks(self, node):
                                            perTaskReplicates,
                                            self.builder.options.num_warps)
 
+        if len(taskWarpGroupStartIds) > 0:
+            raise NotImplementedError(
+                "tlx.async_task(warp_group_start_id=...) has no upstream "
+                "equivalent. ttg.warp_specialize does carry a warpGroupStartIds "
+                "attribute, but only the AllocateWarpGroups pass assigns it and "
+                "no builder API exposes it. Drop the argument and let the "
+                "compiler place the warp groups.")
+
+        # Upstream has no `self.used_vars`, so capture every non-constexpr
+        # live-in that carries IR. That is a superset of what used_vars would
+        # select: a spurious capture costs an unused block argument, while a
+        # missing one is a verifier error, because a partition region is
+        # isolated from above and cannot reference an outer value directly.
+        captures = []
+        capture_handles = []
+        for name in sorted(liveins):
+            val = liveins[name]
+            if _is_constexpr(val):
+                continue
+            if getattr(val, "__triton_aggregate__", False):
+                handles = []
+                for field in val.type.fields:
+                    handles.extend(
+                        _flatten_value_handles(getattr(val, field[0])))
+            elif hasattr(val, "_flatten_ir") or hasattr(val, "handle"):
+                handles = _flatten_value_handles(val)
+            else:
+                # A module, a JIT function, a plain Python object: not IR.
+                continue
+            if handles:
+                captures.append(name)
+                capture_handles.extend(handles)
+
+        # Upstream splits the fork's single fused op in two: ttg.warp_specialize
+        # holds the default region and the warp counts, and a nested
+        # ttg.warp_specialize.partitions holds the worker regions and owns the
+        # captures. The captures are operands fixed at construction, so unlike
+        # the fork we cannot emit the workers first and append operands after --
+        # the capture set has to be known up front, which is why it is computed
+        # above rather than discovered by a throwaway codegen pass.
+        #
+        # Gluon's own driver emits the default body into a detached new_block()
+        # to infer result types before creating the op. We must not: a detached
+        # block has no parent region, and any nested control flow in the body
+        # aborts the process, because _find_carries -> builder.create_block()
+        # needs one. tlx.async_tasks yields no values, so the result types are
+        # always empty and the op can be created first and filled in place.
         self._set_insertion_point_and_loc(ip, last_loc)
-        ws_op = self.builder.create_warp_specialize_op(
-            taskNumWarps,
-            taskNumRegs if len(taskNumRegs) > 0 else None,
-            sum(taskReplica),
-            taskWarpGroupStartIds if len(taskWarpGroupStartIds) > 0 else None,
-        )
+        ws_op = self.builder.create_warp_specialize([], taskNumWarps)
+        if len(taskNumRegs) > 0:
+            ws_op.set_requested_registers(taskNumRegs)
+
+        for stmt in stmts:
+            if not _get_async_task(self, stmt).is_default:
+                continue
+            region_replica_id_stack.append(0)
+            self.builder.create_block_with_parent(ws_op.get_default_region(),
+                                                  [])
+            with enter_sub_region(self):
+                self.visit(stmt)
+            self.builder.create_warp_yield([])
+            region_replica_id_stack.pop()
+
+        self.builder.create_block_with_parent(ws_op.get_partition_op_holder(),
+                                              [])
+        partitions_op = self.builder.create_warp_specialize_partitions(
+            capture_handles, sum(taskReplica))
+        arg_types = [handle.get_type() for handle in capture_handles]
 
         index = 0
         for stmt in stmts:
             task = _get_async_task(self, stmt)
             assert task.is_explict
-            task_replicate = (task.replicate -
-                              1) if task.is_default else task.replicate
-            if task_replicate > 0:
-                task_body = ws_op.get_partition_region(index)
-                block = self.builder.create_block_with_parent(task_body, [])
-                region_replica_id_stack.append(0)
-                self.builder.set_insertion_point_to_start(block)
-                with enter_sub_region(self):
-                    self.visit(stmt)
-                region_replica_id_stack.pop()
-                index += task_replicate
-                block.erase()
-
-        captures = sorted(v for v in (liveins.keys() & self.used_vars)
-                          if not _is_constexpr(liveins[v]))
-        for name in captures:
-            val = liveins[name]
-            if getattr(val, "__triton_aggregate__", False):
-                for field in val.type.fields:
-                    v = getattr(val, field[0])
-                    for h in _flatten_value_handles(v):
-                        ws_op.append_operand(h)
-            else:
-                for h in _flatten_value_handles(val):
-                    ws_op.append_operand(h)
-
-        index = 0
-        for stmt in stmts:
-            task = _get_async_task(self, stmt)
-            if task.is_default:
-                region_replica_id_stack.append(0)
-                task_body = ws_op.get_default_region()
-                block = self.builder.create_block_with_parent(task_body, [])
-                self.builder.set_insertion_point_to_start(block)
-                with enter_sub_region(self):
-                    self.visit(stmt)
-                self.builder.create_warp_yield_op()
-                region_replica_id_stack.pop()
-
             replicate_start = 1 if task.is_default else 0
             for i in range(replicate_start, task.replicate):
                 region_replica_id_stack.append(i)
-                task_body = ws_op.get_partition_region(index)
+                block = self.builder.create_block_with_parent(
+                    partitions_op.get_region(index), arg_types)
                 index += 1
-                block = self.builder.create_block_with_parent(task_body, [])
                 self.builder.set_insertion_point_to_start(block)
                 with enter_sub_region(self):
                     self.visit(stmt)
-                for name in captures:
-                    val = liveins[name]
-                    if getattr(val, "__triton_aggregate__", False):
-                        for field in val.type.fields:
-                            v = getattr(val, field[0])
-                            for h in _flatten_value_handles(v):
-                                arg = task_body.add_argument(h.get_type())
-                                block.replace_use_in_block_with(h, arg)
-                    else:
-                        for h in _flatten_value_handles(val):
-                            arg = task_body.add_argument(h.get_type())
-                            block.replace_use_in_block_with(h, arg)
-                self.builder.create_warp_return_op()
+                # Every partition takes the whole capture list, so argument j
+                # always corresponds to capture_handles[j].
+                for j, handle in enumerate(capture_handles):
+                    block.replace_use_in_block_with(handle,
+                                                    block.get_argument(j))
+                self.builder.create_warp_return()
                 region_replica_id_stack.pop()
+
+        self.builder.set_insertion_point_after(ws_op.get_operation())
