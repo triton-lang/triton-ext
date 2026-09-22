@@ -8,6 +8,7 @@ __all__ = [
     "async_tasks",
     "async_task",
     # types
+    "layout",
     "layout_encoding",
     "shared_layout_encoding",
     "swizzled_shared_layout_encoding",
@@ -158,6 +159,7 @@ from .types import (
     CLCPipelineContext,
     DummyRegisterLayoutEncoding,
     DummyTMEMLayoutEncoding,
+    layout,
     layout_encoding,
     mbarrier,
     mbarrier_type,
