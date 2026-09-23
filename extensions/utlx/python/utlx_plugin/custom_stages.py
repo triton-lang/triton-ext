@@ -101,6 +101,7 @@ def inspect_stages_hook(self=None,
             use_block_pingpong = is_pingpong_schedule_enabled(
                 options.arch, use_async_copy)
 
+            amd.passes.ttgpuir.add_optimize_descriptor_encoding(pm)
             amd.passes.ttgpuir.add_schedule_loops(pm, options.num_stages)
             amd.passes.ttgpuir.add_pipeline(pm, use_async_copy,
                                             use_block_pingpong)
@@ -108,9 +109,6 @@ def inspect_stages_hook(self=None,
                 amd.passes.ttgpuir.add_coalesce_async_copy(pm, options.arch)
             amd.passes.ttgpuir.add_convert_to_tensor_ops(pm)
             passes.common.add_canonicalizer(pm)
-            if options.schedule_hint.lower() != "none":
-                for hint in options.schedule_hint.split(","):
-                    amd.passes.ttgpuir.insert_instruction_sched_hints(pm, hint)
             passes.ttgpuir.add_remove_layout_conversions(pm)
             passes.ttgpuir.add_reduce_data_duplication(pm)
             if is_in_thread_transpose_enabled(options.arch):
