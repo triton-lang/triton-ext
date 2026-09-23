@@ -95,6 +95,10 @@ __all__ = [
     "_to_mxfp8_block",
     # warp_ops
     "vote_ballot_sync",
+    # layout_ops
+    "amd_mfma_layout",
+    "require_layout",
+    "release_layout",
 ]
 
 # Imported first, ahead of anything that pulls in triton: importing it is the
@@ -148,6 +152,7 @@ from .mem_ops import (
     subslice,
     tmem_copy,
 )
+from .layout_ops import amd_mfma_layout, release_layout, require_layout
 from .mma_ops import async_dot, async_dot_scaled, async_dot_wait, tcgen05_commit
 from .types import (
     async_token,

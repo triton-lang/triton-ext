@@ -42,6 +42,11 @@ void createRequireTensorMemoryLayout(TritonOpBuilder &,
 void createRequireTensorMemoryScalesLayout(TritonOpBuilder &,
                                            std::vector<mlir::Value> &);
 
+// Layout-carrier constructors (build an encoding, return a value whose type
+// carries it; consumed by utlx_require_with_layout_carrier and
+// utlx_require_dot_operand_layout)
+void createMakeAmdMfmaLayout(TritonOpBuilder &, std::vector<mlir::Value> &);
+
 // Memory ops
 void createAsyncLoad(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createGlobalScratchAlloc(TritonOpBuilder &, std::vector<mlir::Value> &);

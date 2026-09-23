@@ -642,6 +642,54 @@ void utlx::createGlobalScratchAlloc(TritonOpBuilder &self,
     operands[0] = op->getResult(0);
 }
 
+/// utlx_make_amd_mfma_layout(result_slot, version, instrShapeM, instrShapeN,
+///                           instrShapeK, isTransposed, warpsPerCTA0,
+///                           warpsPerCTA1)
+///
+/// Builds an AMDMfmaEncodingAttr and returns a value whose RankedTensorType
+/// carries it. The carrier's own shape and element type are immaterial --
+/// consumers (utlx_require_with_layout_carrier, utlx_require_dot_operand_layout)
+/// read only the encoding off this type and re-apply it to their own operand's
+/// shape. This mirrors createMakeDummyRegisterLayout; a carrier value is used
+/// rather than an attribute because plugin ops can only pass mlir::Values.
+void utlx::createMakeAmdMfmaLayout(TritonOpBuilder &self,
+                                   std::vector<mlir::Value> &operands) {
+  if (operands.size() < 8)
+    return;
+
+  llvm::SmallVector<unsigned, 7> args;
+  for (size_t i = 1; i < 8; ++i) {
+    auto v = extractConstInt(operands[i]);
+    if (!v)
+      return;
+    args.push_back(static_cast<unsigned>(*v));
+  }
+
+  unsigned version = args[0];
+  llvm::SmallVector<unsigned, 3> instrShape = {args[1], args[2], args[3]};
+  bool isTransposed = args[4] != 0;
+  llvm::SmallVector<unsigned, 2> warpsPerCTA = {args[5], args[6]};
+
+  auto *context = self.getBuilder().getContext();
+  auto CGALayout = ttg::CGAEncodingAttr::get1CTALayout(context, 2);
+  auto encoding = ttg::AMDMfmaEncodingAttr::get(
+      context, version, warpsPerCTA, instrShape, isTransposed, CGALayout);
+
+  // Nominal carrier shape: one full MFMA tile per warp across the CTA. Only
+  // the encoding is ever read back off this type.
+  llvm::SmallVector<int64_t, 2> shape = {
+      static_cast<int64_t>(instrShape[0] * warpsPerCTA[0]),
+      static_cast<int64_t>(instrShape[1] * warpsPerCTA[1])};
+  auto elemTy = self.getBuilder().getF32Type();
+
+  auto tensorType = mlir::RankedTensorType::get(shape, elemTy, encoding);
+  auto nullVal = self.getBuilder().create<mlir::arith::ConstantOp>(
+      self.getLastLoc(),
+      mlir::DenseElementsAttr::get(mlir::RankedTensorType::get(shape, elemTy),
+                                   self.getBuilder().getZeroAttr(elemTy)));
+  operands[0] = self.create<tlx::RequireLayoutOp>(tensorType, nullVal);
+}
+
 /// utlx_make_dummy_register_layout(result_slot, shape..., type_carrier,
 /// tmemCompatible) Creates a DummyRegisterLayoutAttr and returns it as a
 /// RequireLayoutOp result. NOTE: This returns an attribute-carrying value, not
