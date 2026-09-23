@@ -224,6 +224,119 @@ def _adopt_triton_language_module_name():
 
 _adopt_triton_language_module_name()
 
+
+def _install_tensor_descriptor_layout_patch():
+    """Give tt.tensordesc types the NVMMA layout TLX's TMA copies require.
+
+    Plain Triton creates descriptor types with no sharedLayout and fills it in
+    much later, in the optimize-descriptor-encoding pass. That is fine for
+    upstream, whose TMA copies are created in TTGIR. TLX builds its copies
+    while generating TTIR, so ttng.async_tma_copy_global_to_local is verified
+    long before that pass ever runs and rejects the descriptor with
+    "TMA descriptor layout must match shared layout ... got <<NULL ATTRIBUTE>>".
+
+    Emit the layout up front instead. The default NVMMA encoding for the block
+    shape and element type is what TLX's own SMEM buffers get
+    (nv_mma_shared_layout_encoding.make_default, via require_nv_mma_shared_layout),
+    so descriptor and destination match by construction -- and it is the same
+    encoding optimize-descriptor-encoding would have chosen anyway.
+    """
+    from triton.language import core as _core
+
+    base = _core.tensor_descriptor_base_type
+    if getattr(base, '_utlx_descriptor_layout_patched', False):
+        return
+    _orig_flatten_ir_types = base._flatten_ir_types
+
+    def _flatten_ir_types(self, builder, out):
+        # Only on the plugin's builder, and only for the 2-D+ tiles NVMMA
+        # describes; anything else keeps the unencoded type.
+        make_layout_ty = getattr(builder, 'get_tensor_descriptor_layout_type',
+                                 None)
+        block_ty = self.block_type
+        shape = [int(d) for d in block_ty.shape]
+        if make_layout_ty is None or len(shape) < 2:
+            return _orig_flatten_ir_types(self, builder, out)
+
+        from .types import nv_mma_shared_layout_encoding
+        layout = nv_mma_shared_layout_encoding.make_default(
+            shape, block_ty.element_ty)
+        out.append(
+            make_layout_ty(block_ty.to_ir(builder),
+                           block_ty.element_ty.is_int_signed(),
+                           layout.to_ir(builder)))
+
+    base._flatten_ir_types = _flatten_ir_types
+    base._utlx_descriptor_layout_patched = True
+
+
+_install_tensor_descriptor_layout_patch()
+
+
+def _install_make_tensor_descriptor_layout_patch():
+    """Same fix as above, for descriptors built inside the kernel.
+
+    `tl.make_tensor_descriptor` goes through TritonSemantic rather than a type's
+    _flatten_ir_types, and tt.MakeTensorDescOp's own builder infers a result
+    type with no sharedLayout. Gluon binds an overload of
+    create_make_tensor_descriptor that takes the result type explicitly, so
+    shadow the builder method for the duration of the call: upstream keeps
+    doing all of its own validation, only the op construction changes.
+    """
+    from triton.language import core as _core
+    from triton.language.semantic import TritonSemantic
+
+    if getattr(TritonSemantic, '_utlx_descriptor_layout_patched', False):
+        return
+    _orig_make = TritonSemantic.make_tensor_descriptor
+
+    def make_tensor_descriptor(self,
+                               base,
+                               shape,
+                               strides,
+                               block_shape,
+                               padding_option="zero"):
+        builder = self.builder
+        make_layout_ty = getattr(builder, 'get_tensor_descriptor_layout_type',
+                                 None)
+        block = list(_core._unwrap_shape(block_shape))
+        if make_layout_ty is None or len(block) < 2:
+            return _orig_make(self, base, shape, strides, block_shape,
+                              padding_option)
+
+        from .types import nv_mma_shared_layout_encoding
+        element_ty = base.type.element_ty
+        layout = nv_mma_shared_layout_encoding.make_default(block, element_ty)
+        result_ty = make_layout_ty(
+            _core.block_type(element_ty, block).to_ir(builder),
+            element_ty.is_int_signed(), layout.to_ir(builder))
+
+        # _make_tlx_builder restores the ir.builder implementation of every
+        # method gluon overrides, so builder.create_make_tensor_descriptor is
+        # the base one and the result-type overload is not reachable through
+        # the instance. Call gluon's unbound.
+        from triton._C.libtriton.gluon_ir import GluonOpBuilder
+
+        def _create_with_layout(base_handle, shape_handles, stride_handles,
+                                tensor_shape, is_signed, padding):
+            # Gluon's overload: (resultTy, base, shape, strides, padding).
+            return GluonOpBuilder.create_make_tensor_descriptor(
+                builder, result_ty, base_handle, shape_handles, stride_handles,
+                padding)
+
+        builder.create_make_tensor_descriptor = _create_with_layout
+        try:
+            return _orig_make(self, base, shape, strides, block_shape,
+                              padding_option)
+        finally:
+            del builder.create_make_tensor_descriptor
+
+    TritonSemantic.make_tensor_descriptor = make_tensor_descriptor
+    TritonSemantic._utlx_descriptor_layout_patched = True
+
+
+_install_make_tensor_descriptor_layout_patch()
+
 # Supply the triton.language.extra modules that Meta's fork ships and upstream
 # lacks, so TLX kernels importing them by their core paths resolve. A no-op
 # wherever Triton provides them itself.
