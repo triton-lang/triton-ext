@@ -21,6 +21,7 @@
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "tlx/dialect/include/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
@@ -566,6 +567,29 @@ public:
   }
 };
 
+// tlx.release_layout exists to hand a value back to the layout-free world of
+// TTIR, where tensors carry no encoding. In TTGIR every tensor has one, so the
+// op has nothing left to express: rewrite it to a convert_layout into whatever
+// the type converter chose for its result. Leaving it alone produces a tensor
+// with no encoding at all, which downstream passes cannot reason about --
+// TritonGPUReduceDataDuplication is the first to fall over.
+struct TLXReleaseLayoutPattern
+    : public OpConversionPattern<mlir::triton::tlx::ReleaseLayoutOp> {
+  using OpConversionPattern<
+      mlir::triton::tlx::ReleaseLayoutOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(mlir::triton::tlx::ReleaseLayoutOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto retType = this->getTypeConverter()->convertType(op.getType());
+    if (!retType)
+      return failure();
+    rewriter.replaceOpWithNewOp<triton::gpu::ConvertLayoutOp>(op, retType,
+                                                              adaptor.getSrc());
+    return success();
+  }
+};
+
 void populateTritonPatterns(TritonGPUTypeConverter &typeConverter,
                             RewritePatternSet &patterns, unsigned numCTAs) {
   MLIRContext *context = patterns.getContext();
@@ -580,6 +604,7 @@ void populateTritonPatterns(TritonGPUTypeConverter &typeConverter,
       GenericOpPattern<triton::SplatOp>,
       GenericOpPattern<triton::UnsplatOp>,
       GenericOpPattern<triton::AddPtrOp>,
+      TLXReleaseLayoutPattern,
       TritonBroadcastPattern,
       TritonCatPattern,
       TritonJoinOpPattern,
