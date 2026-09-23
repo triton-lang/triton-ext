@@ -8,21 +8,19 @@ observable at the boundaries between the Triton frontend and the IR.
 
 import pytest
 import torch
-
 import triton
 import triton.language as tl
-from conftest import tlx, DEVICE, is_hip_cdna4
 
-pytestmark = pytest.mark.skipif(
-    not is_hip_cdna4(),
-    reason="AMD MFMA layouts require gfx950")
+from conftest import DEVICE, is_hip_cdna4, tlx
+
+pytestmark = pytest.mark.skipif(not is_hip_cdna4(),
+                                reason="AMD MFMA layouts require gfx950")
 
 # The layout the AMD kernels in the wild ask for (MI350, bf16 x bf16 -> fp32).
 MFMA_VERSION = tl.constexpr(4)
 INSTR_SHAPE = tl.constexpr([16, 16, 32])
 WARPS_PER_CTA = tl.constexpr([4, 1])
 K_WIDTH = tl.constexpr(8)
-
 
 # ---------------------------------------------------------------------------
 # require_layout / release_layout
@@ -119,7 +117,9 @@ def test_dot_operand_layout_gemm():
     b = torch.randn(K, N, device=DEVICE, dtype=torch.bfloat16)
     c = torch.empty(M, N, device=DEVICE, dtype=torch.float32)
     _mfma_dot[(1, )](a, b, c, M, N, K, num_warps=4)
-    torch.testing.assert_close(c, (a.float() @ b.float()), atol=1e-1, rtol=1e-2)
+    torch.testing.assert_close(c, (a.float() @ b.float()),
+                               atol=1e-1,
+                               rtol=1e-2)
 
 
 def test_dot_operand_layout_reaches_ttgir():
@@ -168,8 +168,10 @@ def test_slice_layout_expand_dims():
     x = torch.randn(M, N, device=DEVICE, dtype=torch.float32)
     y = torch.empty_like(x)
     _slice_layout_kernel[(1, )](x, y, M, N, num_warps=4)
-    torch.testing.assert_close(y, x - x.sum(dim=0, keepdim=True),
-                               atol=1e-3, rtol=1e-3)
+    torch.testing.assert_close(y,
+                               x - x.sum(dim=0, keepdim=True),
+                               atol=1e-3,
+                               rtol=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +198,7 @@ def test_zeros_with_layout():
 
 def test_swizzled_layout_is_a_shared_encoding():
     """swizzled_layout is the TLX spelling of swizzled_shared_layout_encoding."""
+
     @triton.jit
     def _k(Y, M: tl.constexpr, N: tl.constexpr):
         layout: tl.constexpr = tlx.swizzled_layout(1, 1, 1, order=[1, 0])
