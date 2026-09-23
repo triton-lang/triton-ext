@@ -49,6 +49,37 @@ static std::optional<int64_t> extractConstantInt(mlir::Value v) {
   return std::nullopt;
 }
 
+// ---------------------------------------------------------------------------
+// Helper: reject null operands before an op builder dereferences one
+// ---------------------------------------------------------------------------
+//
+// Every op below bails with a bare `return` when it does not recognise its
+// operands, which leaves operands[0] -- the result slot the host prepends --
+// as a null Value. The DSL hands that null straight back to Python as a
+// handle, and the next op to consume it dies inside MLIR: a null operand
+// segfaults in OperandStorage, with no diagnostic and a backtrace pointing at
+// the innocent consumer. Checking on entry turns that into an exception naming
+// the operand, raised at the first op that is actually handed the null.
+// libtriton is built with -fno-exceptions, so this reports through MLIR's
+// diagnostics and declines to build the op. The null then stops here instead
+// of reaching an operand list.
+template <void (*Fn)(TritonOpBuilder &, std::vector<mlir::Value> &)>
+static void checkedOp(TritonOpBuilder &self,
+                      std::vector<mlir::Value> &operands) {
+  for (size_t i = 1; i < operands.size(); ++i) {
+    if (!operands[i]) {
+      mlir::emitError(self.getLastLoc())
+          << "uTLX: operand " << i
+          << " is null; an earlier uTLX op produced no result and its unset "
+             "result slot was passed here as a handle";
+      return;
+    }
+  }
+  Fn(self, operands);
+}
+
+#define UTLX_OP(name, fn) {name, checkedOp<fn>}
+
 // ===========================================================================
 // Custom Ops
 // ===========================================================================
@@ -868,72 +899,75 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
 
   static plugin::OpInfo ops[] = {
       // Original TLX ops
-      {"utlx_local_alloc", createLocalAllocSmem},
-      {"utlx_local_alloc_tmem", createLocalAllocTmem},
-      {"utlx_local_view", createLocalView},
-      {"utlx_tmem_subslice", createTMEMSubSlice},
-      {"utlx_memdesc_subslice", createMemDescSubslice},
-      {"utlx_tmem_load", createTMEMLoad},
-      {"utlx_tmem_store", createTMEMStore},
-      {"utlx_local_store", createLocalStore},
-      {"utlx_local_load", createLocalLoad},
-      {"utlx_alloc_barriers", createAllocBarriers},
-      {"utlx_barrier_wait", createBarrierWait},
-      {"utlx_barrier_arrive", createBarrierArrive},
-      {"utlx_barrier_expect", createBarrierExpect},
-      {"utlx_storage_alias_spec", createStorageAliasSpec},
-      {"utlx_storage_alias_local_alloc", createStorageAliasLocalAlloc},
-      {"utlx_reuse_group", createReuseGroup},
-      {"utlx_set_buffer_overlap", createSetBufferOverlap},
-      {"utlx_local_alias", createLocalAlias},
-      {"utlx_require_layout", createRequireLayout},
-      {"utlx_release_layout", createReleaseLayout},
+      UTLX_OP("utlx_local_alloc", createLocalAllocSmem),
+      UTLX_OP("utlx_local_alloc_tmem", createLocalAllocTmem),
+      UTLX_OP("utlx_local_view", createLocalView),
+      UTLX_OP("utlx_tmem_subslice", createTMEMSubSlice),
+      UTLX_OP("utlx_memdesc_subslice", createMemDescSubslice),
+      UTLX_OP("utlx_tmem_load", createTMEMLoad),
+      UTLX_OP("utlx_tmem_store", createTMEMStore),
+      UTLX_OP("utlx_local_store", createLocalStore),
+      UTLX_OP("utlx_local_load", createLocalLoad),
+      UTLX_OP("utlx_alloc_barriers", createAllocBarriers),
+      UTLX_OP("utlx_barrier_wait", createBarrierWait),
+      UTLX_OP("utlx_barrier_arrive", createBarrierArrive),
+      UTLX_OP("utlx_barrier_expect", createBarrierExpect),
+      UTLX_OP("utlx_storage_alias_spec", createStorageAliasSpec),
+      UTLX_OP("utlx_storage_alias_local_alloc", createStorageAliasLocalAlloc),
+      UTLX_OP("utlx_reuse_group", createReuseGroup),
+      UTLX_OP("utlx_set_buffer_overlap", createSetBufferOverlap),
+      UTLX_OP("utlx_local_alias", createLocalAlias),
+      UTLX_OP("utlx_require_layout", createRequireLayout),
+      UTLX_OP("utlx_release_layout", createReleaseLayout),
       // New TTG ops (runtime op creation)
-      {"utlx_remote_shmem_store", utlx::createRemoteShmemStore},
-      {"utlx_async_remote_shmem_store", utlx::createAsyncRemoteShmemStore},
-      {"utlx_clock64", utlx::createClock64},
+      UTLX_OP("utlx_remote_shmem_store", utlx::createRemoteShmemStore),
+      UTLX_OP("utlx_async_remote_shmem_store",
+              utlx::createAsyncRemoteShmemStore),
+      UTLX_OP("utlx_clock64", utlx::createClock64),
       // New TTNG ops (runtime op creation)
-      {"utlx_async_store", utlx::createAsyncStore},
-      {"utlx_fence", utlx::createFence},
-      {"utlx_map_to_remote_buffer", utlx::createMapToRemoteBuffer},
-      {"utlx_cluster_size_1d", utlx::createClusterSize1D},
-      {"utlx_async_clc_try_cancel", utlx::createAsyncCLCTryCancel},
-      {"utlx_clc_query_cancel", utlx::createCLCQueryCancel},
-      {"utlx_vote_ballot_sync", utlx::createVoteBallotSync},
-      {"utlx_async_tma_prefetch", utlx::createAsyncTMAPrefetch},
-      {"utlx_named_barrier_arrive", utlx::createNamedBarrierArrive},
-      {"utlx_named_barrier_wait", utlx::createNamedBarrierWait},
+      UTLX_OP("utlx_async_store", utlx::createAsyncStore),
+      UTLX_OP("utlx_fence", utlx::createFence),
+      UTLX_OP("utlx_map_to_remote_buffer", utlx::createMapToRemoteBuffer),
+      UTLX_OP("utlx_cluster_size_1d", utlx::createClusterSize1D),
+      UTLX_OP("utlx_async_clc_try_cancel", utlx::createAsyncCLCTryCancel),
+      UTLX_OP("utlx_clc_query_cancel", utlx::createCLCQueryCancel),
+      UTLX_OP("utlx_vote_ballot_sync", utlx::createVoteBallotSync),
+      UTLX_OP("utlx_async_tma_prefetch", utlx::createAsyncTMAPrefetch),
+      UTLX_OP("utlx_named_barrier_arrive", utlx::createNamedBarrierArrive),
+      UTLX_OP("utlx_named_barrier_wait", utlx::createNamedBarrierWait),
       // New AMD ops (runtime op creation)
-      {"utlx_read_barrier_phase", utlx::createReadBarrierPhase},
+      UTLX_OP("utlx_read_barrier_phase", utlx::createReadBarrierPhase),
       // Modified ops with extended signatures (runtime op creation)
-      {"utlx_fp_to_fp_with_rbits", utlx::createFpToFpWithRbits},
-      {"utlx_make_tensor_desc_with_desc_ptr",
-       utlx::createMakeTensorDescWithDescPtr},
+      UTLX_OP("utlx_fp_to_fp_with_rbits", utlx::createFpToFpWithRbits),
+      UTLX_OP("utlx_make_tensor_desc_with_desc_ptr",
+              utlx::createMakeTensorDescWithDescPtr),
       // Combined require-layout ops (encoding + RequireLayoutOp)
-      {"utlx_require_nv_mma_shared_layout",
-       utlx::createRequireNvMmaSharedLayout},
-      {"utlx_require_nv_mma_layout", utlx::createRequireNvMmaLayout},
-      {"utlx_require_dot_operand_layout", utlx::createRequireDotOperandLayout},
-      {"utlx_require_tensor_memory_layout",
-       utlx::createRequireTensorMemoryLayout},
-      {"utlx_require_tensor_memory_scales_layout",
-       utlx::createRequireTensorMemoryScalesLayout},
+      UTLX_OP("utlx_require_nv_mma_shared_layout",
+              utlx::createRequireNvMmaSharedLayout),
+      UTLX_OP("utlx_require_nv_mma_layout", utlx::createRequireNvMmaLayout),
+      UTLX_OP("utlx_require_dot_operand_layout",
+              utlx::createRequireDotOperandLayout),
+      UTLX_OP("utlx_require_tensor_memory_layout",
+              utlx::createRequireTensorMemoryLayout),
+      UTLX_OP("utlx_require_tensor_memory_scales_layout",
+              utlx::createRequireTensorMemoryScalesLayout),
       // Memory ops
-      {"utlx_async_load", utlx::createAsyncLoad},
-      {"utlx_global_scratch_alloc", utlx::createGlobalScratchAlloc},
-      {"utlx_make_dummy_register_layout", utlx::createMakeDummyRegisterLayout},
-      {"utlx_require_with_layout_carrier",
-       utlx::createRequireWithLayoutCarrier},
-      {"utlx_alloc_clc_responses", utlx::createAllocClcResponses},
-      {"utlx_clc_query", utlx::createClcQuery},
+      UTLX_OP("utlx_async_load", utlx::createAsyncLoad),
+      UTLX_OP("utlx_global_scratch_alloc", utlx::createGlobalScratchAlloc),
+      UTLX_OP("utlx_make_dummy_register_layout",
+              utlx::createMakeDummyRegisterLayout),
+      UTLX_OP("utlx_require_with_layout_carrier",
+              utlx::createRequireWithLayoutCarrier),
+      UTLX_OP("utlx_alloc_clc_responses", utlx::createAllocClcResponses),
+      UTLX_OP("utlx_clc_query", utlx::createClcQuery),
       // Thread/cluster ops
-      {"utlx_cluster_cta_rank", utlx::createClusterCtaRank},
-      {"utlx_thread_id", utlx::createThreadId},
+      UTLX_OP("utlx_cluster_cta_rank", utlx::createClusterCtaRank),
+      UTLX_OP("utlx_thread_id", utlx::createThreadId),
       // MMA ops
-      {"utlx_warp_group_dot_wait", createWarpGroupDotWait},
+      UTLX_OP("utlx_warp_group_dot_wait", createWarpGroupDotWait),
       // Async copy ops with token threading
-      {"utlx_async_commit_group", createAsyncCommitGroup},
-      {"utlx_async_wait_group", createAsyncWaitGroup},
+      UTLX_OP("utlx_async_commit_group", createAsyncCommitGroup),
+      UTLX_OP("utlx_async_wait_group", createAsyncWaitGroup),
   };
 
   static plugin::PluginInfo info = {
@@ -945,7 +979,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       dialects,
       1, // numDialects
       ops,
-      48, // numOps
+      sizeof(ops) / sizeof(ops[0]), // numOps
       TRITON_VERSION,
   };
   return &info;
