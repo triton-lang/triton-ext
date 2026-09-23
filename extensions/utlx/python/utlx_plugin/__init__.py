@@ -214,23 +214,15 @@ from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
 from .warp_ops import vote_ballot_sync  # noqa: E402
 
 from . import custom_stages  # noqa: E402
-from .layout_ops import (install_binop_shim,  # noqa: E402
-                         install_load_store_shim,
-                         install_where_shim,
-                         install_cast_shim,
-                         install_encoding_preserving_tensor)
+from .compiler.semantic import (  # noqa: E402
+    install_encoding_preserving_tensor, install_semantic)
 
-install_cast_shim()
-install_binop_shim()
-install_where_shim()
-
-# Frontend types must mirror IR encodings for explicit layouts to survive jit
-# boundaries and casts. The one hazard -- encodings reaching tt.load/tt.store,
-# whose pointer operands cannot carry a register layout -- is handled by
-# install_load_store_shim, so this is safe to have on by default. Set
-# UTLX_ENCODING_SHIM=0 to opt out.
-if _os.environ.get("UTLX_ENCODING_SHIM") != "0":
-    install_load_store_shim()
+# Layout propagation: a TritonSemantic subclass for the ops, plus the one thing
+# that cannot be a subclass (the type given to a freshly built tl.tensor).
+# Both are no-ops for values without an explicit layout. UTLX_NO_LAYOUT_PROPAGATION=1
+# opts out.
+if _os.environ.get("UTLX_NO_LAYOUT_PROPAGATION") != "1":
+    install_semantic()
     install_encoding_preserving_tensor()
 
 from triton import knobs  # noqa: E402
