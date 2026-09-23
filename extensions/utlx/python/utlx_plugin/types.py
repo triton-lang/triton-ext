@@ -614,7 +614,13 @@ class mbarrier_type(buffered_tensor_type):
 
     def to_ir(self, builder):
         if self.num >= 1:
-            shape = [self.num]
+            # Must match createAllocBarriers, which allocates {num, numCTAs}
+            # with numCTAs == 1. Declaring the array rank 1 here made every
+            # memdesc_index that crossed a function boundary go rank 1 -> rank
+            # 1, which upstream rejects with "result rank must be input rank
+            # - 1". A single barrier (num == 0, from local_view) keeps
+            # self.shape and stays rank 1.
+            shape = [self.num, 1]
         else:
             shape = self.shape
         assert self.layout is not None
@@ -647,11 +653,14 @@ class clc_response(tlx_value):
 class clc_response_type(buffered_tensor_type):
 
     def __init__(self, num: int, layout: Optional[shared_layout_encoding]):
-        super().__init__(tl.int64, [1], num, storage_kind.smem, layout)
+        # A CLC response is {2} x i64; see createAllocClcResponses.
+        super().__init__(tl.int64, [2], num, storage_kind.smem, layout)
 
     def to_ir(self, builder):
         if self.num >= 1:
-            shape = [self.num]
+            # Match createAllocClcResponses' {num, 2}; see mbarrier_type.to_ir
+            # for why the array must not be declared rank 1.
+            shape = [self.num, 2]
         else:
             shape = self.shape
         assert self.layout is not None
