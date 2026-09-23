@@ -10,11 +10,11 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/DialectRegistry.h"
-#include <iterator>
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "triton/Tools/PluginUtils.h"
 #include "triton/Version.h"
+#include <iterator>
 
 #ifndef TRITON_EXT_VERSION
 #define TRITON_EXT_VERSION "0.0.0"

@@ -488,8 +488,8 @@ void utlx::createRequireDotOperandLayout(TritonOpBuilder &self,
   if (operands.size() >= 5)
     kWidth = extractConstInt(operands[4]);
   if (kWidth && *kWidth > 0)
-    encoding = ttg::DotOperandEncodingAttr::get(
-        context, opIdx, parentEnc, static_cast<unsigned>(*kWidth));
+    encoding = ttg::DotOperandEncodingAttr::get(context, opIdx, parentEnc,
+                                                static_cast<unsigned>(*kWidth));
   else
     encoding = ttg::DotOperandEncodingAttr::get(context, opIdx, parentEnc,
                                                 opndType.getElementType());
@@ -508,8 +508,7 @@ void utlx::createMakeSliceLayout(TritonOpBuilder &self,
   if (operands.size() < 3)
     return;
 
-  auto parentTy =
-      mlir::dyn_cast<mlir::RankedTensorType>(operands[1].getType());
+  auto parentTy = mlir::dyn_cast<mlir::RankedTensorType>(operands[1].getType());
   auto dimVal = extractConstInt(operands[2]);
   if (!parentTy || !parentTy.getEncoding() || !dimVal)
     return;
@@ -618,7 +617,6 @@ void utlx::createAsyncLoad(TritonOpBuilder &self,
   if (operands.size() < 4)
     return;
 
-
   mlir::Value src = operands[1];
   mlir::Value result = operands[2];
 
@@ -696,10 +694,11 @@ void utlx::createGlobalScratchAlloc(TritonOpBuilder &self,
 ///
 /// Builds an AMDMfmaEncodingAttr and returns a value whose RankedTensorType
 /// carries it. The carrier's own shape and element type are immaterial --
-/// consumers (utlx_require_with_layout_carrier, utlx_require_dot_operand_layout)
-/// read only the encoding off this type and re-apply it to their own operand's
-/// shape. This mirrors createMakeDummyRegisterLayout; a carrier value is used
-/// rather than an attribute because plugin ops can only pass mlir::Values.
+/// consumers (utlx_require_with_layout_carrier,
+/// utlx_require_dot_operand_layout) read only the encoding off this type and
+/// re-apply it to their own operand's shape. This mirrors
+/// createMakeDummyRegisterLayout; a carrier value is used rather than an
+/// attribute because plugin ops can only pass mlir::Values.
 void utlx::createMakeAmdMfmaLayout(TritonOpBuilder &self,
                                    std::vector<mlir::Value> &operands) {
   if (operands.size() < 8)
