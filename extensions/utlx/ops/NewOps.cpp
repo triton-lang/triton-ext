@@ -625,8 +625,11 @@ void utlx::createGlobalScratchAlloc(TritonOpBuilder &self,
     return;
 
   auto *context = self.getBuilder().getContext();
-  auto ptrType = mlir::triton::PointerType::get(self.getBuilder().getI8Type(),
-                                                /*addressSpace=*/1);
+  // Address space 1 == global. Triton replaced the plain-int overload of
+  // PointerType::get with the PtrAddrSpace enum.
+  auto ptrType =
+      mlir::triton::PointerType::get(self.getBuilder().getI8Type(),
+                                     mlir::triton::PtrAddrSpace::Global);
 
   auto nbytesAttr =
       self.getBuilder().getI32IntegerAttr(static_cast<int32_t>(*nbytesVal));
