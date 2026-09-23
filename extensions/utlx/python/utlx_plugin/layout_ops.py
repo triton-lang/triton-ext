@@ -209,29 +209,19 @@ def swizzled_layout(vector_size,
 def buffer_load(base, offsets, mask=None, other=None):
     """Load ``base[offsets]``; the AMD backend lowers this to a buffer load.
 
-    Offsets and mask are released first. A pointer tensor cannot carry a
-    register layout, and tt.load requires ptr/mask/other to agree, so an encoded
-    index expression reaching here fails to verify. release_layout is a no-op on
-    an unencoded value.
+    Layouts are stripped from the pointer operands by the load/store shim, so
+    nothing to do here beyond the address arithmetic.
     """
-    if mask is None:
-        return tlang.load(base + release_layout(offsets))
-    return tlang.load(base + release_layout(offsets),
-                      mask=release_layout(mask), other=other)
+    return tlang.load(base + offsets, mask=mask, other=other)
 
 
 @jit
 def buffer_store(value, base, offsets, mask=None):
     """Store ``value`` to ``base[offsets]`` as a buffer store.
 
-    Released for the same reason as buffer_load: tt.store requires the value and
-    pointer types to agree and a pointer tensor carries no register layout.
+    Layouts are stripped by the load/store shim, as for buffer_load.
     """
-    if mask is None:
-        tlang.store(base + release_layout(offsets), release_layout(value))
-    else:
-        tlang.store(base + release_layout(offsets), release_layout(value),
-                    mask=release_layout(mask))
+    tlang.store(base + offsets, value, mask=mask)
 
 
 def install_encoding_preserving_tensor():
@@ -364,3 +354,36 @@ def install_where_shim():
 
     TritonSemantic.where = where
     TritonSemantic._utlx_where_shim = True
+
+
+def install_load_store_shim():
+    """Keep register layouts off the pointer ops.
+
+    tt.load and tt.store require ptr, mask, other and value to agree, and a
+    pointer tensor has no business carrying a register layout. Once frontend
+    types mirror IR encodings (see install_encoding_preserving_tensor) an
+    encoded index or value reaches these ops and they fail to verify. Release
+    the layout on the way in; callers re-apply one afterwards if they want it.
+    Idempotent.
+    """
+    from triton.language.semantic import TritonSemantic
+    if getattr(TritonSemantic, "_utlx_load_store_shim", False):
+        return
+    orig_load, orig_store = TritonSemantic.load, TritonSemantic.store
+
+    def drop(self, v):
+        if not isinstance(getattr(v, "type", None), _carrier_type):
+            return v
+        return tl.tensor(self.builder.utlx_release_layout([v.handle]),
+                         tl.block_type(v.type.scalar, v.type.shape))
+
+    def load(self, ptr, mask, other, *args, **kwargs):
+        return orig_load(self, drop(self, ptr), drop(self, mask),
+                         drop(self, other), *args, **kwargs)
+
+    def store(self, ptr, val, mask, *args, **kwargs):
+        return orig_store(self, drop(self, ptr), drop(self, val),
+                          drop(self, mask), *args, **kwargs)
+
+    TritonSemantic.load, TritonSemantic.store = load, store
+    TritonSemantic._utlx_load_store_shim = True
