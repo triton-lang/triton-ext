@@ -982,3 +982,40 @@ void utlx::createMakeTensorDescWithDescPtr(TritonOpBuilder &self,
   if (op && op->getNumResults() > 0)
     operands[0] = op->getResult(0);
 }
+
+/// utlx_local_slice(result_slot, src, offset0..offsetN-1, shape0..shapeN-1)
+///
+/// Upstream's create_memdesc_subslice binding takes (result_type, src, offsets)
+/// and there is no way to build a MemDescType from Python on upstream Triton,
+/// so compute the result type here and emit the op directly.
+void utlx::createLocalSlice(TritonOpBuilder &self,
+                            std::vector<mlir::Value> &operands) {
+  if (operands.size() < 4)
+    return;
+
+  mlir::Value src = operands[1];
+  auto srcTy = mlir::dyn_cast<ttg::MemDescType>(src.getType());
+  if (!srcTy)
+    return;
+
+  size_t rank = srcTy.getRank();
+  if (operands.size() != 2 + 2 * rank)
+    return;
+
+  llvm::SmallVector<int32_t> offsets;
+  llvm::SmallVector<int64_t> shape;
+  for (size_t i = 0; i < rank; ++i) {
+    auto off = extractConstInt(operands[2 + i]);
+    auto dim = extractConstInt(operands[2 + rank + i]);
+    if (!off || !dim)
+      return;
+    offsets.push_back(static_cast<int32_t>(*off));
+    shape.push_back(*dim);
+  }
+
+  auto newType = ttg::MemDescType::get(
+      shape, srcTy.getElementType(), srcTy.getEncoding(),
+      srcTy.getMemorySpace(), srcTy.getMutableMemory(), srcTy.getAllocShape());
+  operands[0] = self.create<ttg::MemDescSubsliceOp>(newType, src,
+                                                    llvm::ArrayRef(offsets));
+}
