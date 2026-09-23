@@ -618,6 +618,7 @@ void utlx::createAsyncLoad(TritonOpBuilder &self,
   if (operands.size() < 4)
     return;
 
+
   mlir::Value src = operands[1];
   mlir::Value result = operands[2];
 
@@ -645,7 +646,11 @@ void utlx::createAsyncLoad(TritonOpBuilder &self,
   auto op = ttg::AsyncCopyGlobalToLocalOp::create(
       self.getBuilder(), self.getLastLoc(), token, src, result, mask, other,
       /*cachePolicy=*/mlir::Attribute(), /*isVolatile=*/false);
-  operands[0] = op.getResult();
+  // NB: op->getResult(0), not op.getResult(). This op has an *operand* named
+  // `result` (the destination memdesc), so the generated getResult() accessor
+  // returns that operand and shadows Operation::getResult() -- which silently
+  // handed the memdesc back to async_load's caller instead of the token.
+  operands[0] = op->getResult(0);
 }
 
 /// utlx_global_scratch_alloc(result_slot, nbytes, alignment) -> ptr
