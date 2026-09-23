@@ -141,10 +141,18 @@ void utlx::createClusterSize1D(TritonOpBuilder &self,
 /// utlx_async_clc_try_cancel(mbarAlloc, clcResAlloc)
 void utlx::createAsyncCLCTryCancel(TritonOpBuilder &self,
                                    std::vector<mlir::Value> &operands) {
-  if (operands.size() < 2)
+  // operands[0] = result slot (this op yields nothing)
+  // operands[1] = mbarrier, operands[2] = CLC response buffer
+  //
+  // Upstream spells this ttng.clc_try_cancel and takes (result, mbarrier), the
+  // reverse of the DSL's argument order. The old code also passed operands[0],
+  // the still-null result slot, as the first operand -- latent only because
+  // the fork-only name never resolved, and an immediate segfault once it did.
+  if (operands.size() < 3)
     return;
-  createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                  "ttng.async_clc_try_cancel", {}, {operands[0], operands[1]});
+  ttng::CLCTryCancelOp::create(self.getBuilder(), self.getLastLoc(),
+                               /*result=*/operands[2],
+                               /*mbarrier=*/operands[1]);
 }
 
 /// utlx_clc_query_cancel(clcResAlloc) -> i32
@@ -739,14 +747,20 @@ void utlx::createAllocClcResponses(TritonOpBuilder &self,
 
   auto *context = self.getBuilder().getContext();
   auto memorySpace = ttg::SharedMemorySpaceAttr::get(context);
-  // CLC responses are 128-bit (i128) entries
-  auto i128Type = self.getBuilder().getIntegerType(128, /*signed=*/false);
+  // A CLC response is 128 bits, but upstream's verifyCLCResultMemdesc requires
+  // the buffer each op sees to be exactly rank 1, shape {2}, element i64 --
+  // not one i128. Allocate {n, 2} x i64 so a local_view of one response drops
+  // the leading dimension and lands on {2} x i64.
+  auto i64Type = self.getBuilder().getIntegerType(64, /*signed=*/false);
 
+  // Keep the encoding rank 1, as createAllocBarriers does for its {n, 1}
+  // buffer: local_view drops the leading dimension and reuses this encoding,
+  // so a rank-2 one would land on a rank-1 memdesc and fail to verify.
   auto cgaLayout = ttg::CGAEncodingAttr::get1CTALayout(context, 1);
   auto encoding =
       ttg::SwizzledSharedEncodingAttr::get(context, 1, 1, 1, {0}, cgaLayout);
 
-  auto memDescType = ttg::MemDescType::get({numResponses}, i128Type, encoding,
+  auto memDescType = ttg::MemDescType::get({numResponses, 2}, i64Type, encoding,
                                            memorySpace, /*mutableMemory=*/true);
 
   operands[0] = self.create<ttg::LocalAllocOp>(memDescType);
@@ -763,13 +777,20 @@ void utlx::createClcQuery(TritonOpBuilder &self,
   auto loc = self.getLastLoc();
   auto i32Ty = builder.getI32Type();
 
-  // First query the cancel status
-  auto *queryOp = createRuntimeOp(builder, loc, "ttng.clc_query_cancel",
-                                  {i32Ty}, {operands[1]});
-  if (!queryOp || queryOp->getNumResults() == 0)
-    return;
-
-  mlir::Value tileId = queryOp->getResult(0);
+  // The fork has a single ttng.clc_query_cancel that yields the tile id, or
+  // -1 when the cancellation did not land. Upstream splits that into three
+  // primitives, so rebuild it: load the response out of shared memory, ask
+  // whether it was canceled, and decode the x coordinate.
+  mlir::Value clcResult =
+      ttng::CLCLoadResultOp::create(builder, loc, operands[1]);
+  mlir::Value isCanceled =
+      ttng::CLCIsCanceledOp::create(builder, loc, clcResult);
+  mlir::Value programId = ttng::CLCGetProgramIdOp::create(
+      builder, loc, clcResult, /*axis=*/0); // 0 = x
+  mlir::Value notCanceled =
+      mlir::arith::ConstantIntOp::create(builder, loc, -1, 32);
+  mlir::Value tileId = mlir::arith::SelectOp::create(builder, loc, isCanceled,
+                                                     programId, notCanceled);
 
   // Get cluster CTA rank
   auto *rankOp = createRuntimeOp(builder, loc, "nvg.cluster_id", {i32Ty}, {});
