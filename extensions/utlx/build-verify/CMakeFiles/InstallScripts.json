@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/robeck/utlx-bench/triton-ext/extensions/utlx/build-verify/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
