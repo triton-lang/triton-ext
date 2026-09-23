@@ -10,6 +10,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/DialectRegistry.h"
+#include <iterator>
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "triton/Tools/PluginUtils.h"
@@ -913,6 +914,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_async_load", utlx::createAsyncLoad},
       {"utlx_global_scratch_alloc", utlx::createGlobalScratchAlloc},
       {"utlx_make_dummy_register_layout", utlx::createMakeDummyRegisterLayout},
+      {"utlx_make_amd_mfma_layout", utlx::createMakeAmdMfmaLayout},
       {"utlx_require_with_layout_carrier",
        utlx::createRequireWithLayoutCarrier},
       {"utlx_alloc_clc_responses", utlx::createAllocClcResponses},
@@ -939,7 +941,15 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       dialects,
       std::size(dialects),
       ops,
+<<<<<<< HEAD
       std::size(ops),
+||||||| parent of 764d029 ([uTLX][WIP] AMD MFMA register layout: amd_mfma_layout, require/release_layout)
+      48, // numOps
+=======
+      std::size(ops), // numOps -- derived, so adding an op cannot silently
+                      // leave it unregistered
+
+>>>>>>> 764d029 ([uTLX][WIP] AMD MFMA register layout: amd_mfma_layout, require/release_layout)
       TRITON_VERSION,
   };
   return &info;

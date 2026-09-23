@@ -85,6 +85,12 @@ def inspect_stages_hook(self=None,
                 pm, options.arch, options.matrix_instr_nonkdim, options.kpack)
             # uTLX: fix MemDesc encodings to match DotOp operand requirements
             passes.plugin.utlx_insert_and_propagate_layout(pm, [])
+            # uTLX: lower tlx.require_layout / tlx.release_layout to
+            # ttg.convert_layout. utlx_insert_and_propagate_layout only rewrites
+            # MemDesc shared encodings, so without this any *register* layout
+            # request (amd_mfma_layout, dot_operand_layout, ...) would survive to
+            # the backend as an unhandled tlx op.
+            passes.plugin.utlx_propagate_layout(pm, [])
 
             passes.ttgpuir.add_remove_layout_conversions(pm)
             amd.passes.ttgpuir.add_optimize_epilogue(pm)
