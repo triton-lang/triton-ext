@@ -83,6 +83,17 @@ def require_tmem_scales_layout(src, _builder=None):
     return src.handle
 
 
+def _mbarrier_preds(builder, barriers):
+    """One predicate per mbarrier.
+
+    The fork accepted an empty list; upstream's printer asserts
+    `barriers.size() == preds.size()`, which aborts while the module is being
+    written out -- well after the op was built, so it looks unrelated. TLX
+    signals every barrier it passes, so they are all true.
+    """
+    return [builder.get_int1(True) for _ in barriers]
+
+
 def _i1_or_true(builder, value):
     """Upstream's tcgen05 builders require real i1 Values.
 
@@ -149,7 +160,8 @@ def async_dot(
         _semantic.builder.create_tcgen05_mma(
             A_handle, B_handle, acc_handle,
             _i1_or_true(_semantic.builder, use_acc_handle),
-            _i1_or_true(_semantic.builder, pred), handles, [], two_ctas, False)
+            _i1_or_true(_semantic.builder, pred), handles,
+            _mbarrier_preds(_semantic.builder, handles), two_ctas, False)
         return tl.tensor(acc_handle, tl.void)
     else:
         # Create NvidiaMma encoding and apply it to acc via combined custom op
@@ -251,7 +263,8 @@ def async_dot_scaled(
     _semantic.builder.create_tcgen05_mma_scaled(
         A_handle, B_handle, acc_handle, A_scale_handle, B_scale_handle, A_type,
         B_type, _i1_or_true(_semantic.builder, use_acc_handle),
-        _i1_or_true(_semantic.builder, pred), bar_handles, [], two_ctas)
+        _i1_or_true(_semantic.builder, pred), bar_handles,
+        _mbarrier_preds(_semantic.builder, bar_handles), two_ctas)
     return tl.tensor(acc_handle, tl.void)
 
 
