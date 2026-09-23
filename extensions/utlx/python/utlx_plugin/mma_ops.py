@@ -83,6 +83,16 @@ def require_tmem_scales_layout(src, _builder=None):
     return src.handle
 
 
+def _i1_or_true(builder, value):
+    """Upstream's tcgen05 builders require real i1 Values.
+
+    The fork accepted None for `pred` and `use_acc` and treated it as
+    unconditional / accumulate. Upstream's bindings type them as `ir.value`, so
+    None raises "incompatible function arguments"; substitute a constant true.
+    """
+    return builder.get_int1(True) if value is None else value
+
+
 @tl.builtin
 def async_dot(
     A,
@@ -136,9 +146,10 @@ def async_dot(
             else:
                 use_acc_handle = _semantic.builder.get_int1(use_acc.value)
         # Use gluon: create_tcgen05_mma(a, b, acc, useAcc, pred, mbarriers, mbarrier_preds, two_ctas, multicast)
-        _semantic.builder.create_tcgen05_mma(A_handle, B_handle, acc_handle,
-                                             use_acc_handle, pred, handles, [],
-                                             two_ctas, False)
+        _semantic.builder.create_tcgen05_mma(
+            A_handle, B_handle, acc_handle,
+            _i1_or_true(_semantic.builder, use_acc_handle),
+            _i1_or_true(_semantic.builder, pred), handles, [], two_ctas, False)
         return tl.tensor(acc_handle, tl.void)
     else:
         # Create NvidiaMma encoding and apply it to acc via combined custom op
@@ -237,11 +248,10 @@ def async_dot_scaled(
         else:
             use_acc_handle = _semantic.builder.get_int1(use_acc.value)
     # Use gluon: create_tcgen05_mma_scaled
-    _semantic.builder.create_tcgen05_mma_scaled(A_handle, B_handle, acc_handle,
-                                                A_scale_handle, B_scale_handle,
-                                                A_type, B_type, use_acc_handle,
-                                                pred, bar_handles, [],
-                                                two_ctas)
+    _semantic.builder.create_tcgen05_mma_scaled(
+        A_handle, B_handle, acc_handle, A_scale_handle, B_scale_handle, A_type,
+        B_type, _i1_or_true(_semantic.builder, use_acc_handle),
+        _i1_or_true(_semantic.builder, pred), bar_handles, [], two_ctas)
     return tl.tensor(acc_handle, tl.void)
 
 
