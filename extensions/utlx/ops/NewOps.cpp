@@ -481,12 +481,57 @@ void utlx::createRequireDotOperandLayout(TritonOpBuilder &self,
   if (!opndType)
     return;
 
-  auto encoding = ttg::DotOperandEncodingAttr::get(context, opIdx, parentEnc,
-                                                   opndType.getElementType());
+  // Optional trailing kWidth operand. AMD MFMA dot operands need it stated
+  // explicitly; the element-type overload only infers it for NVIDIA MMA.
+  mlir::Attribute encoding;
+  std::optional<int64_t> kWidth;
+  if (operands.size() >= 5)
+    kWidth = extractConstInt(operands[4]);
+  if (kWidth && *kWidth > 0)
+    encoding = ttg::DotOperandEncodingAttr::get(
+        context, opIdx, parentEnc, static_cast<unsigned>(*kWidth));
+  else
+    encoding = ttg::DotOperandEncodingAttr::get(context, opIdx, parentEnc,
+                                                opndType.getElementType());
 
   auto newType = mlir::RankedTensorType::get(
       opndType.getShape(), opndType.getElementType(), encoding);
   operands[0] = self.create<tlx::RequireLayoutOp>(newType, opnd);
+}
+
+/// utlx_make_slice_layout(result_slot, parent_carrier, dim)
+///
+/// Builds a SliceEncodingAttr over the parent carrier's encoding and returns a
+/// new carrier holding it. Shape is the parent's with `dim` dropped.
+void utlx::createMakeSliceLayout(TritonOpBuilder &self,
+                                 std::vector<mlir::Value> &operands) {
+  if (operands.size() < 3)
+    return;
+
+  auto parentTy =
+      mlir::dyn_cast<mlir::RankedTensorType>(operands[1].getType());
+  auto dimVal = extractConstInt(operands[2]);
+  if (!parentTy || !parentTy.getEncoding() || !dimVal)
+    return;
+  unsigned dim = static_cast<unsigned>(*dimVal);
+  if (dim >= parentTy.getRank())
+    return;
+
+  auto *context = self.getBuilder().getContext();
+  auto encoding = ttg::SliceEncodingAttr::get(
+      context, dim,
+      mlir::cast<ttg::DistributedEncodingTrait>(parentTy.getEncoding()));
+
+  llvm::SmallVector<int64_t> shape(parentTy.getShape());
+  shape.erase(shape.begin() + dim);
+  auto elemTy = parentTy.getElementType();
+
+  auto tensorType = mlir::RankedTensorType::get(shape, elemTy, encoding);
+  auto nullVal = self.getBuilder().create<mlir::arith::ConstantOp>(
+      self.getLastLoc(),
+      mlir::DenseElementsAttr::get(mlir::RankedTensorType::get(shape, elemTy),
+                                   self.getBuilder().getZeroAttr(elemTy)));
+  operands[0] = self.create<tlx::RequireLayoutOp>(tensorType, nullVal);
 }
 
 /// utlx_require_tensor_memory_layout(result_slot, src, blockM, blockN,

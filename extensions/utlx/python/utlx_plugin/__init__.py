@@ -97,8 +97,14 @@ __all__ = [
     "vote_ballot_sync",
     # layout_ops
     "amd_mfma_layout",
+    "dot_operand_layout",
+    "slice_layout",
+    "swizzled_layout",
     "require_layout",
     "release_layout",
+    "zeros",
+    "buffer_load",
+    "buffer_store",
 ]
 
 # Imported first, ahead of anything that pulls in triton: importing it is the
@@ -152,7 +158,9 @@ from .mem_ops import (
     subslice,
     tmem_copy,
 )
-from .layout_ops import amd_mfma_layout, release_layout, require_layout
+from .layout_ops import (amd_mfma_layout, buffer_load, buffer_store,
+                         dot_operand_layout, release_layout, require_layout,
+                         slice_layout, swizzled_layout, zeros)
 from .mma_ops import async_dot, async_dot_scaled, async_dot_wait, tcgen05_commit
 from .types import (
     async_token,
