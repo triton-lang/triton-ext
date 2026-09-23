@@ -37,19 +37,22 @@ repos:
     hooks:
       - id: ruff
         args: ["--fix", "--exit-non-zero-on-fix"]
+        # Vendored verbatim from sglang; see examples/kda_prefill/README.md.
+        exclude: '^extensions/utlx/examples/kda_prefill/(?!run\.py$)'
 
   - repo: https://github.com/google/yapf
     rev: "v0.43.0"
     hooks:
       - id: yapf
         args: ["-p", "-i"]
+        exclude: '^extensions/utlx/examples/kda_prefill/(?!run\.py$)'
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: "v1.15.0"
     hooks:
       - id: mypy
         additional_dependencies: [types-requests]
-        exclude: '^extensions/utlx/test/'
+        exclude: '^extensions/utlx/(test/|examples/kda_prefill/)'
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v19.1.6
