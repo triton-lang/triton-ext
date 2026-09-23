@@ -199,6 +199,31 @@ import triton.language.extra as _extra
 _sys.modules['triton.language.extra.tlx'] = _sys.modules[__name__]
 _extra.tlx = _sys.modules[__name__]
 
+
+def _adopt_triton_language_module_name():
+    """Report the plugin's public classes as living in this module.
+
+    Upstream's code generator lets a @jit kernel read a module-level global
+    when the value's `__module__` starts with "triton.language" (see
+    `_get_global` in triton/compiler/code_generator.py). On the fork the TLX
+    classes really do live under triton/language/extra/tlx, so kernels can
+    declare TLX objects at module scope -- kda/sm100.py's `_KDA_GATE_LAYOUT =
+    tlx.layout(...)` does exactly that.
+
+    Registering this module under that name above is not enough: the classes
+    still carry their `utlx_plugin.*` definition names, so the same kernels are
+    rejected with "Cannot access global variable". Since this module *is*
+    triton.language.extra.tlx as far as everything else is concerned, say so.
+    """
+    for _name in dir(_sys.modules[__name__]):
+        _obj = getattr(_sys.modules[__name__], _name, None)
+        if isinstance(_obj, type) and getattr(_obj, "__module__",
+                                              "").startswith("utlx_plugin"):
+            _obj.__module__ = 'triton.language.extra.tlx'
+
+
+_adopt_triton_language_module_name()
+
 # Supply the triton.language.extra modules that Meta's fork ships and upstream
 # lacks, so TLX kernels importing them by their core paths resolve. A no-op
 # wherever Triton provides them itself.

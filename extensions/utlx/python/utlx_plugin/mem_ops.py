@@ -579,13 +579,42 @@ def async_load_wait_group(
     return tlx.async_token(None)
 
 
+def _require_register_layout(builder, handle, layout, ty):
+    """Give a just-loaded register tensor an explicit TLX register layout.
+
+    `tlx.layout(...)` lowers to a #ttg.linear attribute (types.layout.to_ir),
+    but nothing used to reach it because local_load took no layout=. The
+    attribute is wrapped in a distributed tensor type and handed to
+    utlx_require_with_layout_carrier, which reads the encoding off the
+    carrier's type -- the same carrier protocol the TMEM path uses.
+    """
+    layout_attr = layout.to_ir(builder,
+                               shape=ty.shape,
+                               element_type=ty.element_ty)
+    carrier_ty = builder.get_distributed_ty(ty.element_ty.to_ir(builder),
+                                            [int(d) for d in ty.shape],
+                                            layout_attr)
+    carrier = builder.create_poison(carrier_ty)
+    required = builder.utlx_require_with_layout_carrier([handle, carrier])
+    # Release straight back to the unencoded type, as the TMEM path does. The
+    # requirement is recorded on the op for the layout passes; leaving the
+    # encoding on the value instead makes it mismatch every unencoded operand
+    # it later meets ("arith.select ... same type").
+    return builder.utlx_release_layout([required])
+
+
 @tl.builtin
 def local_load(
     src: tlx.buffered_tensor,
     token: Optional[tlx.async_token] = None,
+    layout=None,
     _semantic=None,
 ) -> tl.tensor:
-    """Load from SMEM/TMEM buffer into a register tensor."""
+    """Load from SMEM/TMEM buffer into a register tensor.
+
+    `layout` pins the register layout of the result, for kernels that need a
+    specific one rather than whatever the compiler picks.
+    """
     block_type = tl.block_type(src.type.element_ty, src.type.shape)
     storage = src.type.storage
     if storage == tlx.storage_kind.tmem:
@@ -600,12 +629,18 @@ def local_load(
             load_args.append(token.handle)
         load_handle = _semantic.builder.utlx_tmem_load(load_args)
         output = _semantic.builder.utlx_release_layout([load_handle])
+        if layout is not None:
+            output = _require_register_layout(_semantic.builder, output,
+                                              layout, src.type)
         return tl.tensor(output, block_type)
     else:
         args = [src.handle]
         if token is not None and token.handle is not None:
             args.append(token.handle)
         output = _semantic.builder.utlx_local_load(args)
+        if layout is not None:
+            output = _require_register_layout(_semantic.builder, output,
+                                              layout, src.type)
         return tl.tensor(output, block_type)
 
 
@@ -913,8 +948,9 @@ def async_descriptor_store_wait(
 ) -> None:
     """Wait for completion of prior asynchronous TMA store operations."""
     pendings = tl._unwrap_if_constexpr(pendings)
-    # Use gluon: create_async_tma_store_wait(pendings)
-    _semantic.builder.create_async_tma_store_wait(pendings)
+    # Upstream's binding takes a readOnly flag the fork's did not; TLX waits
+    # for the stores to drain so the buffer can be rewritten, not merely read.
+    _semantic.builder.create_async_tma_store_wait(pendings, False)
 
 
 # Monkey-patch __getitem__ for indexing support
