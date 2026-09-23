@@ -75,6 +75,17 @@ def is_hip_cdna2():
         return False
 
 
+def is_hip_cdna4():
+    """gfx950 (MI350): the arch with the MFMA layouts uTLX exposes for AMD."""
+    if not is_hip():
+        return False
+    try:
+        return triton.runtime.driver.active.get_current_target().arch in (
+            "gfx950", )
+    except Exception:
+        return False
+
+
 def get_current_target():
     return triton.runtime.driver.active.get_current_target()
 
