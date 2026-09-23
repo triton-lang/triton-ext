@@ -319,6 +319,18 @@ def remote_view(
         local_allocated_buffer,
         tlx.mbarrier), "remote_view only supports barrier for now"
     assert local_allocated_buffer.type.storage == storage_kind.smem, "remote_view requires local smem as input"
+    # ttng.map_to_remote_buffer is fork-only; upstream has no op for
+    # mapa.shared::cluster and no way to name another CTA's shared memory. The
+    # plugin op therefore cannot build anything and used to leave its result
+    # slot null, which surfaced far away as a null operand on whatever consumed
+    # the "remote" barrier. Refuse here instead, where the reason is legible.
+    #
+    # This is what makes every NUM_CTAS == 2 configuration unavailable under
+    # uTLX. Closing it needs a core Triton op, not a plugin.
+    raise NotImplementedError(
+        "tlx.remote_view needs ttng.map_to_remote_buffer (mapa.shared::cluster),"
+        " which upstream Triton does not have. Multi-CTA (NUM_CTAS=2) kernels"
+        " cannot run under triton-utlx.")
     remote_cta_rank_handle = _get_remote_cta_rank_handle(
         remote_cta_rank, _semantic)
     remote_buf_handle = _semantic.builder.utlx_map_to_remote_buffer(
@@ -846,9 +858,15 @@ def async_descriptor_load(
     cache_modifier: str = "",
     eviction_policy: str = "",
     multicast_targets: Optional[list] = None,
+    two_ctas=False,
     _semantic=None,
 ) -> None:
-    """Asynchronously load a tensor tile from global memory via TMA."""
+    """Asynchronously load a tensor tile from global memory via TMA.
+
+    `two_ctas` requests the 2-CTA multicast form. Upstream spells that as the
+    copy's `multicast` flag and ands it with whether the destination actually
+    has a CGA broadcast, so it degrades to a plain copy on one CTA.
+    """
     from .mma_ops import require_nv_mma_shared_layout
     if multicast_targets is None:
         multicast_targets = []
@@ -865,7 +883,8 @@ def async_descriptor_load(
         pred_handle = _semantic.builder.get_int1(True)
     else:
         pred_handle = pred.handle
-    multicast = len(multicast_targets) > 0
+    multicast = (len(multicast_targets) > 0
+                 or bool(tl._unwrap_if_constexpr(two_ctas)))
     # Use gluon: create_async_tma_copy_global_to_local(desc, coord, barrier, result, pred, multicast, offsets)
     _semantic.builder.create_async_tma_copy_global_to_local(
         desc.handle, offsets, barrier.handle, result_handle, pred_handle,
