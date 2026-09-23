@@ -787,6 +787,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_make_dummy_register_layout", utlx::createMakeDummyRegisterLayout},
       {"utlx_make_amd_mfma_layout", utlx::createMakeAmdMfmaLayout},
       {"utlx_make_slice_layout", utlx::createMakeSliceLayout},
+      {"utlx_local_slice_typed", utlx::createLocalSlice},
       {"utlx_require_with_layout_carrier",
        utlx::createRequireWithLayoutCarrier},
       {"utlx_alloc_clc_responses", utlx::createAllocClcResponses},

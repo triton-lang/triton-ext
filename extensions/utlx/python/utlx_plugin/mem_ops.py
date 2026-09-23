@@ -365,8 +365,18 @@ def local_slice(
         assert shape[0] == buffer.type.shape[0]
         return subslice(buffer, offset[1], shape[1], _semantic=_semantic)
     else:
-        slice_handle = _semantic.builder.create_memdesc_subslice(
-            buffer.handle, offset, shape)
+        # Upstream Triton's create_memdesc_subslice takes (result_type, src,
+        # offsets) and exposes no way to build a MemDescType from Python, so
+        # use the plugin op that computes the result type C++-side. Fall back to
+        # the fork's (src, offsets, shape) binding where that op is absent.
+        b = _semantic.builder
+        if hasattr(b, "utlx_local_slice_typed"):
+            ints = [b.get_int32(int(v)) for v in offset]
+            ints += [b.get_int32(int(v)) for v in shape]
+            slice_handle = b.utlx_local_slice_typed([buffer.handle] + ints)
+        else:
+            slice_handle = b.create_memdesc_subslice(buffer.handle, offset,
+                                                     shape)
         return tlx.buffered_tensor(
             slice_handle,
             buffer.type.scalar,
