@@ -46,6 +46,7 @@ void createRequireTensorMemoryScalesLayout(TritonOpBuilder &,
 // carries it; consumed by utlx_require_with_layout_carrier and
 // utlx_require_dot_operand_layout)
 void createMakeAmdMfmaLayout(TritonOpBuilder &, std::vector<mlir::Value> &);
+void createMakeSliceLayout(TritonOpBuilder &, std::vector<mlir::Value> &);
 
 // Memory ops
 void createAsyncLoad(TritonOpBuilder &, std::vector<mlir::Value> &);
