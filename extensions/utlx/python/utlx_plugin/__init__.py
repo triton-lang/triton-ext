@@ -203,6 +203,7 @@ from .utility import (
 # Register this module as triton.language.extra.tlx so that
 # `import triton.language.extra.tlx` works without a filesystem symlink.
 # This must happen before importing mxfp8_utils which does that import.
+import os as _os
 import sys as _sys
 import triton.language.extra as _extra
 
@@ -213,6 +214,21 @@ from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
 from .warp_ops import vote_ballot_sync  # noqa: E402
 
 from . import custom_stages  # noqa: E402
+from .layout_ops import (install_binop_shim,  # noqa: E402
+                         install_where_shim,
+                         install_cast_shim,
+                         install_encoding_preserving_tensor)
+
+install_cast_shim()
+install_binop_shim()
+install_where_shim()
+
+# NOT installed by default: it fixes jit-boundary encoding loss but is not
+# sufficient on its own (casts build their result IR type before the tensor
+# exists) and it makes encoded values reach tt.store, which then fails to
+# verify. Opt in with UTLX_ENCODING_SHIM=1 while working on propagation.
+if _os.environ.get("UTLX_ENCODING_SHIM") == "1":
+    install_encoding_preserving_tensor()
 
 from triton import knobs  # noqa: E402
 
