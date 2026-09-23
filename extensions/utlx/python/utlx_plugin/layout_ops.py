@@ -136,7 +136,13 @@ def require_layout(src, layout, pin=False, _semantic=None):
 
 @tl.builtin
 def release_layout(src, _semantic=None):
-    """Drop an explicit layout, returning ``src`` with a default encoding."""
+    """Drop an explicit layout, returning ``src`` with a default encoding.
+
+    Passes through anything that is not an IR tensor (constexprs, scalars) so it
+    can be applied unconditionally in helpers that accept either.
+    """
+    if not isinstance(src, tl.tensor):
+        return src
     handle = _semantic.builder.utlx_release_layout([src.handle])
     # Deliberately a plain block_type: if src came from require_layout its type
     # is a carrier that would lower straight back to the encoded type, which is
@@ -201,14 +207,31 @@ def swizzled_layout(vector_size,
 
 @jit
 def buffer_load(base, offsets, mask=None, other=None):
-    """Load ``base[offsets]``; the AMD backend lowers this to a buffer load."""
-    return tlang.load(base + offsets, mask=mask, other=other)
+    """Load ``base[offsets]``; the AMD backend lowers this to a buffer load.
+
+    Offsets and mask are released first. A pointer tensor cannot carry a
+    register layout, and tt.load requires ptr/mask/other to agree, so an encoded
+    index expression reaching here fails to verify. release_layout is a no-op on
+    an unencoded value.
+    """
+    if mask is None:
+        return tlang.load(base + release_layout(offsets))
+    return tlang.load(base + release_layout(offsets),
+                      mask=release_layout(mask), other=other)
 
 
 @jit
 def buffer_store(value, base, offsets, mask=None):
-    """Store ``value`` to ``base[offsets]`` as a buffer store."""
-    tlang.store(base + offsets, value, mask=mask)
+    """Store ``value`` to ``base[offsets]`` as a buffer store.
+
+    Released for the same reason as buffer_load: tt.store requires the value and
+    pointer types to agree and a pointer tensor carries no register layout.
+    """
+    if mask is None:
+        tlang.store(base + release_layout(offsets), release_layout(value))
+    else:
+        tlang.store(base + release_layout(offsets), release_layout(value),
+                    mask=release_layout(mask))
 
 
 def install_encoding_preserving_tensor():
