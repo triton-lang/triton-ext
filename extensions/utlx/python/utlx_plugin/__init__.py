@@ -214,16 +214,13 @@ from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
 from .warp_ops import vote_ballot_sync  # noqa: E402
 
 from . import custom_stages  # noqa: E402
-from .compiler.semantic import (  # noqa: E402
-    install_encoding_preserving_tensor, install_semantic)
+from .compiler.semantic import install_semantic  # noqa: E402
 
-# Layout propagation: a TritonSemantic subclass for the ops, plus the one thing
-# that cannot be a subclass (the type given to a freshly built tl.tensor).
-# Both are no-ops for values without an explicit layout. UTLX_NO_LAYOUT_PROPAGATION=1
-# opts out.
+# Layout propagation, entirely inside a TritonSemantic subclass -- the ops as
+# overrides and the result type via make_tensor. No monkeypatching. No-ops for
+# values without an explicit layout. UTLX_NO_LAYOUT_PROPAGATION=1 opts out.
 if _os.environ.get("UTLX_NO_LAYOUT_PROPAGATION") != "1":
     install_semantic()
-    install_encoding_preserving_tensor()
 
 from triton import knobs  # noqa: E402
 

@@ -21,6 +21,7 @@ from typing import Generic, TypeVar
 
 import triton.language.core as tl
 from triton.language import semantic as _semantic_mod
+
 # Imported directly, not as `_semantic_mod.TritonSemantic`: mypy rejects a
 # module attribute as a base class ("not valid as a type"). This also pins the
 # base to the original class, which is what we want -- `_semantic_mod` is only
@@ -36,6 +37,35 @@ def _has_layout(v):
     return isinstance(getattr(v, "type", None), _carrier_type)
 
 
+def _promote(handle, type):
+    """Re-type a frontend ``block_type`` from the encoding its IR value carries.
+
+    Triton types results from shape and dtype alone, so an op whose result type
+    is inferred in C++ (``tl.dot``, comparisons, reductions) leaves an encoded IR
+    value behind a plain ``block_type``. That only bites when the frontend type
+    is turned back into IR -- a jit argument or return, or a cast -- where the
+    encoding is silently dropped.
+    """
+    if not isinstance(type, tl.block_type) or isinstance(type, _carrier_type):
+        return type
+    try:
+        ir_ty = handle.get_type()
+    except AttributeError:
+        return type  # not an ir.value (constexpr placeholder, etc.)
+    # Encoded tensor types print as `tensor<...xT, #enc>`.
+    if "#" not in str(ir_ty):
+        return type
+    return _carrier_type(type.scalar, type.shape, ir_ty)
+
+
+#: Whether this Triton routes result construction through an overridable
+#: factory. Without it the same promotion has to be patched onto tl.tensor:
+#: the `tensor` attribute is not usable for this because `to_tensor` also tests
+#: it with `isinstance`, so overriding it rejects plain tl.tensor values built
+#: in language/math.py, extensions and user code.
+HAS_MAKE_TENSOR = hasattr(_BaseSemantic, "make_tensor")
+
+
 class UTLXSemantic(_BaseSemantic[_TensorTy], Generic[_TensorTy]):
     """TritonSemantic that keeps explicit register layouts consistent.
 
@@ -43,6 +73,12 @@ class UTLXSemantic(_BaseSemantic[_TensorTy], Generic[_TensorTy]):
     ``TritonSemantic[TensorTy]``, so whatever the name is bound to must stay
     subscriptable.
     """
+
+    if HAS_MAKE_TENSOR:
+
+        def make_tensor(self, handle, type):
+            """Every result the semantic builds passes through here."""
+            return super().make_tensor(handle, _promote(handle, type))
 
     # -- casts --------------------------------------------------------------
 
@@ -125,6 +161,23 @@ class UTLXSemantic(_BaseSemantic[_TensorTy], Generic[_TensorTy]):
                              self._drop_layout(mask), *args, **kwargs)
 
 
+def _install_tensor_patch():
+    """Fallback for a Triton without the make_tensor hook.
+
+    Patches ``tl.tensor.__init__`` to do what the override would. Idempotent.
+    Delete this once the oldest supported Triton has the hook.
+    """
+    if getattr(tl.tensor, "_utlx_encoding_shim", False):
+        return
+    orig_init = tl.tensor.__init__
+
+    def __init__(self, handle, type):
+        orig_init(self, handle, _promote(handle, type))
+
+    tl.tensor.__init__ = __init__
+    tl.tensor._utlx_encoding_shim = True
+
+
 def install_semantic():
     """Make uTLX's semantic the one the code generator builds. Idempotent.
 
@@ -142,39 +195,8 @@ def install_semantic():
         pass  # Triton built without gluon; nothing to pin
     UTLXSemantic._utlx_semantic = True
     _semantic_mod.TritonSemantic = UTLXSemantic
+    if not HAS_MAKE_TENSOR:
+        _install_tensor_patch()
 
 
-def install_encoding_preserving_tensor():
-    """Make frontend tensor types lower back to their actual IR type.
-
-    Unlike the semantic overrides above this has to be a patch: ``tl.tensor`` is
-    constructed directly in a hundred places inside ``TritonSemantic``, and
-    Triton exposes no hook for the type a result is given. Without it, ops whose
-    result type is inferred in C++ (``tl.dot``, comparisons, reductions) leave an
-    encoded IR value behind a plain ``block_type``, and the layout is lost at the
-    next boundary. Idempotent.
-    """
-    if getattr(tl.tensor, "_utlx_encoding_shim", False):
-        return
-    orig_init = tl.tensor.__init__
-
-    def __init__(self, handle, type):
-        orig_init(self, handle, type)
-        if not isinstance(type, tl.block_type) or isinstance(
-                type, _carrier_type):
-            return
-        try:
-            ir_ty = handle.get_type()
-        except AttributeError:
-            return  # not an ir.value (constexpr placeholder, etc.)
-        # Encoded tensor types print as `tensor<...xT, #enc>`.
-        if "#" in str(ir_ty):
-            self.type = _carrier_type(type.scalar, type.shape, ir_ty)
-
-    tl.tensor.__init__ = __init__
-    tl.tensor._utlx_encoding_shim = True
-
-
-__all__ = [
-    "UTLXSemantic", "install_encoding_preserving_tensor", "install_semantic"
-]
+__all__ = ["UTLXSemantic", "install_semantic"]
