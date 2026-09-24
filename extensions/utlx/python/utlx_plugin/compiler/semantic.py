@@ -21,10 +21,14 @@ from typing import Generic, TypeVar
 
 import triton.language.core as tl
 from triton.language import semantic as _semantic_mod
+# Imported directly, not as `_semantic_mod.TritonSemantic`: mypy rejects a
+# module attribute as a base class ("not valid as a type"). This also pins the
+# base to the original class, which is what we want -- `_semantic_mod` is only
+# used for the rebind in install_semantic().
+from triton.language.semantic import TritonSemantic as _BaseSemantic
 
 from ..layout_ops import _carrier_type, _require
 
-_BaseSemantic = _semantic_mod.TritonSemantic
 _TensorTy = TypeVar("_TensorTy")
 
 
@@ -172,7 +176,5 @@ def install_encoding_preserving_tensor():
 
 
 __all__ = [
-    "UTLXSemantic",
-    "install_encoding_preserving_tensor",
-    "install_semantic"
+    "UTLXSemantic", "install_encoding_preserving_tensor", "install_semantic"
 ]
