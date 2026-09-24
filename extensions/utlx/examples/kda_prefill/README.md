@@ -14,18 +14,20 @@ without any regard for what uTLX happens to support.
 The six `.py` files below are vendored **byte-for-byte** from sglang, Apache
 License 2.0:
 
-    repo    https://github.com/RolaoDenthu/sglang
-    branch  tlx/kimi-k3-kda
-    commit  66e3aa977d757aba9e5263d57e5aa98dfe9b43c7
-    path    python/sglang/kernels/ops/kimi_k3/tlx/
+```text
+repo    https://github.com/RolaoDenthu/sglang
+branch  tlx/kimi-k3-kda
+commit  66e3aa977d757aba9e5263d57e5aa98dfe9b43c7
+path    python/sglang/kernels/ops/kimi_k3/tlx/
+```
 
-| file | |
-|---|---|
-| `kimi_k3_kda_prefill.py` | the kernel under test |
-| `kimi_k3_kda_prepare.py` | builds normalized Q/K, log decays, beta |
-| `kimi_k3_kda_decode.py`  | recurrent decode, imported by `__init__` |
-| `_shapes.py`             | the shape sets upstream benchmarks sweep |
-| `check.py`               | upstream's own availability probe |
+| file                     |                                                    |
+| ------------------------ | -------------------------------------------------- |
+| `kimi_k3_kda_prefill.py` | the kernel under test                              |
+| `kimi_k3_kda_prepare.py` | builds normalized Q/K, log decays, beta            |
+| `kimi_k3_kda_decode.py`  | recurrent decode, imported by `__init__`           |
+| `_shapes.py`             | the shape sets upstream benchmarks sweep           |
+| `check.py`               | upstream's own availability probe                  |
 | `__init__.py`            | `is_prefill_available()` / `missing_prefill_ops()` |
 
 They are **not** modified — that is the point. `run.py` and this README are the
@@ -41,10 +43,10 @@ python run.py            # correctness against a reference
 python run.py --sweep    # GFX950_PREFILL_FOCUS shapes, with timings
 ```
 
-Expected, on one MI350 die (the 4096-token shapes are launch-bound and
-vary run to run; the long-context ones are stable):
+Expected, on one MI350 die (the 4096-token shapes are launch-bound and vary run
+to run; the long-context ones are stable):
 
-```
+```text
 T= 256 H=  4 seqs=1 even    out_rel=5.11e-03  state_rel=3.11e-03
 T= 256 H=  4 seqs=2 even    out_rel=4.62e-03  state_rel=5.08e-03
 T= 512 H=  4 seqs=4 even    out_rel=4.79e-03  state_rel=4.62e-03
