@@ -15,6 +15,9 @@
 /support/ simon@kernelize.ai @abrown
 /testing/ simon@kernelize.ai @abrown
 
+# extensions
+/extensions/ @crobeck @plotfi
+
 # Pass extensions
 /pass/ simon@kernelize.ai @abrown
 
