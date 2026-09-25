@@ -196,6 +196,124 @@ import triton.language.extra as _extra
 _sys.modules['triton.language.extra.tlx'] = _sys.modules[__name__]
 _extra.tlx = _sys.modules[__name__]
 
+# Multi-CTA (a 2-CTA cluster sharing one MMA) needs tlx.remote_view, which
+# lowers to ttng.map_to_remote_buffer -- see the refusal in mem_ops. Meta's TLX
+# does not publish this flag, so a consumer should read it as True when absent.
+SUPPORTS_MULTI_CTA = False
+
+
+def _install_tensor_descriptor_layout_patch():
+    """Give tt.tensordesc types the NVMMA layout TLX's TMA copies require.
+
+    Plain Triton creates descriptor types with no sharedLayout and fills it in
+    much later, in the optimize-descriptor-encoding pass. That is fine for
+    upstream, whose TMA copies are created in TTGIR. TLX builds its copies
+    while generating TTIR, so ttng.async_tma_copy_global_to_local is verified
+    long before that pass ever runs and rejects the descriptor with
+    "TMA descriptor layout must match shared layout ... got <<NULL ATTRIBUTE>>".
+
+    Emit the layout up front instead. The default NVMMA encoding for the block
+    shape and element type is what TLX's own SMEM buffers get
+    (nv_mma_shared_layout_encoding.make_default, via require_nv_mma_shared_layout),
+    so descriptor and destination match by construction -- and it is the same
+    encoding optimize-descriptor-encoding would have chosen anyway.
+    """
+    from triton.language import core as _core
+
+    base = _core.tensor_descriptor_base_type
+    if getattr(base, '_utlx_descriptor_layout_patched', False):
+        return
+    _orig_flatten_ir_types = base._flatten_ir_types
+
+    def _flatten_ir_types(self, builder, out):
+        # Only on the plugin's builder, and only for the 2-D+ tiles NVMMA
+        # describes; anything else keeps the unencoded type.
+        make_layout_ty = getattr(builder, 'get_tensor_descriptor_layout_type',
+                                 None)
+        block_ty = self.block_type
+        shape = [int(d) for d in block_ty.shape]
+        if make_layout_ty is None or len(shape) < 2:
+            return _orig_flatten_ir_types(self, builder, out)
+
+        from .types import nv_mma_shared_layout_encoding
+        layout = nv_mma_shared_layout_encoding.make_default(
+            shape, block_ty.element_ty)
+        out.append(
+            make_layout_ty(block_ty.to_ir(builder),
+                           block_ty.element_ty.is_int_signed(),
+                           layout.to_ir(builder)))
+
+    base._flatten_ir_types = _flatten_ir_types
+    base._utlx_descriptor_layout_patched = True
+
+
+_install_tensor_descriptor_layout_patch()
+
+
+def _install_make_tensor_descriptor_layout_patch():
+    """Same fix as above, for descriptors built inside the kernel.
+
+    `tl.make_tensor_descriptor` goes through TritonSemantic rather than a type's
+    _flatten_ir_types, and tt.MakeTensorDescOp's own builder infers a result
+    type with no sharedLayout. Gluon binds an overload of
+    create_make_tensor_descriptor that takes the result type explicitly, so
+    shadow the builder method for the duration of the call: upstream keeps
+    doing all of its own validation, only the op construction changes.
+    """
+    from triton.language import core as _core
+    from triton.language.semantic import TritonSemantic
+
+    if getattr(TritonSemantic, '_utlx_descriptor_layout_patched', False):
+        return
+    _orig_make = TritonSemantic.make_tensor_descriptor
+
+    def make_tensor_descriptor(self,
+                               base,
+                               shape,
+                               strides,
+                               block_shape,
+                               padding_option="zero"):
+        builder = self.builder
+        make_layout_ty = getattr(builder, 'get_tensor_descriptor_layout_type',
+                                 None)
+        block = list(_core._unwrap_shape(block_shape))
+        if make_layout_ty is None or len(block) < 2:
+            return _orig_make(self, base, shape, strides, block_shape,
+                              padding_option)
+
+        from .types import nv_mma_shared_layout_encoding
+        element_ty = base.type.element_ty
+        layout = nv_mma_shared_layout_encoding.make_default(block, element_ty)
+        result_ty = make_layout_ty(
+            _core.block_type(element_ty, block).to_ir(builder),
+            element_ty.is_int_signed(), layout.to_ir(builder))
+
+        # _make_tlx_builder restores the ir.builder implementation of every
+        # method gluon overrides, so builder.create_make_tensor_descriptor is
+        # the base one and the result-type overload is not reachable through
+        # the instance. Call gluon's unbound.
+        from triton._C.libtriton.gluon_ir import GluonOpBuilder
+
+        def _create_with_layout(base_handle, shape_handles, stride_handles,
+                                tensor_shape, is_signed, padding):
+            # Gluon's overload: (resultTy, base, shape, strides, padding).
+            return GluonOpBuilder.create_make_tensor_descriptor(
+                builder, result_ty, base_handle, shape_handles, stride_handles,
+                padding)
+
+        builder.create_make_tensor_descriptor = _create_with_layout
+        try:
+            return _orig_make(self, base, shape, strides, block_shape,
+                              padding_option)
+        finally:
+            del builder.create_make_tensor_descriptor
+
+    TritonSemantic.make_tensor_descriptor = make_tensor_descriptor
+    TritonSemantic._utlx_descriptor_layout_patched = True
+
+
+_install_make_tensor_descriptor_layout_patch()
+
 from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
 from .warp_ops import vote_ballot_sync  # noqa: E402
 
@@ -212,11 +330,57 @@ def _register_compiler_dispatch():
         from triton.compiler.code_generator import WITH_DISPATCH
         from .compiler.dispatch import TLX_WITH_DISPATCH
         WITH_DISPATCH.update(TLX_WITH_DISPATCH)
+        return True
     except (ImportError, AttributeError):
-        pass
+        return False
 
 
-_register_compiler_dispatch()
+def _patch_visit_with():
+    """Dispatch `with tlx.async_task(s)(...)` to TLX codegen on upstream Triton.
+
+    Meta's fork rewrites ``CodeGenerator.visit_With`` to look the context class
+    up in a ``WITH_DISPATCH`` registry and hand the *AST node* to the handler.
+    Upstream has no such registry: it instantiates every context manager as
+    ``fn(*args, _semantic=..., **kws)`` and then runs ``__enter__`` / body /
+    ``__exit__``. That protocol cannot express warp specialization, which has to
+    split the body across the regions of a ``ttg.warp_specialize`` op, so
+    ``visit_withAsyncTasks`` needs the unvisited statements.
+
+    Without this the failure is two-layered: constructing ``async_tasks``
+    raises on the unexpected ``_semantic`` keyword, and had it not, the body
+    would be emitted inline with no warp specialization at all.
+
+    Wrap ``visit_With`` so a TLX context manager reaches its AST-level handler
+    and every other `with` keeps upstream behaviour.
+    """
+    import ast
+
+    import triton.compiler.code_generator as _cg
+
+    if getattr(_cg.CodeGenerator, "_utlx_visit_with", False):
+        return
+
+    from .compiler.dispatch import TLX_WITH_DISPATCH
+    _orig_visit_With = _cg.CodeGenerator.visit_With
+
+    def _visit_With(self, node):
+        # Only a single-item `with` can be a TLX region; anything else (and any
+        # non-call context expression) is upstream's to handle.
+        if len(node.items) == 1:
+            context = node.items[0].context_expr
+            if isinstance(context, ast.Call):
+                handler = TLX_WITH_DISPATCH.get(self.visit(context.func))
+                if handler:
+                    return handler(self, node)
+        return _orig_visit_With(self, node)
+
+    _cg.CodeGenerator.visit_With = _visit_With
+    _cg.CodeGenerator._utlx_visit_with = True
+
+
+# Meta's fork owns visit_With, so only patch a Triton that has no registry.
+if not _register_compiler_dispatch():
+    _patch_visit_with()
 
 
 def _make_tlx_op_builder():
@@ -262,6 +426,14 @@ def _make_tlx_op_builder():
             return _bm(self, *args, **kwargs)
 
         namespace[name] = _delegate
+
+    # Stock Triton has none of the fork's make_*_encoding_attr factories, so
+    # every tlx layout encoding's to_ir() would fail. Rebuild them on the
+    # upstream get_*_layout getters.
+    from . import layout_compat
+    for name, fn in layout_compat.FACTORIES.items():
+        if not hasattr(gluon, name):
+            namespace[name] = fn
 
     return type("TLXOpBuilder", (gluon, ), namespace)
 
@@ -327,3 +499,11 @@ PLUGIN_DIR = _compat.PLUGIN_DIR
 PLUGIN_LIBRARY = _compat.PLUGIN_LIBRARY
 _compat.register_plugin(PLUGIN_LIBRARY)
 _compat.install_semantic_helpers()
+
+# Accept TLX's ctas_per_cga launch option, converting it to the num_ctas
+# spelling upstream understands. Patches only Triton's Config and launch path,
+# so it is inert on a fork that already supports the option -- see
+# _ctas_per_cga for why a straight port is not possible.
+from . import _ctas_per_cga as _utlx_ctas_per_cga  # noqa: E402
+
+_utlx_ctas_per_cga.install()
