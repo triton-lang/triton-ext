@@ -2,6 +2,8 @@
 
 import triton.language.core as tl
 
+from ._compat import checked_handle
+
 
 @tl.builtin
 def vote_ballot_sync(
@@ -19,8 +21,9 @@ def vote_ballot_sync(
         mask_val = mask
 
     mask_handle = _semantic.builder.get_int32(mask_val)
-    result = _semantic.builder.utlx_vote_ballot_sync(
-        [mask_handle, pred.handle])
+    result = checked_handle(
+        _semantic.builder.utlx_vote_ballot_sync([mask_handle, pred.handle]),
+        "vote_ballot_sync")
 
     if pred.type.is_block():
         shape = [s.value if hasattr(s, "value") else s for s in pred.shape]

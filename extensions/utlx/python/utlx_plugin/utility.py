@@ -6,6 +6,8 @@ import sys
 
 import triton.language.core as tl
 
+from ._compat import checked_handle
+
 
 def ensure_plugin_on_path():
     """Add the uTLX plugin python directory to sys.path."""
@@ -34,12 +36,16 @@ def cuda_parse_arch(arch):
 
 @tl.builtin
 def cluster_cta_rank(_semantic=None):
-    return tl.tensor(_semantic.builder.utlx_cluster_cta_rank([]), tl.int32)
+    return tl.tensor(
+        checked_handle(_semantic.builder.utlx_cluster_cta_rank([]),
+                       "cluster_cta_rank"), tl.int32)
 
 
 @tl.builtin
 def cluster_size_1d(_semantic=None):
-    return tl.tensor(_semantic.builder.utlx_cluster_size_1d([]), tl.int32)
+    return tl.tensor(
+        checked_handle(_semantic.builder.utlx_cluster_size_1d([]),
+                       "cluster_size_1d"), tl.int32)
 
 
 @tl.builtin
@@ -107,7 +113,9 @@ def get_fp8_format_name(dtype: tl.dtype, _semantic=None) -> tl.constexpr:
 
 @tl.builtin
 def clock64(_semantic=None):
-    return tl.tensor(_semantic.builder.utlx_clock64([]), tl.int64)
+    return tl.tensor(
+        checked_handle(_semantic.builder.utlx_clock64([]), "clock64"),
+        tl.int64)
 
 
 @tl.builtin
@@ -150,4 +158,4 @@ def stoch_round(
         rand_bits.handle,
         _semantic.builder.get_int32(2)
     ])
-    return tl.tensor(dst, result_ty)
+    return tl.tensor(checked_handle(dst, "stoch_round"), result_ty)
