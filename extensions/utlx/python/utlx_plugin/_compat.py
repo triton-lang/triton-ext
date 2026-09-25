@@ -82,6 +82,26 @@ def install_semantic_helpers():
         TritonSemantic._prepare_legacy_load = _prepare_legacy_load
 
 
+def checked_handle(handle, op):
+    """Reject the null handle a uTLX op leaves behind when it declines.
+
+    Several uTLX ops are built by runtime name lookup so the plugin can load on
+    an unpatched Triton (see ``ops/NewOps.cpp``). When the MLIR op they need is
+    not registered -- it only exists in Meta's TLX fork -- the op cannot report
+    that back through the plugin op table, and leaves its result slot null.
+    Triton hands the null straight back as an ``ir.value``, and the first pass
+    or builder call to dereference it takes the process down with it, far from
+    the op that declined. ``Value.id()`` reads the impl pointer without
+    dereferencing, so it is the one safe thing to ask a null handle.
+    """
+    if handle.id() == 0:
+        raise RuntimeError(
+            f"uTLX op '{op}' is not available on Triton {_triton_version()}: "
+            f"it lowers to an MLIR op this build does not register. The "
+            f"preceding 'uTLX: ... is not registered' error names the op.")
+    return handle
+
+
 def _bind_unprefixed(namespace, prefix):
     """Bind ``utlx_<x>`` for every ``<prefix>utlx_<x>`` symbol in *namespace*."""
     for name in dir(namespace):

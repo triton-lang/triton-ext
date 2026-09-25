@@ -3,6 +3,7 @@
 import triton.language.core as tl
 
 from . import types as tlx
+from ._compat import checked_handle
 from .mem_ops import local_view
 from .barrier import alloc_barriers, barrier_expect_bytes, barrier_wait, barrier_arrive
 
@@ -62,7 +63,8 @@ def clc_producer(context,
     response = local_view(context._clc_responses, k, _semantic=_semantic)
 
     if multi_ctas:
-        cta_rank = _semantic.builder.utlx_cluster_cta_rank([])
+        cta_rank = checked_handle(_semantic.builder.utlx_cluster_cta_rank([]),
+                                  "cluster_cta_rank")
         zero = _semantic.builder.get_int32(0)
         pred_cta0_handle = _semantic.builder.create_icmpEQ(cta_rank, zero)
         pred_cta0 = tl.tensor(pred_cta0_handle, tl.int1)

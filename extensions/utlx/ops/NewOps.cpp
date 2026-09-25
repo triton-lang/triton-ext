@@ -34,8 +34,14 @@ createRuntimeOp(mlir::OpBuilder &builder, mlir::Location loc,
   auto *ctx = builder.getContext();
   auto registeredOp = mlir::RegisteredOperationName::lookup(opName, ctx);
   if (!registeredOp) {
-    llvm::errs() << "utlx: op '" << opName
-                 << "' not registered in this Triton build.\n";
+    // Report against the kernel line rather than to bare stderr, so the note
+    // names the statement that asked for the op. The plugin is built
+    // -fno-exceptions and there is no failure channel back through the op
+    // table, so this cannot stop codegen on its own: ops that return a value
+    // leave their result slot null, which `_compat.checked_handle` turns into
+    // a Python error at the call site.
+    mlir::emitError(loc) << "uTLX: '" << opName
+                         << "' is not registered in this Triton build";
     return nullptr;
   }
   mlir::OperationState state(loc, *registeredOp);
@@ -93,10 +99,11 @@ void utlx::createAsyncStore(TritonOpBuilder &self,
 }
 
 /// utlx_fence(scope_str_as_i32_constant)
-/// scope is passed as an i32 constant: 0="gpu", 1="sys"
+/// operands[0] = result slot (unused, void op)
+/// operands[1] = scope, as an i32 constant: 0="gpu", 1="sys"
 void utlx::createFence(TritonOpBuilder &self,
                        std::vector<mlir::Value> &operands) {
-  if (operands.size() < 1)
+  if (operands.size() < 2)
     return;
   auto &builder = self.getBuilder();
   auto loc = self.getLastLoc();
@@ -104,7 +111,7 @@ void utlx::createFence(TritonOpBuilder &self,
   // Decode scope from i32 constant
   llvm::StringRef scope = "gpu";
   if (auto constOp = mlir::dyn_cast_or_null<mlir::arith::ConstantIntOp>(
-          operands[0].getDefiningOp())) {
+          operands[1].getDefiningOp())) {
     if (constOp.value() == 1)
       scope = "sys";
   }

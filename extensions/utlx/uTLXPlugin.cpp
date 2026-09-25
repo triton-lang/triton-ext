@@ -15,6 +15,8 @@
 #include "triton/Tools/PluginUtils.h"
 #include "triton/Version.h"
 
+#include <iterator>
+
 #ifndef TRITON_EXT_VERSION
 #define TRITON_EXT_VERSION "0.0.0"
 #endif
@@ -181,6 +183,129 @@ static void createLocalView(TritonOpBuilder &self,
 
   operands[0] =
       self.create<ttg::MemDescIndexOp>(memDescType, localAlloc, bufferIdx);
+}
+
+// --- utlx_tmem_subslice: Subslice a TMEM allocation along the last dim ---
+//
+// Upstream's create_tmem_subslice binding takes a caller-computed result type;
+// the fork's took (memdesc, offset, size) and derived it. Deriving it here
+// rather than in Python keeps the source's encoding, memory space, mutability
+// and alloc_shape exactly, which a Python-side reconstruction would have to
+// guess at -- TMEMSubSliceOp's own builder does the same cloneWith.
+static void createTMEMSubSlice(TritonOpBuilder &self,
+                               std::vector<mlir::Value> &operands) {
+  // operands[0] = result slot
+  // operands[1] = source memdesc
+  // operands[2] = offset, operands[3] = size
+  if (operands.size() < 4)
+    return;
+
+  auto offset = extractConstantInt(operands[2]);
+  auto size = extractConstantInt(operands[3]);
+  if (!offset || !size)
+    return;
+
+  // Upstream's derived builder gained a `dim`: the op can now slice either
+  // physical-layout dimension, or the leading pipeline dimension of a
+  // multi-buffered descriptor. TLX's local_slice always takes columns, so
+  // name the last dimension rather than relying on the default.
+  auto srcType = mlir::dyn_cast<ttg::MemDescType>(operands[1].getType());
+  if (!srcType || srcType.getShape().empty())
+    return;
+  int dim = static_cast<int>(srcType.getShape().size()) - 1;
+
+  operands[0] = self.create<ttng::TMEMSubSliceOp>(
+      operands[1], static_cast<int>(*offset), static_cast<int>(*size), dim);
+}
+
+// --- utlx_memdesc_subslice: Rectangular subslice of a memdesc ---
+static void createMemDescSubslice(TritonOpBuilder &self,
+                                  std::vector<mlir::Value> &operands) {
+  // operands[0]                   = result slot
+  // operands[1]                   = source memdesc
+  // operands[2 .. 1+rank]         = per-dim offsets
+  // operands[2+rank .. 1+2*rank]  = per-dim sizes
+  if (operands.size() < 4)
+    return;
+
+  auto srcType = mlir::dyn_cast<ttg::MemDescType>(operands[1].getType());
+  if (!srcType)
+    return;
+
+  unsigned rank = srcType.getShape().size();
+  if (operands.size() != 2 + 2 * rank)
+    return;
+
+  llvm::SmallVector<int32_t> offsets;
+  llvm::SmallVector<int64_t> shape;
+  for (unsigned i = 0; i < rank; ++i) {
+    auto offset = extractConstantInt(operands[2 + i]);
+    auto dim = extractConstantInt(operands[2 + rank + i]);
+    if (!offset || !dim)
+      return;
+    offsets.push_back(static_cast<int32_t>(*offset));
+    shape.push_back(*dim);
+  }
+
+  auto resultType = srcType.cloneWith(shape, srcType.getElementType());
+  operands[0] =
+      self.create<ttg::MemDescSubsliceOp>(resultType, operands[1], offsets);
+}
+
+// --- utlx_tmem_load: Load a TMEM buffer into registers ---
+//
+// Upstream's create_tmem_load binding takes a distributed result type, i.e. a
+// concrete register layout, which uTLX does not have at this point: it defers
+// the choice to its own PropagateLayout pass by way of a DummyRegisterLayout
+// carrier, exactly as the fork's create_tmem_load(memdesc, layout, token) did.
+// Building the op here keeps that deferral instead of forcing a layout to be
+// computed up front.
+static void createTMEMLoad(TritonOpBuilder &self,
+                           std::vector<mlir::Value> &operands) {
+  // operands[0] = result slot
+  // operands[1] = source TMEM memdesc
+  // operands[2] = register-layout carrier; its tensor type holds the encoding
+  // operands[3] = optional async token
+  if (operands.size() < 3)
+    return;
+
+  auto srcType = mlir::dyn_cast<ttg::MemDescType>(operands[1].getType());
+  auto carrierType =
+      mlir::dyn_cast<mlir::RankedTensorType>(operands[2].getType());
+  if (!srcType || !carrierType)
+    return;
+
+  auto resultType = mlir::RankedTensorType::get(
+      srcType.getShape(), srcType.getElementType(), carrierType.getEncoding());
+
+  mlir::Value dep;
+  if (operands.size() > 3)
+    dep = operands[3];
+
+  auto loadOp = self.create<ttng::TMEMLoadOp>(
+      resultType, /*token=*/mlir::Type(), operands[1], dep);
+  operands[0] = loadOp.getResult();
+}
+
+// --- utlx_tmem_store: Store a register tensor into a TMEM buffer ---
+static void createTMEMStore(TritonOpBuilder &self,
+                            std::vector<mlir::Value> &operands) {
+  // operands[0] = result slot (unused; the op yields no tensor)
+  // operands[1] = destination TMEM memdesc
+  // operands[2] = source register tensor
+  if (operands.size() < 3)
+    return;
+
+  if (!mlir::isa<ttg::MemDescType>(operands[1].getType()))
+    return;
+
+  // Upstream's TMEMStoreOp takes a predicate the fork's builder did not. TLX
+  // stores are unconditional, so pass a constant true.
+  auto &builder = self.getBuilder();
+  mlir::Value pred = builder.create<mlir::arith::ConstantOp>(
+      self.getLastLoc(), builder.getBoolAttr(true));
+
+  self.create<ttng::TMEMStoreOp>(operands[1], operands[2], pred);
 }
 
 // --- utlx_local_store: Store register tensor into SMEM buffer ---
@@ -737,6 +862,10 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_local_alloc", createLocalAllocSmem},
       {"utlx_local_alloc_tmem", createLocalAllocTmem},
       {"utlx_local_view", createLocalView},
+      {"utlx_tmem_subslice", createTMEMSubSlice},
+      {"utlx_memdesc_subslice", createMemDescSubslice},
+      {"utlx_tmem_load", createTMEMLoad},
+      {"utlx_tmem_store", createTMEMStore},
       {"utlx_local_store", createLocalStore},
       {"utlx_local_load", createLocalLoad},
       {"utlx_alloc_barriers", createAllocBarriers},
@@ -803,11 +932,14 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       "uTLXPlugin",
       TRITON_EXT_VERSION,
       passes,
-      12, // numPasses
+      // Counted, not hand-maintained: a literal that falls behind its table
+      // silently unregisters the last entries, and the op then declines at
+      // runtime as if Triton never had it.
+      std::size(passes),
       dialects,
-      1, // numDialects
+      std::size(dialects),
       ops,
-      48, // numOps
+      std::size(ops),
       TRITON_VERSION,
   };
   return &info;

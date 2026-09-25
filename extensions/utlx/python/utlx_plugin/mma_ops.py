@@ -7,6 +7,7 @@ tcgen05 dot, and layout operations.
 import triton.language.core as tl
 
 from . import types as tlx
+from ._compat import checked_handle
 
 import re
 
@@ -83,6 +84,27 @@ def require_tmem_scales_layout(src, _builder=None):
     return src.handle
 
 
+def _mbarrier_preds(builder, barriers):
+    """One predicate per mbarrier.
+
+    The fork accepted an empty list; upstream's printer asserts
+    `barriers.size() == preds.size()`, which aborts while the module is being
+    written out -- well after the op was built, so it looks unrelated. TLX
+    signals every barrier it passes, so they are all true.
+    """
+    return [builder.get_int1(True) for _ in barriers]
+
+
+def _i1_or_true(builder, value):
+    """Upstream's tcgen05 builders require real i1 Values.
+
+    The fork accepted None for `pred` and `use_acc` and treated it as
+    unconditional / accumulate. Upstream's bindings type them as `ir.value`, so
+    None raises "incompatible function arguments"; substitute a constant true.
+    """
+    return builder.get_int1(True) if value is None else value
+
+
 @tl.builtin
 def async_dot(
     A,
@@ -100,6 +122,9 @@ def async_dot(
     """Warp-group matrix multiply-accumulate (Hopper wgmma / Blackwell tcgen05.mma)."""
     if mBarriers is None:
         mBarriers = []
+    # Kernels spell this as `two_ctas=NUM_CTAS == 2`, which is a constexpr
+    # comparison; the tcgen05 builder binds a plain bool.
+    two_ctas = tl._unwrap_if_constexpr(two_ctas)
 
     (A, B, acc_handle, input_precision, max_num_imprecise_acc,
      ret_ty) = _semantic.dot_precheck(A, B, acc, input_precision, None, None,
@@ -136,9 +161,11 @@ def async_dot(
             else:
                 use_acc_handle = _semantic.builder.get_int1(use_acc.value)
         # Use gluon: create_tcgen05_mma(a, b, acc, useAcc, pred, mbarriers, mbarrier_preds, two_ctas, multicast)
-        _semantic.builder.create_tcgen05_mma(A_handle, B_handle, acc_handle,
-                                             use_acc_handle, pred, handles, [],
-                                             two_ctas, False)
+        _semantic.builder.create_tcgen05_mma(
+            A_handle, B_handle, acc_handle,
+            _i1_or_true(_semantic.builder, use_acc_handle),
+            _i1_or_true(_semantic.builder, pred), handles,
+            _mbarrier_preds(_semantic.builder, handles), two_ctas, False)
         return tl.tensor(acc_handle, tl.void)
     else:
         # Create NvidiaMma encoding and apply it to acc via combined custom op
@@ -188,6 +215,7 @@ def async_dot_scaled(
     """Scaled warp-group MMA using Blackwell tcgen05.mma."""
     if mBarriers is None:
         mBarriers = []
+    two_ctas = tl._unwrap_if_constexpr(two_ctas)
 
     assert A.shape[0] >= 64
     assert A.shape[1] >= 16
@@ -237,11 +265,11 @@ def async_dot_scaled(
         else:
             use_acc_handle = _semantic.builder.get_int1(use_acc.value)
     # Use gluon: create_tcgen05_mma_scaled
-    _semantic.builder.create_tcgen05_mma_scaled(A_handle, B_handle, acc_handle,
-                                                A_scale_handle, B_scale_handle,
-                                                A_type, B_type, use_acc_handle,
-                                                pred, bar_handles, [],
-                                                two_ctas)
+    _semantic.builder.create_tcgen05_mma_scaled(
+        A_handle, B_handle, acc_handle, A_scale_handle, B_scale_handle, A_type,
+        B_type, _i1_or_true(_semantic.builder, use_acc_handle),
+        _i1_or_true(_semantic.builder, pred), bar_handles,
+        _mbarrier_preds(_semantic.builder, bar_handles), two_ctas)
     return tl.tensor(acc_handle, tl.void)
 
 
@@ -263,7 +291,8 @@ def tcgen05_commit(mBarrier, two_ctas=False, _semantic=None) -> tl.tensor:
     if not two_ctas:
         pred_handle = _semantic.builder.get_int1(True)
     else:
-        cta_rank = _semantic.builder.utlx_cluster_cta_rank([])
+        cta_rank = checked_handle(_semantic.builder.utlx_cluster_cta_rank([]),
+                                  "cluster_cta_rank")
         mod_result = _semantic.builder.create_urem(
             cta_rank, _semantic.builder.get_int32(2))
         pred_handle = _semantic.builder.create_icmpEQ(
