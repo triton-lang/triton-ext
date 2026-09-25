@@ -38,7 +38,7 @@ from torch._inductor.template_heuristics.triton import (
     TMATemplateConfigMixin,
 )
 from torch._inductor.template_heuristics.triton_addmm import AddMMConfigMixin
-from torch._inductor.utils import get_num_sms, tma_inner_dim
+from torch._inductor.utils import get_num_sms
 
 from ..hw import resources
 from ..hw.resources import BLACKWELL_LIMITS, BlackwellWSGemmConfig, validate_config
@@ -50,6 +50,29 @@ from ..hw.target import current_target, is_rocm
 # (CUDA vs ROCm keyed on torch.version.hip). ``is_rocm()`` does not touch the
 # device, so this stays safe to evaluate at import time.
 IS_ROCM = is_rocm()
+
+# A 2-CTA GEMM pairs the two CTAs through tlx.remote_view, which lowers to
+# ttng.map_to_remote_buffer (mapa.shared::cluster) -- an op only Meta's Triton
+# has. Under uTLX the kernel cannot be built at all, so offering the config
+# would turn a working shape into a compile error. Ask the TLX implementation
+# rather than assuming, so this file is unchanged on the fork.
+MULTI_CTA_AVAILABLE = getattr(
+    __import__("triton.language.extra.tlx", fromlist=["_"]),
+    "SUPPORTS_MULTI_CTA",
+    True,
+)
+
+try:
+    from torch._inductor.utils import tma_inner_dim
+except ImportError:
+    # tma_inner_dim postdates torch 2.14, where TMATemplateConfigMixin asks the
+    # same question as ``not layout.is_transposed()``. Mirror torch's own
+    # definition: the index of the single contiguous dim, or None when there is
+    # not exactly one -- a layout TMA cannot describe.
+    def tma_inner_dim(strides):
+        inner = [i for i, stride in enumerate(strides) if stride == 1]
+        return inner[0] if len(inner) == 1 else None
+
 
 try:
     from torch._inductor.utils import get_default_kpack
@@ -256,7 +279,15 @@ def _is_config_valid(
 
     The epilogue staging buffer is charged only for the TMA store path; see
     ``resources.estimate_smem``.
+
+    A multi-CTA config is rejected outright where TLX cannot build one, rather
+    than being clamped to NUM_CTAS=1 later: the block sizes were chosen for two
+    CTAs sharing the tile, so halving the cluster doubles per-CTA SMEM and the
+    config no longer fits. Rejecting here falls through to the candidate scorer
+    and then the autotuning pool, which is how every other misfit is handled.
     """
+    if config.get("NUM_CTAS", 1) > 1 and not MULTI_CTA_AVAILABLE:
+        return False
     return validate_config(
         BlackwellWSGemmConfig.from_dict(config),
         charge_epilogue=tma_epilogue_store,
@@ -538,7 +569,17 @@ def get_heuristic_config(
         config = _candidate_scorer_evaluate(M, N, K, num_sms)
         if config is None:
             return None
-        if config["BLOCK_SIZE_N"] >= N or config["BLOCK_SIZE_K"] >= K:
+        # An oversized tile here means nothing in the candidate set tiles a
+        # problem this small -- the scorer has already had its pick. Keep it
+        # rather than offering no config at all, which under tlx_mode="force"
+        # is a hard NoValidChoicesError rather than a fallback. The result is
+        # exact, not approximate: TMA zero-fills the out-of-range rows and
+        # columns so the padded products contribute zero, and the epilogue
+        # masks the store back to (M, N).
+        below_smallest_tile = N < _MIN_CANDIDATE_BLOCK_N or K < _MIN_CANDIDATE_BLOCK_K
+        if (
+            config["BLOCK_SIZE_N"] >= N or config["BLOCK_SIZE_K"] >= K
+        ) and not below_smallest_tile:
             return None
 
     # Validate and fix config if needed
@@ -711,11 +752,26 @@ _CANDIDATES = [
     },
 ]
 
+# The smallest tile the candidate set can offer. A problem narrower or
+# shallower than this cannot be tiled by any candidate, which is the one
+# case where get_heuristic_config accepts an oversized tile.
+_MIN_CANDIDATE_BLOCK_N = min(c["BLOCK_SIZE_N"] for c in _CANDIDATES)
+_MIN_CANDIDATE_BLOCK_K = min(c["BLOCK_SIZE_K"] for c in _CANDIDATES)
+
 
 def _candidate_scorer_evaluate(
-    M: int, N: int, K: int, num_sms: int
+    M: int, N: int, K: int, num_sms: int, allow_oversized_tile: bool = False
 ) -> dict[str, Any] | None:
-    """Score candidates by wave efficiency and return best."""
+    """Score candidates by wave efficiency and return best.
+
+    ``allow_oversized_tile`` drops the requirement that the tile be strictly
+    smaller than the problem. It is the second pass, taken only when the first
+    leaves nothing: a problem narrower or shallower than every candidate has no
+    tiling to prefer, and an oversized tile is exact rather than approximate --
+    TMA zero-fills the out-of-range rows and columns so the padded products
+    contribute zero, and the epilogue masks the store back to (M, N). Without
+    it, tlx_mode="force" on such a shape is a hard NoValidChoicesError.
+    """
     best_config = None
     best_score = float("inf")
     best_waves = float("inf")
@@ -738,11 +794,16 @@ def _candidate_scorer_evaluate(
         # get_heuristic_config's retry paths re-run this same deterministic
         # scorer, the retries returned the identical config and the whole
         # lookup fell through to ``None``.
-        if not validate_config(tile, charge_epilogue=True):
+        # Via _is_config_valid, not validate_config directly: the scorer must
+        # apply the same rejections the rest of the pipeline does, or it keeps
+        # returning a config that is refused downstream. Both of
+        # get_heuristic_config's retry paths re-run this scorer, so a candidate
+        # only it accepts makes the whole lookup fall through to None.
+        if not _is_config_valid(cfg, tma_epilogue_store=True):
             continue
 
         # Block sizes must be strictly less than problem dimensions for correctness
-        if bn >= N or bk >= K:
+        if not allow_oversized_tile and (bn >= N or bk >= K):
             continue
 
         if bm > M * 2:
@@ -807,6 +868,10 @@ def _candidate_scorer_evaluate(
             best_config["SPLIT_K"] = split_k
             best_config["INTERLEAVE_EPILOGUE"] = 0
 
+    if best_config is None and not allow_oversized_tile:
+        return _candidate_scorer_evaluate(
+            M, N, K, num_sms, allow_oversized_tile=True
+        )
     return best_config
 
 
@@ -932,6 +997,30 @@ class BlackwellGemmWSConfigMixin(TMATemplateConfigMixin):
         }
 
     @staticmethod
+    def _freeze_operand_layouts(kernel_inputs: KernelInputs) -> None:
+        """Pin the operand layouts the emitted kernel is specialized on.
+
+        A_ROW_MAJOR/B_ROW_MAJOR are baked into the kernel as constexprs here,
+        while the template renders stride_am/stride_ak/stride_bk/stride_bn from
+        whatever layout the buffer ends up with at codegen. For a FlexibleLayout
+        those are two different answers: `mm` on a misaligned N gets a
+        constant_pad_nd prologue whose output is hinted row-major but realized
+        column-major (it inherits the stride order of the operand it pads), so
+        the kernel is told B_ROW_MAJOR=True and handed stride_bk=1. It then
+        builds a descriptor with a row stride of one element and reads garbage
+        for every tile -- silently, since the shapes still line up.
+
+        Freezing makes the hint binding, so the two cannot disagree.
+        """
+        if not isinstance(kernel_inputs, MMKernelInputs):
+            return
+        nodes = kernel_inputs.nodes()
+        for idx in (kernel_inputs._mat1_idx, kernel_inputs._mat2_idx):
+            freeze = getattr(nodes[idx], "freeze_layout", None)
+            if freeze is not None:
+                freeze()
+
+    @staticmethod
     def _has_unsupported_layout(kernel_inputs: KernelInputs) -> bool:
         if not isinstance(kernel_inputs, MMKernelInputs):
             return False
@@ -960,6 +1049,8 @@ class BlackwellGemmWSConfigMixin(TMATemplateConfigMixin):
 
         # Get M, N, K from kernel inputs for compatibility check
         assert isinstance(kernel_inputs, MMKernelInputs), "Expect MMKernelInputs"
+        # Before reading any layout: every config below specializes on it.
+        self._freeze_operand_layouts(kernel_inputs)
         m, n, k = kernel_inputs.mnk_hinted()
         num_sms = get_num_sms()
         is_allow_mode = config.triton.tlx_mode == "allow"
