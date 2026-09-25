@@ -35,6 +35,9 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Support/LLVM.h"
 
+// TLX dialect (tlx.require_layout / tlx.release_layout conversion)
+#include "tlx/dialect/include/IR/Dialect.h"
+
 // ---------------------------------------------------------------------------
 // Plugin API (pass functions referenced from TLXLocalAllocPlugin.cpp)
 // ---------------------------------------------------------------------------
@@ -70,6 +73,53 @@ template <class Op> struct GenericOpPattern : public OpConversionPattern<Op> {
     rewriter.replaceOpWithNewOp<Op>(op, retTypes, adaptor.getOperands(),
                                     op->getAttrs());
 
+    return success();
+  }
+};
+
+// --- TLX explicit register-layout ops -------------------------------------
+//
+// tlx.require_layout carries the encoding the kernel asked for in its *result*
+// type, so that type must survive the conversion untouched; only the operand is
+// remapped. tlx.release_layout is the reverse: its result is unencoded, so the
+// type converter picks the default blocked encoding. Both become
+// ttg.convert_layout.
+//
+// Without these the ops are left unconverted with original-typed operands,
+// which newer MLIR reports as "failed to legalize unresolved source
+// materialization ... that remained live after conversion".
+//
+// MemDesc-typed require_layout is left alone: shared-memory encodings are
+// settled later by tlx-insert-and-propagate-layout.
+struct TlxRequireLayoutPattern
+    : public OpConversionPattern<mlir::triton::tlx::RequireLayoutOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(mlir::triton::tlx::RequireLayoutOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto resTy = dyn_cast<RankedTensorType>(op.getType());
+    if (!resTy || !resTy.getEncoding())
+      return failure();
+    rewriter.replaceOpWithNewOp<triton::gpu::ConvertLayoutOp>(op, resTy,
+                                                              adaptor.getSrc());
+    return success();
+  }
+};
+
+struct TlxReleaseLayoutPattern
+    : public OpConversionPattern<mlir::triton::tlx::ReleaseLayoutOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(mlir::triton::tlx::ReleaseLayoutOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto resTy = dyn_cast_or_null<RankedTensorType>(
+        getTypeConverter()->convertType(op.getType()));
+    if (!resTy)
+      return failure();
+    rewriter.replaceOpWithNewOp<triton::gpu::ConvertLayoutOp>(op, resTy,
+                                                              adaptor.getSrc());
     return success();
   }
 };
@@ -117,7 +167,7 @@ void populateArithPatternsAndLegality(TritonGPUTypeConverter &typeConverter,
       GenericOpPattern<arith::RemSIOp>, GenericOpPattern<arith::AndIOp>,
       GenericOpPattern<arith::OrIOp>, GenericOpPattern<arith::XOrIOp>,
       GenericOpPattern<arith::ShLIOp>, GenericOpPattern<arith::ShRUIOp>,
-      GenericOpPattern<arith::ShRSIOp>, // NegFOp
+      GenericOpPattern<arith::ShRSIOp>, GenericOpPattern<arith::NegFOp>,
       // Floating point
       GenericOpPattern<arith::AddFOp>, GenericOpPattern<arith::SubFOp>,
       // MaxMin
@@ -862,6 +912,15 @@ public:
     populateSCFPatterns(typeConverter, patterns);
     populateCFPatterns(typeConverter, patterns);
     patterns.insert<GenericOpPattern<ub::PoisonOp>>(typeConverter, context);
+    patterns.insert<TlxRequireLayoutPattern, TlxReleaseLayoutPattern>(
+        typeConverter, context);
+    // Tensor-typed layout ops must be converted; MemDesc-typed require_layout
+    // is settled later by tlx-insert-and-propagate-layout, so leave it legal.
+    convTarget.addDynamicallyLegalOp<mlir::triton::tlx::RequireLayoutOp>(
+        [](mlir::triton::tlx::RequireLayoutOp op) {
+          return !isa<RankedTensorType>(op.getType());
+        });
+    convTarget.addIllegalOp<mlir::triton::tlx::ReleaseLayoutOp>();
 
     // Set module attributes (same as upstream ConvertTritonToTritonGPU).
     Builder b(&getContext());

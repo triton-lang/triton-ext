@@ -481,12 +481,56 @@ void utlx::createRequireDotOperandLayout(TritonOpBuilder &self,
   if (!opndType)
     return;
 
-  auto encoding = ttg::DotOperandEncodingAttr::get(context, opIdx, parentEnc,
-                                                   opndType.getElementType());
+  // Optional trailing kWidth operand. AMD MFMA dot operands need it stated
+  // explicitly; the element-type overload only infers it for NVIDIA MMA.
+  mlir::Attribute encoding;
+  std::optional<int64_t> kWidth;
+  if (operands.size() >= 5)
+    kWidth = extractConstInt(operands[4]);
+  if (kWidth && *kWidth > 0)
+    encoding = ttg::DotOperandEncodingAttr::get(context, opIdx, parentEnc,
+                                                static_cast<unsigned>(*kWidth));
+  else
+    encoding = ttg::DotOperandEncodingAttr::get(context, opIdx, parentEnc,
+                                                opndType.getElementType());
 
   auto newType = mlir::RankedTensorType::get(
       opndType.getShape(), opndType.getElementType(), encoding);
   operands[0] = self.create<tlx::RequireLayoutOp>(newType, opnd);
+}
+
+/// utlx_make_slice_layout(result_slot, parent_carrier, dim)
+///
+/// Builds a SliceEncodingAttr over the parent carrier's encoding and returns a
+/// new carrier holding it. Shape is the parent's with `dim` dropped.
+void utlx::createMakeSliceLayout(TritonOpBuilder &self,
+                                 std::vector<mlir::Value> &operands) {
+  if (operands.size() < 3)
+    return;
+
+  auto parentTy = mlir::dyn_cast<mlir::RankedTensorType>(operands[1].getType());
+  auto dimVal = extractConstInt(operands[2]);
+  if (!parentTy || !parentTy.getEncoding() || !dimVal)
+    return;
+  unsigned dim = static_cast<unsigned>(*dimVal);
+  if (dim >= parentTy.getRank())
+    return;
+
+  auto *context = self.getBuilder().getContext();
+  auto encoding = ttg::SliceEncodingAttr::get(
+      context, dim,
+      mlir::cast<ttg::DistributedEncodingTrait>(parentTy.getEncoding()));
+
+  llvm::SmallVector<int64_t> shape(parentTy.getShape());
+  shape.erase(shape.begin() + dim);
+  auto elemTy = parentTy.getElementType();
+
+  auto tensorType = mlir::RankedTensorType::get(shape, elemTy, encoding);
+  auto nullVal = self.getBuilder().create<mlir::arith::ConstantOp>(
+      self.getLastLoc(),
+      mlir::DenseElementsAttr::get(mlir::RankedTensorType::get(shape, elemTy),
+                                   self.getBuilder().getZeroAttr(elemTy)));
+  operands[0] = self.create<tlx::RequireLayoutOp>(tensorType, nullVal);
 }
 
 /// utlx_require_tensor_memory_layout(result_slot, src, blockM, blockN,
@@ -572,45 +616,39 @@ void utlx::createAsyncLoad(TritonOpBuilder &self,
                            std::vector<mlir::Value> &operands) {
   if (operands.size() < 4)
     return;
-  // The op is "ttg.async_copy_global_to_local"
-  // For now, use runtime op creation since the signature may vary
+
   mlir::Value src = operands[1];
   mlir::Value result = operands[2];
 
-  // Find the useBulk flag - it's always the last or second-to-last group
-  // For bulk: [src, result, bulk_size, barrier, useBulk=1]
-  // For non-bulk: [src, result, (mask)?, (other)?, useBulk=0]
   auto useBulkVal = extractConstInt(operands.back());
   if (!useBulkVal)
     return;
   bool useBulk = *useBulkVal != 0;
 
-  if (useBulk) {
-    // operands: [result_slot, src, result, bulk_size, barrier, useBulk=1]
-    if (operands.size() < 6)
-      return;
-    // Bulk async load is effectively a barrier-based TMA copy
-    // Use AsyncCopyGlobalToLocalOp with bulk parameters
-    // For now, create as runtime op since bulk variant may differ
-    llvm::SmallVector<mlir::Value> opOperands = {src, result};
-    auto *op = createRuntimeOp(
-        self.getBuilder(), self.getLastLoc(), "ttg.async_copy_global_to_local",
-        {self.getBuilder().getType<ttg::AsyncTokenType>()}, opOperands);
-    if (op && op->getNumResults() > 0)
-      operands[0] = op->getResult(0);
-  } else {
-    // Non-bulk: operands[1]=src, operands[2]=result, then optional mask/other,
-    // then useBulk=0
-    llvm::SmallVector<mlir::Value> opOperands = {src, result};
-    // Add mask and other if present (operands between result and useBulk flag)
-    for (size_t i = 3; i < operands.size() - 1; ++i)
-      opOperands.push_back(operands[i]);
-    auto *op = createRuntimeOp(
-        self.getBuilder(), self.getLastLoc(), "ttg.async_copy_global_to_local",
-        {self.getBuilder().getType<ttg::AsyncTokenType>()}, opOperands);
-    if (op && op->getNumResults() > 0)
-      operands[0] = op->getResult(0);
+  // Optional mask/other sit between `result` and the trailing useBulk flag.
+  // (Bulk carries bulk_size/barrier there instead, which this op has no slots
+  // for, so they are ignored as before.)
+  mlir::Value mask, other;
+  if (!useBulk) {
+    if (operands.size() > 4)
+      mask = operands[3];
+    if (operands.size() > 5)
+      other = operands[4];
   }
+
+  // Use the typed builder: the generic OperationState path does not populate
+  // operandSegmentSizes, so the op fails to verify with
+  // "operand count (N) does not match the total size (0) specified in
+  // attribute 'operandSegmentSizes'".
+  auto token = self.getBuilder().getType<ttg::AsyncTokenType>();
+  auto op = ttg::AsyncCopyGlobalToLocalOp::create(
+      self.getBuilder(), self.getLastLoc(), token, src, result, mask, other,
+      /*cachePolicy=*/mlir::Attribute(), /*isVolatile=*/false);
+  // NB: op->getResult(0), not op.getResult(). This op has an *operand* named
+  // `result` (the destination memdesc), so the generated getResult() accessor
+  // returns that operand and shadows Operation::getResult() -- which silently
+  // handed the memdesc back to async_load's caller instead of the token.
+  operands[0] = op->getResult(0);
 }
 
 /// utlx_global_scratch_alloc(result_slot, nbytes, alignment) -> ptr
@@ -648,6 +686,55 @@ void utlx::createGlobalScratchAlloc(TritonOpBuilder &self,
        self.getBuilder().getNamedAttr("alignment", alignmentAttr)});
   if (op && op->getNumResults() > 0)
     operands[0] = op->getResult(0);
+}
+
+/// utlx_make_amd_mfma_layout(result_slot, version, instrShapeM, instrShapeN,
+///                           instrShapeK, isTransposed, warpsPerCTA0,
+///                           warpsPerCTA1)
+///
+/// Builds an AMDMfmaEncodingAttr and returns a value whose RankedTensorType
+/// carries it. The carrier's own shape and element type are immaterial --
+/// consumers (utlx_require_with_layout_carrier,
+/// utlx_require_dot_operand_layout) read only the encoding off this type and
+/// re-apply it to their own operand's shape. This mirrors
+/// createMakeDummyRegisterLayout; a carrier value is used rather than an
+/// attribute because plugin ops can only pass mlir::Values.
+void utlx::createMakeAmdMfmaLayout(TritonOpBuilder &self,
+                                   std::vector<mlir::Value> &operands) {
+  if (operands.size() < 8)
+    return;
+
+  llvm::SmallVector<unsigned, 7> args;
+  for (size_t i = 1; i < 8; ++i) {
+    auto v = extractConstInt(operands[i]);
+    if (!v)
+      return;
+    args.push_back(static_cast<unsigned>(*v));
+  }
+
+  unsigned version = args[0];
+  llvm::SmallVector<unsigned, 3> instrShape = {args[1], args[2], args[3]};
+  bool isTransposed = args[4] != 0;
+  llvm::SmallVector<unsigned, 2> warpsPerCTA = {args[5], args[6]};
+
+  auto *context = self.getBuilder().getContext();
+  auto CGALayout = ttg::CGAEncodingAttr::get1CTALayout(context, 2);
+  auto encoding = ttg::AMDMfmaEncodingAttr::get(
+      context, version, warpsPerCTA, instrShape, isTransposed, CGALayout);
+
+  // Nominal carrier shape: one full MFMA tile per warp across the CTA. Only
+  // the encoding is ever read back off this type.
+  llvm::SmallVector<int64_t, 2> shape = {
+      static_cast<int64_t>(instrShape[0] * warpsPerCTA[0]),
+      static_cast<int64_t>(instrShape[1] * warpsPerCTA[1])};
+  auto elemTy = self.getBuilder().getF32Type();
+
+  auto tensorType = mlir::RankedTensorType::get(shape, elemTy, encoding);
+  auto nullVal = self.getBuilder().create<mlir::arith::ConstantOp>(
+      self.getLastLoc(),
+      mlir::DenseElementsAttr::get(mlir::RankedTensorType::get(shape, elemTy),
+                                   self.getBuilder().getZeroAttr(elemTy)));
+  operands[0] = self.create<tlx::RequireLayoutOp>(tensorType, nullVal);
 }
 
 /// utlx_make_dummy_register_layout(result_slot, shape..., type_carrier,
@@ -888,4 +975,41 @@ void utlx::createMakeTensorDescWithDescPtr(TritonOpBuilder &self,
                              allOperands);
   if (op && op->getNumResults() > 0)
     operands[0] = op->getResult(0);
+}
+
+/// utlx_local_slice(result_slot, src, offset0..offsetN-1, shape0..shapeN-1)
+///
+/// Upstream's create_memdesc_subslice binding takes (result_type, src, offsets)
+/// and there is no way to build a MemDescType from Python on upstream Triton,
+/// so compute the result type here and emit the op directly.
+void utlx::createLocalSlice(TritonOpBuilder &self,
+                            std::vector<mlir::Value> &operands) {
+  if (operands.size() < 4)
+    return;
+
+  mlir::Value src = operands[1];
+  auto srcTy = mlir::dyn_cast<ttg::MemDescType>(src.getType());
+  if (!srcTy)
+    return;
+
+  size_t rank = srcTy.getRank();
+  if (operands.size() != 2 + 2 * rank)
+    return;
+
+  llvm::SmallVector<int32_t> offsets;
+  llvm::SmallVector<int64_t> shape;
+  for (size_t i = 0; i < rank; ++i) {
+    auto off = extractConstInt(operands[2 + i]);
+    auto dim = extractConstInt(operands[2 + rank + i]);
+    if (!off || !dim)
+      return;
+    offsets.push_back(static_cast<int32_t>(*off));
+    shape.push_back(*dim);
+  }
+
+  auto newType = ttg::MemDescType::get(
+      shape, srcTy.getElementType(), srcTy.getEncoding(),
+      srcTy.getMemorySpace(), srcTy.getMutableMemory(), srcTy.getAllocShape());
+  operands[0] = self.create<ttg::MemDescSubsliceOp>(newType, src,
+                                                    llvm::ArrayRef(offsets));
 }

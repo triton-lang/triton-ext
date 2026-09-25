@@ -95,6 +95,16 @@ __all__ = [
     "_to_mxfp8_block",
     # warp_ops
     "vote_ballot_sync",
+    # layout_ops
+    "amd_mfma_layout",
+    "dot_operand_layout",
+    "slice_layout",
+    "swizzled_layout",
+    "require_layout",
+    "release_layout",
+    "zeros",
+    "buffer_load",
+    "buffer_store",
 ]
 
 # Imported first, ahead of anything that pulls in triton: importing it is the
@@ -148,6 +158,9 @@ from .mem_ops import (
     subslice,
     tmem_copy,
 )
+from .layout_ops import (amd_mfma_layout, buffer_load, buffer_store,
+                         dot_operand_layout, release_layout, require_layout,
+                         slice_layout, swizzled_layout, zeros)
 from .mma_ops import async_dot, async_dot_scaled, async_dot_wait, tcgen05_commit
 from .types import (
     async_token,
@@ -190,6 +203,7 @@ from .utility import (
 # Register this module as triton.language.extra.tlx so that
 # `import triton.language.extra.tlx` works without a filesystem symlink.
 # This must happen before importing mxfp8_utils which does that import.
+import os as _os
 import sys as _sys
 import triton.language.extra as _extra
 
@@ -200,6 +214,13 @@ from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
 from .warp_ops import vote_ballot_sync  # noqa: E402
 
 from . import custom_stages  # noqa: E402
+from .compiler.semantic import install_semantic  # noqa: E402
+
+# Layout propagation, entirely inside a TritonSemantic subclass -- the ops as
+# overrides and the result type via make_tensor. No monkeypatching. No-ops for
+# values without an explicit layout. UTLX_NO_LAYOUT_PROPAGATION=1 opts out.
+if _os.environ.get("UTLX_NO_LAYOUT_PROPAGATION") != "1":
+    install_semantic()
 
 from triton import knobs  # noqa: E402
 

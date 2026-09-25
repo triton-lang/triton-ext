@@ -372,7 +372,24 @@ class buffered_tensor(tl.base_value):
         self.shape = shape
         self.type = buffered_tensor_type(element_ty, shape, num, storage,
                                          layout)
+        # Upstream Triton's builder has no memdesc type constructor
+        # (get_shared_mem_desc_ty / make_*_shared_encoding_attr are TLX-fork
+        # only), so buffered_tensor_type.to_ir() cannot build the type there.
+        # It does not need to: this handle already carries exactly that type.
+        if handle is not None:
+            try:
+                self.type._ir_type = handle.get_type()
+            except AttributeError:
+                pass
         self.dtype = element_ty
+
+    def _set_name(self, builder, name: str) -> None:
+        # Mirrors tl.tensor._set_name. base_value's default raises, and newer
+        # Triton calls this for every @triton.jit argument, so a buffered_tensor
+        # could not be passed across a jit boundary without it.
+        if self.handle is not None:
+            self.handle.set_loc(
+                builder.create_name_loc(name, self.handle.get_loc()))
 
     def _flatten_ir(self, handles) -> None:
         handles.append(self.handle)
@@ -427,6 +444,11 @@ class buffered_tensor_type(tl.block_type):
                 and self.layout == other.layout)
 
     def to_ir(self, builder):
+        # Prefer the concrete type recorded from the defining value; only fall
+        # back to constructing one (TLX-fork builders only) if unavailable.
+        cached = getattr(self, "_ir_type", None)
+        if cached is not None:
+            return cached
         shape = self.shape
         if self.num >= 1:
             shape = [self.num] + list(shape)
