@@ -12,9 +12,6 @@
 // ---------------------------------------------------------------------------
 // Includes from TritonToTritonGPUPass.cpp
 // ---------------------------------------------------------------------------
-#ifdef UTLX_HAS_AMDGPU
-#include "Dialect/TritonAMDGPU/IR/Dialect.h"
-#endif
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -888,19 +885,30 @@ public:
     // (e.g. ttng.init_barrier on NVIDIA) pass through unchanged.
     // On AMD, we also mark amdg legal for the rewritten ops.
     convTarget.addLegalDialect<triton::nvidia_gpu::TritonNvidiaGPUDialect>();
-#ifdef UTLX_HAS_AMDGPU
-    bool isAMD = target.find("hip:") == 0;
-    if (isAMD) {
-      OpBuilder builder(context);
-      mod.walk([&](triton::nvidia_gpu::InitBarrierOp op) {
-        builder.setInsertionPoint(op);
-        triton::amdgpu::InitBarrierOp::create(builder, op.getLoc(),
-                                              op.getAlloc(), op.getCount());
-        op.erase();
-      });
-      convTarget.addLegalDialect<triton::amdgpu::TritonAMDGPUDialect>();
+
+    // Built by registered name rather than by linking against
+    // triton::amdgpu::InitBarrierOp, the same way ops/NewOps.cpp handles ops it
+    // cannot include. The Triton wheel ships no third_party/amd headers -- and
+    // none of the generated .h.inc the dialect header needs -- so a wheel-based
+    // build can never define UTLX_HAS_AMDGPU, which is what left these ops
+    // unlowered. The dialect itself is present at runtime; note its name is
+    // `amdg`, not `amdgpu` (that is MLIR's own unrelated dialect).
+    if (target.find("hip:") == 0) {
+      auto initBarrier =
+          RegisteredOperationName::lookup("amdg.init_barrier", context);
+      if (initBarrier) {
+        OpBuilder builder(context);
+        mod.walk([&](triton::nvidia_gpu::InitBarrierOp op) {
+          builder.setInsertionPoint(op);
+          OperationState state(op.getLoc(), *initBarrier);
+          state.addOperands({op.getAlloc()});
+          state.addAttribute("count", builder.getI32IntegerAttr(op.getCount()));
+          builder.create(state);
+          op.erase();
+        });
+        convTarget.addLegalDialect("amdg");
+      }
     }
-#endif
 
     // --- Rewrite patterns (from TritonToTritonGPUPass.cpp) ---
     RewritePatternSet patterns(context);
