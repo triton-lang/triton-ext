@@ -18,23 +18,28 @@ import torch
 
 from conftest import DEVICE, is_hip_cdna4
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples"))
+# Located by walking up rather than a fixed depth, so this keeps working
+# wherever the file sits under the extension.
+_EXAMPLES = next(parent / "examples"
+                 for parent in Path(__file__).resolve().parents
+                 if (parent / "examples").is_dir())
+sys.path.insert(0, str(_EXAMPLES))
 from kda_prefill import kda_paged_prefill, kda_recurrent_decode  # noqa: E402
 from kda_prefill._shapes import (  # noqa: E402
-    GFX950_DECODE_FOCUS,
-    GFX950_PREFILL_FOCUS,
-    KDADecodeShape,
-    KDAPrefillShape,
+    GFX950_DECODE_FOCUS, GFX950_PREFILL_FOCUS, KDADecodeShape, KDAPrefillShape,
 )
 
-pytestmark = pytest.mark.skipif(not is_hip_cdna4(), reason="gfx950 KDA operators require CDNA4")
+pytestmark = pytest.mark.skipif(not is_hip_cdna4(),
+                                reason="gfx950 KDA operators require CDNA4")
 
 # Upstream's CORRECTNESS_SHAPES is a small synthetic shape plus the focus suite;
 # the example vendors only the focus suite, so rebuild the pair here.
 PREFILL_CORRECTNESS_SHAPES = tuple(
-    dict.fromkeys((KDAPrefillShape(64, 1, 4, 128, 128, "bf16"), *GFX950_PREFILL_FOCUS)))
+    dict.fromkeys((KDAPrefillShape(64, 1, 4, 128, 128,
+                                   "bf16"), *GFX950_PREFILL_FOCUS)))
 DECODE_CORRECTNESS_SHAPES = tuple(
-    dict.fromkeys((KDADecodeShape(1, 4, 128, 128, "bf16"), *GFX950_DECODE_FOCUS)))
+    dict.fromkeys((KDADecodeShape(1, 4, 128, 128,
+                                  "bf16"), *GFX950_DECODE_FOCUS)))
 
 
 def _kda_recurrent_reference(q, k, v, g, beta, state, scale):

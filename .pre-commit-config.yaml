@@ -7,10 +7,10 @@ repos:
       - id: destroyed-symlinks
       - id: trailing-whitespace
         # Vendored verbatim; two files ship without a final newline.
-        exclude: '^extensions/utlx/(examples/kda_prefill/(?!run\.py$)|test/test_kda_gfx950\.py$)'
+        exclude: '^extensions/utlx/(examples/kda_prefill/(?!run\.py$)|test/tlx_ops/test_kda_gfx950\.py$)'
       - id: end-of-file-fixer
         # Vendored verbatim; two files ship without a final newline.
-        exclude: '^extensions/utlx/(examples/kda_prefill/(?!run\.py$)|test/test_kda_gfx950\.py$)'
+        exclude: '^extensions/utlx/(examples/kda_prefill/(?!run\.py$)|test/tlx_ops/test_kda_gfx950\.py$)'
       - id: check-yaml
       - id: check-toml
       - id: check-ast
@@ -19,7 +19,7 @@ repos:
       - id: check-executables-have-shebangs
       - id: check-shebang-scripts-are-executable
         # Vendored verbatim; upstream ships this mode.
-        exclude: '^extensions/utlx/(examples/kda_prefill/(?!run\.py$)|test/test_kda_gfx950\.py$)'
+        exclude: '^extensions/utlx/(examples/kda_prefill/(?!run\.py$)|test/tlx_ops/test_kda_gfx950\.py$)'
       - id: detect-private-key
       - id: debug-statements
 
@@ -44,14 +44,14 @@ repos:
       - id: ruff
         args: ["--fix", "--exit-non-zero-on-fix"]
         # Vendored verbatim from sglang; see examples/kda_prefill/README.md.
-        exclude: '^extensions/utlx/(examples/kda_prefill/(?!run\.py$)|test/test_kda_gfx950\.py$)'
+        exclude: '^extensions/utlx/(examples/kda_prefill/(?!run\.py$)|test/tlx_ops/test_kda_gfx950\.py$)'
 
   - repo: https://github.com/google/yapf
     rev: "v0.43.0"
     hooks:
       - id: yapf
         args: ["-p", "-i"]
-        exclude: '^extensions/utlx/(examples/kda_prefill/(?!run\.py$)|test/test_kda_gfx950\.py$)'
+        exclude: '^extensions/utlx/(examples/kda_prefill/(?!run\.py$)|test/tlx_ops/test_kda_gfx950\.py$)'
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: "v1.15.0"
