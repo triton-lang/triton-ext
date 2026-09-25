@@ -70,4 +70,15 @@ repos:
         additional_dependencies: [requests]
         pass_filenames: false
 
-exclude: '^$'
+# Third-party code vendored verbatim from facebookexperimental/triton, kept
+# byte-identical so that re-vendoring stays a copy rather than a merge (see the
+# commit that added it). Reformatting it here would defeat that, and the mypy
+# and markdownlint findings in it are not auto-fixable in any case -- fixing
+# them means editing someone else's source. Excluded whole; uTLX's own code,
+# which is everything else under extensions/utlx, stays covered.
+exclude: |
+  (?x)^extensions/utlx/python/utlx_plugin/(
+      _triton_tlx
+    | hw
+    | inductor
+  )/
