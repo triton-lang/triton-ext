@@ -105,6 +105,16 @@ else()
     message(STATUS "uTLX: AMDGPU dialect header not found — AMD support disabled")
 endif()
 
+# ---------------------------------------------------------------------------
+# Triton release/3.8 compatibility: PointerType::get takes a plain int address
+# space there, rather than the PtrAddrSpace enum (defined in TritonTypeEnums.td)
+# on Triton main. Both report TRITON_VERSION "3.8.0", so probe the header.
+# ---------------------------------------------------------------------------
+if(NOT EXISTS "${TRITON_WHEEL_INCLUDE_DIR}/triton/Dialect/Triton/IR/TritonTypeEnums.td")
+    message(STATUS "uTLX: PtrAddrSpace not found — enabling UTLX_TRITON_INT_ADDR_SPACE")
+    target_compile_definitions(${TRITON_EXT_NAME} PRIVATE UTLX_TRITON_INT_ADDR_SPACE)
+endif()
+
 # Shared compile flags + link-only-against-libtriton (single source of truth).
 target_link_libraries(${TRITON_EXT_NAME} PRIVATE triton_ext::plugin)
 # uTLX additionally disables C++ exceptions.
