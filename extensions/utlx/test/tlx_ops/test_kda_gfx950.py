@@ -76,8 +76,11 @@ def _check_kda_prefill(lengths, heads, scale, cu_on_cpu=False):
     q = _normalized_kda_input(shape)
     k = _normalized_kda_input(shape)
     v = torch.randn(shape, device=DEVICE, dtype=torch.bfloat16)
-    g = -torch.nn.functional.softplus(torch.randn(shape, device=DEVICE, dtype=torch.float32))
-    beta = torch.sigmoid(torch.randn(1, total_tokens, heads, device=DEVICE, dtype=torch.float32))
+    g = -torch.nn.functional.softplus(
+        torch.randn(shape, device=DEVICE, dtype=torch.float32))
+    beta = torch.sigmoid(
+        torch.randn(1, total_tokens, heads, device=DEVICE,
+                    dtype=torch.float32))
     initial_state = 0.1 * torch.randn(
         len(lengths),
         heads,
@@ -87,7 +90,9 @@ def _check_kda_prefill(lengths, heads, scale, cu_on_cpu=False):
         dtype=torch.float32,
     )
     cu_device = "cpu" if cu_on_cpu else DEVICE
-    cu_seqlens = torch.tensor([0, *accumulate(lengths)], device=cu_device, dtype=torch.int64)
+    cu_seqlens = torch.tensor([0, *accumulate(lengths)],
+                              device=cu_device,
+                              dtype=torch.int64)
 
     expected_outputs = []
     expected_states = []
@@ -132,7 +137,8 @@ def _check_kda_prefill(lengths, heads, scale, cu_on_cpu=False):
     assert actual_state.stride()[-2:] == (dim, 1)
 
 
-@pytest.mark.parametrize("scale", [1.0, 128**-0.5], ids=["unit-scale", "attention-scale"])
+@pytest.mark.parametrize("scale", [1.0, 128**-0.5],
+                         ids=["unit-scale", "attention-scale"])
 def test_kda_paged_prefill_chunk_boundaries(scale):
     _check_kda_prefill(
         [0, 1, 15, 16, 17, 63, 64, 65],
@@ -153,20 +159,38 @@ def test_kda_paged_prefill_smoke_shapes(lengths, heads):
     _check_kda_prefill(lengths, heads=heads, scale=128**-0.5)
 
 
-@pytest.mark.parametrize("total_tokens,sequences,heads,key_dim,value_dim,dtype_name", PREFILL_CORRECTNESS_SHAPES)
-def test_kda_paged_prefill_shape_suites_run(total_tokens, sequences, heads, key_dim, value_dim, dtype_name):
+@pytest.mark.parametrize(
+    "total_tokens,sequences,heads,key_dim,value_dim,dtype_name",
+    PREFILL_CORRECTNESS_SHAPES)
+def test_kda_paged_prefill_shape_suites_run(total_tokens, sequences, heads,
+                                            key_dim, value_dim, dtype_name):
     assert dtype_name == "bf16"
     torch.manual_seed(37)
     shape = (1, total_tokens, heads, key_dim)
     q = _normalized_kda_input(shape)
     k = _normalized_kda_input(shape)
-    v = torch.randn(1, total_tokens, heads, value_dim, device=DEVICE, dtype=torch.bfloat16)
-    g = -torch.nn.functional.softplus(torch.randn(shape, device=DEVICE, dtype=torch.float32))
-    beta = torch.sigmoid(torch.randn(1, total_tokens, heads, device=DEVICE, dtype=torch.float32))
-    initial_state = torch.zeros(sequences, heads, value_dim, key_dim, device=DEVICE, dtype=torch.float32)
+    v = torch.randn(1,
+                    total_tokens,
+                    heads,
+                    value_dim,
+                    device=DEVICE,
+                    dtype=torch.bfloat16)
+    g = -torch.nn.functional.softplus(
+        torch.randn(shape, device=DEVICE, dtype=torch.float32))
+    beta = torch.sigmoid(
+        torch.randn(1, total_tokens, heads, device=DEVICE,
+                    dtype=torch.float32))
+    initial_state = torch.zeros(sequences,
+                                heads,
+                                value_dim,
+                                key_dim,
+                                device=DEVICE,
+                                dtype=torch.float32)
     base, remainder = divmod(total_tokens, sequences)
     lengths = [base + (index < remainder) for index in range(sequences)]
-    cu_seqlens = torch.tensor([0, *accumulate(lengths)], device=DEVICE, dtype=torch.int64)
+    cu_seqlens = torch.tensor([0, *accumulate(lengths)],
+                              device=DEVICE,
+                              dtype=torch.int64)
 
     output, final_state = kda_paged_prefill(
         q,
@@ -201,27 +225,53 @@ def _make_kda_decode_inputs(batch, heads, key_dim, value_dim, strided):
         q.copy_(_normalized_kda_input(q_shape))
         k.copy_(_normalized_kda_input(q_shape))
         v.normal_()
-        gate_storage = torch.empty(1, batch, heads * key_dim + 5, device=DEVICE, dtype=torch.float32)
+        gate_storage = torch.empty(1,
+                                   batch,
+                                   heads * key_dim + 5,
+                                   device=DEVICE,
+                                   dtype=torch.float32)
         g = gate_storage[..., :q_end].view(q_shape)
         g.copy_(-torch.nn.functional.softplus(torch.randn_like(g)))
-        beta_storage = torch.empty(1, batch, heads + 3, device=DEVICE, dtype=torch.float32)
+        beta_storage = torch.empty(1,
+                                   batch,
+                                   heads + 3,
+                                   device=DEVICE,
+                                   dtype=torch.float32)
         beta = beta_storage[..., :heads]
         beta.copy_(torch.sigmoid(torch.randn_like(beta)))
     else:
         q = _normalized_kda_input(q_shape)
         k = _normalized_kda_input(q_shape)
-        v = torch.randn(1, batch, heads, value_dim, device=DEVICE, dtype=torch.bfloat16)
-        g = -torch.nn.functional.softplus(torch.randn(q_shape, device=DEVICE, dtype=torch.float32))
-        beta = torch.sigmoid(torch.randn(1, batch, heads, device=DEVICE, dtype=torch.float32))
+        v = torch.randn(1,
+                        batch,
+                        heads,
+                        value_dim,
+                        device=DEVICE,
+                        dtype=torch.bfloat16)
+        g = -torch.nn.functional.softplus(
+            torch.randn(q_shape, device=DEVICE, dtype=torch.float32))
+        beta = torch.sigmoid(
+            torch.randn(1, batch, heads, device=DEVICE, dtype=torch.float32))
     return q, k, v, g, beta
 
 
-@pytest.mark.parametrize("batch,heads,key_dim,value_dim,dtype_name", DECODE_CORRECTNESS_SHAPES)
-def test_kda_recurrent_decode_shape_suites(batch, heads, key_dim, value_dim, dtype_name):
+@pytest.mark.parametrize("batch,heads,key_dim,value_dim,dtype_name",
+                         DECODE_CORRECTNESS_SHAPES)
+def test_kda_recurrent_decode_shape_suites(batch, heads, key_dim, value_dim,
+                                           dtype_name):
     assert dtype_name == "bf16"
     torch.manual_seed(43)
-    q, k, v, g, beta = _make_kda_decode_inputs(batch, heads, key_dim, value_dim, strided=False)
-    state_pool = torch.randn(2 * batch, heads, value_dim, key_dim, device=DEVICE, dtype=torch.float32)
+    q, k, v, g, beta = _make_kda_decode_inputs(batch,
+                                               heads,
+                                               key_dim,
+                                               value_dim,
+                                               strided=False)
+    state_pool = torch.randn(2 * batch,
+                             heads,
+                             value_dim,
+                             key_dim,
+                             device=DEVICE,
+                             dtype=torch.float32)
     original_pool = state_pool.clone()
     read_indices = torch.arange(batch, device=DEVICE, dtype=torch.int32)
     write_indices = read_indices + batch
@@ -254,7 +304,10 @@ def test_kda_recurrent_decode_shape_suites(batch, heads, key_dim, value_dim, dty
         write_indices=write_indices,
         cu_seqlens=cu_seqlens,
     )
-    torch.testing.assert_close(actual.float(), torch.stack(expected).unsqueeze(0), atol=2e-2, rtol=2e-2)
+    torch.testing.assert_close(actual.float(),
+                               torch.stack(expected).unsqueeze(0),
+                               atol=2e-2,
+                               rtol=2e-2)
     torch.testing.assert_close(state_pool, expected_pool, atol=2e-4, rtol=2e-4)
 
 
@@ -267,12 +320,19 @@ def test_kda_recurrent_decode_shape_suites(batch, heads, key_dim, value_dim, dty
         pytest.param(12, 128, 128, True, "attention", id="production"),
     ],
 )
-def test_kda_recurrent_decode_indexed_state(heads, key_dim, value_dim, strided_inputs, scale_mode):
+def test_kda_recurrent_decode_indexed_state(heads, key_dim, value_dim,
+                                            strided_inputs, scale_mode):
     torch.manual_seed(13)
     batch = 3
     scale = key_dim**-0.5 if scale_mode == "attention" else 1.0
-    q, k, v, g, beta = _make_kda_decode_inputs(batch, heads, key_dim, value_dim, strided_inputs)
-    state_pool = torch.randn(7, heads, value_dim, key_dim, device=DEVICE, dtype=torch.float32)
+    q, k, v, g, beta = _make_kda_decode_inputs(batch, heads, key_dim,
+                                               value_dim, strided_inputs)
+    state_pool = torch.randn(7,
+                             heads,
+                             value_dim,
+                             key_dim,
+                             device=DEVICE,
+                             dtype=torch.float32)
     original_pool = state_pool.clone()
     expected_pool = state_pool.clone()
     read_indices = torch.tensor([0, 1, 1], device=DEVICE, dtype=torch.int32)
@@ -306,7 +366,10 @@ def test_kda_recurrent_decode_indexed_state(heads, key_dim, value_dim, strided_i
         cu_seqlens=cu_seqlens,
     )
 
-    torch.testing.assert_close(actual_output.float(), expected_output, atol=2e-2, rtol=2e-2)
+    torch.testing.assert_close(actual_output.float(),
+                               expected_output,
+                               atol=2e-2,
+                               rtol=2e-2)
     torch.testing.assert_close(state_pool, expected_pool, atol=2e-4, rtol=2e-4)
     torch.testing.assert_close(state_pool[0], original_pool[0], atol=0, rtol=0)
     torch.testing.assert_close(state_pool[1], original_pool[1], atol=0, rtol=0)
@@ -316,14 +379,28 @@ def test_kda_recurrent_decode_graph_padding_and_slot_stride():
     torch.manual_seed(23)
     batch, active, heads, key_dim, value_dim = 4, 2, 2, 8, 5
     state_elements = heads * key_dim * value_dim
-    raw_pool = torch.randn(7, state_elements + 11, device=DEVICE, dtype=torch.float32)
+    raw_pool = torch.randn(7,
+                           state_elements + 11,
+                           device=DEVICE,
+                           dtype=torch.float32)
     padding_before = raw_pool[:, state_elements:].clone()
-    state_pool = raw_pool[:, :state_elements].view(7, heads, value_dim, key_dim)
+    state_pool = raw_pool[:, :state_elements].view(7, heads, value_dim,
+                                                   key_dim)
     original_pool = state_pool.clone()
-    q, k, v, g, beta = _make_kda_decode_inputs(batch, heads, key_dim, value_dim, strided=True)
-    read_indices = torch.tensor([1, 2, -1, -1], device=DEVICE, dtype=torch.int32)
-    write_indices = torch.tensor([3, 4, -1, -1], device=DEVICE, dtype=torch.int32)
-    cu_seqlens = torch.tensor([0, 1, 2, 2, 2], device=DEVICE, dtype=torch.int32)
+    q, k, v, g, beta = _make_kda_decode_inputs(batch,
+                                               heads,
+                                               key_dim,
+                                               value_dim,
+                                               strided=True)
+    read_indices = torch.tensor([1, 2, -1, -1],
+                                device=DEVICE,
+                                dtype=torch.int32)
+    write_indices = torch.tensor([3, 4, -1, -1],
+                                 device=DEVICE,
+                                 dtype=torch.int32)
+    cu_seqlens = torch.tensor([0, 1, 2, 2, 2],
+                              device=DEVICE,
+                              dtype=torch.int32)
     kda_recurrent_decode(
         q,
         k,
@@ -372,11 +449,18 @@ def test_kda_recurrent_decode_graph_padding_and_slot_stride():
         atol=2e-2,
         rtol=2e-2,
     )
-    torch.testing.assert_close(captured[:, active:], torch.zeros_like(captured[:, active:]))
+    torch.testing.assert_close(captured[:, active:],
+                               torch.zeros_like(captured[:, active:]))
     torch.testing.assert_close(state_pool, expected_pool, atol=2e-4, rtol=2e-4)
-    torch.testing.assert_close(raw_pool[:, state_elements:], padding_before, atol=0, rtol=0)
+    torch.testing.assert_close(raw_pool[:, state_elements:],
+                               padding_before,
+                               atol=0,
+                               rtol=0)
     for untouched in (0, 1, 2, 5, 6):
-        torch.testing.assert_close(state_pool[untouched], original_pool[untouched], atol=0, rtol=0)
+        torch.testing.assert_close(state_pool[untouched],
+                                   original_pool[untouched],
+                                   atol=0,
+                                   rtol=0)
 
 
 @pytest.mark.parametrize(
@@ -389,8 +473,17 @@ def test_kda_recurrent_decode_graph_padding_and_slot_stride():
 def test_kda_recurrent_decode_invalid_indices(scale, invalid_index):
     torch.manual_seed(41)
     batch, heads, key_dim, value_dim = 2, 2, 8, 5
-    q, k, v, g, beta = _make_kda_decode_inputs(batch, heads, key_dim, value_dim, strided=False)
-    pool = torch.randn(7, heads, value_dim, key_dim, device=DEVICE, dtype=torch.float32)
+    q, k, v, g, beta = _make_kda_decode_inputs(batch,
+                                               heads,
+                                               key_dim,
+                                               value_dim,
+                                               strided=False)
+    pool = torch.randn(7,
+                       heads,
+                       value_dim,
+                       key_dim,
+                       device=DEVICE,
+                       dtype=torch.float32)
     original_pool = pool.clone()
     reads = torch.tensor([invalid_index, 0], device=DEVICE, dtype=torch.int32)
     writes = torch.tensor([5, invalid_index], device=DEVICE, dtype=torch.int32)
@@ -426,14 +519,26 @@ def test_kda_recurrent_decode_invalid_indices(scale, invalid_index):
         rtol=2e-2,
     )
     for untouched in range(pool.shape[0]):
-        torch.testing.assert_close(pool[untouched], original_pool[untouched], atol=0, rtol=0)
+        torch.testing.assert_close(pool[untouched],
+                                   original_pool[untouched],
+                                   atol=0,
+                                   rtol=0)
 
 
 def test_kda_recurrent_decode_cpu_metadata_and_malformed_rows():
     torch.manual_seed(53)
     batch, heads, key_dim, value_dim = 3, 2, 8, 5
-    q, k, v, g, beta = _make_kda_decode_inputs(batch, heads, key_dim, value_dim, strided=False)
-    pool = torch.randn(6, heads, value_dim, key_dim, device=DEVICE, dtype=torch.float32)
+    q, k, v, g, beta = _make_kda_decode_inputs(batch,
+                                               heads,
+                                               key_dim,
+                                               value_dim,
+                                               strided=False)
+    pool = torch.randn(6,
+                       heads,
+                       value_dim,
+                       key_dim,
+                       device=DEVICE,
+                       dtype=torch.float32)
     original_pool = pool.clone()
     expected_pool = pool.clone()
     reads = torch.tensor([0, 1, 2], dtype=torch.int32)
@@ -463,6 +568,9 @@ def test_kda_recurrent_decode_cpu_metadata_and_malformed_rows():
     )
 
     torch.testing.assert_close(actual[:, 0], torch.zeros_like(actual[:, 0]))
-    torch.testing.assert_close(actual[:, 1].float(), expected_output, atol=2e-2, rtol=2e-2)
+    torch.testing.assert_close(actual[:, 1].float(),
+                               expected_output,
+                               atol=2e-2,
+                               rtol=2e-2)
     torch.testing.assert_close(actual[:, 2], torch.zeros_like(actual[:, 2]))
     torch.testing.assert_close(pool, expected_pool, atol=2e-4, rtol=2e-4)
