@@ -95,6 +95,7 @@ __all__ = [
     "_to_mxfp8_block",
     # warp_ops
     "vote_ballot_sync",
+    "warp_redux",
 ]
 
 # Imported first, ahead of anything that pulls in triton: importing it is the
@@ -196,8 +197,15 @@ import triton.language.extra as _extra
 _sys.modules['triton.language.extra.tlx'] = _sys.modules[__name__]
 _extra.tlx = _sys.modules[__name__]
 
+# Supply the triton.language.extra modules that Meta's fork ships and upstream
+# lacks, so TLX kernels importing them by their core paths resolve. A no-op
+# wherever Triton provides them itself.
+from ._triton_extra import install as _install_triton_extra  # noqa: E402
+
+_install_triton_extra()
+
 from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
-from .warp_ops import vote_ballot_sync  # noqa: E402
+from .warp_ops import vote_ballot_sync, warp_redux  # noqa: E402
 
 from . import custom_stages  # noqa: E402
 
