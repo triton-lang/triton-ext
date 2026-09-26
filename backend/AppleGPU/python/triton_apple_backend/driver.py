@@ -42,7 +42,7 @@ class _TorchRuntime:
         return self.torch.device("mps", 0)
 
     def empty_cache(self):
-        return self.torch.empty(256 * 1024 * 1024 // 4,
+        return self.torch.empty(32 * 1024 * 1024 // 4,
                                 dtype=self.torch.int32,
                                 device='mps')
 
