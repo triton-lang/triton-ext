@@ -13,3 +13,4 @@ __pycache__/
 *.dylib
 *.dll
 *.whl
+backend/AppleGPU/bench/results/

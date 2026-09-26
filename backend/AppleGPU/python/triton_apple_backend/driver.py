@@ -1,17 +1,20 @@
 """Apple GPU Triton backend driver. Dispatch pipeline:
   metallib bytes -> metal_torch.load_metallib(bytes) -> MetalLibrary.get_function(name)
   -> MetalKernel (PSO) -> kernel(*tensors, threads=, group_size=)
-
-Pointer arguments are MPS tensors, dispatched zero-copy on torch's own stream.
 """
 
+import importlib.util as _importlib_util
 import os as _os
 import re as _re
-import sys as _sys
 import struct as _struct
 from triton.backends.driver import DriverBase, decompose_descriptor, expand_signature
 from triton.runtime.errors import OutOfResources
 from triton.tools.tensor_descriptor import TensorDescriptor
+from triton_apple_backend.device_assert import check_landed as _check_landed
+from triton_apple_backend.device_assert import check_pending as _check_pending
+from triton_apple_backend.device_assert import defer as _defer_asserts
+from triton_apple_backend.device_assert import parse_assert_layout
+from triton_apple_backend.device_print import format_records, parse_print_layout
 from triton_apple_backend.hw_constants import TARGET as _TARGET
 from triton_apple_backend.hw_constants import TG_BUDGET_BYTES as _TG_BUDGET_BYTES
 from triton_apple_backend.hw_constants import WARP_SIZE as _WARP_SIZE
@@ -35,6 +38,20 @@ class _TorchRuntime:
     def core_count(self):
         return getattr(self.torch._C, '_mps_get_core_count', lambda: 10)()
 
+    def zeros_i32(self, n):
+        return self.torch.zeros(n, dtype=self.torch.int32, device='mps')
+
+    def as_u32(self, buf):
+        return buf.cpu().numpy().view('uint32')
+
+    def assert_buffer(self, n):
+        return self.metal.alloc_shared(4 * n)
+
+    def peek_u32(self, buf):
+        """Host view of a shared buffer, without synchronizing."""
+        import numpy as np
+        return np.frombuffer(buf, dtype=np.uint32)
+
     def device_interface(self):
         return self.torch.mps
 
@@ -42,7 +59,7 @@ class _TorchRuntime:
         return self.torch.device("mps", 0)
 
     def empty_cache(self):
-        return self.torch.empty(256 * 1024 * 1024 // 4,
+        return self.torch.empty(32 * 1024 * 1024 // 4,
                                 dtype=self.torch.int32,
                                 device='mps')
 
@@ -50,14 +67,94 @@ class _TorchRuntime:
         cache.zero_()
 
 
+class _NativeDeviceInterface:
+
+    def __init__(self, metal):
+        self._metal = metal
+
+    def synchronize(self):
+        self._metal.synchronize()
+        _check_pending(_runtime())
+
+    def current_device(self):
+        return 0
+
+
+class _NativeRuntime:
+    """Dispatch without torch, through metal_native: its own command queue,
+    and pointer arguments are metal_native.MetalBuffer objects (alloc, or
+    wrap over numpy / buffer-protocol memory)."""
+
+    def __init__(self):
+        from triton_apple_backend import metal_native
+        self.metal = metal_native
+
+    def is_available(self):
+        return self.metal.is_available()
+
+    def core_count(self):
+        return 10
+
+    def zeros_i32(self, n):
+        import numpy as np
+        return self.metal.alloc(n * 4, np.dtype('int32'))
+
+    def as_u32(self, buf):
+        import numpy as np
+        return np.frombuffer(buf, dtype=np.uint32)
+
+    def assert_buffer(self, n):
+        return self.zeros_i32(n)
+
+    def peek_u32(self, buf):
+        return None
+
+    def device_interface(self):
+        return _NativeDeviceInterface(self.metal)
+
+    def active_device(self):
+        raise RuntimeError("no torch device: torch is not installed")
+
+    def empty_cache(self):
+        import numpy as np
+        return self.metal.alloc(32 * 1024 * 1024, np.dtype('int32'))
+
+    def clear_cache(self, cache):
+        import numpy as np
+        np.frombuffer(cache, dtype=np.int32)[:] = 0
+
+
 _RUNTIME = None
 
 
+def _torch_installed():
+    try:
+        return _importlib_util.find_spec("torch") is not None
+    except Exception:
+        return False
+
+
 def _runtime():
+    """Torch wins whenever it is installed; metal_native serves a box without
+    it."""
     global _RUNTIME
     if _RUNTIME is None:
-        _RUNTIME = _TorchRuntime()
+        _RUNTIME = (_TorchRuntime if _torch_installed() else _NativeRuntime)()
+        if isinstance(_RUNTIME, _TorchRuntime):
+            _check_asserts_on_torch_sync(_RUNTIME)
     return _RUNTIME
+
+
+def _check_asserts_on_torch_sync(rt):
+    mps = rt.torch.mps
+    sync = mps.synchronize
+
+    def synchronize(*args, **kwargs):
+        sync(*args, **kwargs)
+        _check_pending(rt)
+
+    synchronize.__wrapped__ = sync
+    mps.synchronize = synchronize
 
 
 def ty_to_cpp(ty):
@@ -101,7 +198,6 @@ def _f32_to_bf16(val):
     """Round to nearest even, as torch and CUDA do."""
     bits = _struct.unpack('<I', _struct.pack('<f', val))[0]
     if (bits & 0x7FFFFFFF) > 0x7F800000:
-        # Truncating a NaN whose payload is all below bit 16 leaves infinity.
         return (bits >> 16) | 0x0040
     return (bits + 0x7FFF + ((bits >> 16) & 1)) >> 16
 
@@ -115,14 +211,23 @@ def _pack_scalars(scalar_types, scalar_values, total_size, offsets):
         elif ty == "bf16":
             _struct.pack_into("<H", buf, offset, _f32_to_bf16(float(val)))
             continue
-        # The GPU reads this buffer little-endian whatever the host is.
-        _struct.pack_into("<" + fmt, buf, offset, val)
+        _struct.pack_into(fmt, buf, offset, val)
     return bytes(buf)
 
 
+class _NoCompileFunction:
+    """Stands in for a PSO under TRITON_MSL_NO_COMPILE. Thread budget is large
+    enough for the launcher's shape checks to pass."""
+
+    max_total_threads_per_threadgroup = 1024
+
+    def __init__(self, name):
+        self.name = name
+
+
 class MetalUtils:
-    """Metal GPU utils, over the metal_torch extension that CMake builds
-    beside its source."""
+    """Metal GPU utils. JIT-compiles metal_torch.m for zero-copy MPS tensor
+    dispatch."""
 
     def __init__(self):
         self._rt = _runtime()
@@ -130,6 +235,10 @@ class MetalUtils:
 
     def load_binary(self, name, metallib_bytes, shared_mem, device):
         """Returns (module, function, n_regs, n_spills, n_max_threads)."""
+        # Returns a handle, so a dump-only run reaches every kernel. Refusal
+        # moves to launch.
+        if _os.environ.get('TRITON_MSL_NO_COMPILE') == '1':
+            return (None, _NoCompileFunction(name), 0, 0, 1024)
         try:
             module = self._metal.load_metallib(bytes(metallib_bytes))
             function = module.get_function(name)
@@ -177,6 +286,7 @@ class MetalLauncher:
 
     def __init__(self, src, metadata):
         self.signature = dict(src.signature)
+        self.constants = getattr(src, "constants", {})
 
         # Constexpr args appear in Python *args but not the compiled IR;
         # strip them so Metal buffer slots match IR arg positions.
@@ -253,12 +363,30 @@ class MetalLauncher:
         self._requested_threads = getattr(metadata, "num_warps",
                                           4) * _WARP_SIZE
         self._smem_bytes = int(getattr(metadata, "shared", 0) or 0)
+        self._cross_tg_barrier = bool(
+            getattr(metadata, "cross_tg_barrier", False))
+        self._exposes_addresses = bool(
+            getattr(metadata, "exposes_addresses", False))
+        self._reads_addresses = bool(
+            getattr(metadata, "reads_addresses", False))
+        # None when the kernel does not print/assert, which also says not to
+        # bind a buffer.
+        self._print_layout = parse_print_layout(
+            getattr(metadata, "print_layout", None))
+        self._assert_layout = parse_assert_layout(
+            getattr(metadata, "assert_layout", None))
+        self._assert_buffer = None
         self.lx = self._requested_threads
         self.ly = 1
         self.lz = 1
 
     def __call__(self, gridX, gridY, gridZ, stream, function, kernel_metadata,
                  launch_metadata, launch_enter_hook, launch_exit_hook, *args):
+
+        # Under TRITON_MSL_NO_COMPILE the dispatch is skipped, so outputs are
+        # never written and the caller's own assertion fails afterwards.
+        if isinstance(function, _NoCompileFunction):
+            return None
 
         # load_binary already drops over-large configs, so a deficit here is
         # a bug.
@@ -269,6 +397,18 @@ class MetalLauncher:
                 f"kernel needs {self._requested_threads} threads/threadgroup "
                 f"but PSO supports only {max_threads}; this config should have "
                 f"been rejected at load_binary (OutOfResources)")
+
+        # Grid-barrier kernels need every threadgroup co-resident. Metal has no
+        # cooperative launch and does not preempt spinning threadgroups, so a
+        # grid larger than what fits deadlocks or watchdog-aborts.
+        if self._cross_tg_barrier:
+            total_tgs = gridX * gridY * gridZ
+            cores = _runtime().core_count()
+            capacity = cores * max(1, max_threads // self._requested_threads)
+            if total_tgs > capacity:
+                raise OutOfResources(
+                    total_tgs, capacity,
+                    "co-resident threadgroups (cross-threadgroup barrier)")
 
         if launch_enter_hook:
             launch_enter_hook(launch_metadata)
@@ -309,7 +449,7 @@ class MetalLauncher:
         ]
 
         # Emitted kernel signature is [ptr0, ptr1, ..., packed_scalar_buf].
-        # The other side of this ABI is agpu/emit/KernelAbi.h.
+        # See emitFunc's argbuf packing in EmitMSLFunc.cpp.
         ptr_args = [flat_args[i] for i in self.ptr_indices]
         scalar_values = [flat_args[i] for i in self.scalar_indices]
 
@@ -322,30 +462,107 @@ class MetalLauncher:
         else:
             reordered_args = tuple(ptr_args)
 
-        if _os.environ.get('TRITON_MSL_TRACE'):
+        # Binds last, per planKernelAbi, so adding a print cannot renumber an
+        # existing pointer binding. Must be zeroed: the head is a running
+        # count the kernel bumps.
+        rt = _runtime()
+        _check_landed(rt)
+        print_buffer = None
+        if self._print_layout is not None:
+            print_buffer = rt.zeros_i32(self._print_layout.nbytes // 4)
+            reordered_args = reordered_args + (print_buffer, )
+
+        # Print first, then assert: the order planKernelAbi fixed.
+        # One buffer per launcher, zeroed once: the head only moves when an
+        # assert fails, and the check that reports it re-zeroes it.
+        assert_buffer = None
+        if self._assert_layout is not None:
+            if self._assert_buffer is None:
+                self._assert_buffer = rt.assert_buffer(
+                    self._assert_layout.nbytes // 4)
+            assert_buffer = self._assert_buffer
+            reordered_args = reordered_args + (assert_buffer, )
+
+        if _os.environ.get('TRITON_MSL_DEBUG'):
             _threads = [gridX * self.lx, gridY * self.ly, gridZ * self.lz]
             _gs = [self.lx, self.ly, self.lz]
-
-            def _say(m):
-                print(m, file=_sys.stderr)
-
-            _say(f'[MSL] threads={_threads} group_size={_gs} '
-                 f'grid=({gridX},{gridY},{gridZ})')
-            _say(f'[MSL] reordered_args={reordered_args}')
+            print(
+                f'[MSL] threads={_threads} group_size={_gs} grid=({gridX},{gridY},{gridZ})'
+            )
+            print(f'[MSL] reordered_args={reordered_args}')
             if scalar_values:
-                _say(f'[MSL] scalar_types={self.scalar_types} '
-                     f'scalar_values={scalar_values}')
-                _say(f'[MSL] packed_bytes={packed_bytes.hex()} '
-                     f'total_size={self.total_size}')
+                print(
+                    f'[MSL] scalar_types={self.scalar_types} scalar_values={scalar_values}'
+                )
+                print(
+                    f'[MSL] packed_bytes={packed_bytes.hex()} total_size={self.total_size}'
+                )
         function(
             *reordered_args,
             threads=[gridX * self.lx, gridY * self.ly, gridZ * self.lz],
             group_size=[self.lx, self.ly, self.lz],
             threadgroup_mem=self._smem_bytes,
+            exposes_addresses=self._exposes_addresses,
+            reads_addresses=self._reads_addresses,
         )
+
+        # The copy to CPU synchronises; the records do not exist until the
+        # kernel has run.
+        if print_buffer is not None:
+            words = rt.as_u32(print_buffer)
+            for line in format_records(self._print_layout, words):
+                print(line)
 
         if launch_exit_hook:
             launch_exit_hook(launch_metadata)
+
+        if assert_buffer is not None:
+            _defer_asserts(id(self), self._assert_layout, assert_buffer)
+
+
+def _mps_do_bench(fn,
+                  warmup=25,
+                  rep=100,
+                  grad_to_none=None,
+                  quantiles=None,
+                  return_mode="mean"):
+    """`triton.testing.do_bench`, with the cache flush kept out of the window.
+
+    An MPS event pair times the whole command buffer the events sit in, so a
+    flush encoded before `start.record()` is charged to the measurement: a
+    256MB fill reads as about 1.5ms on every kernel. Synchronizing after the
+    flush closes that buffer, and again after `end.record()` resolves the
+    timestamps.
+    """
+    import torch
+    from triton.testing import _summarize_statistics
+
+    cache = _runtime().empty_cache()
+
+    def timed_once():
+        if grad_to_none is not None:
+            for x in grad_to_none:
+                x.grad = None
+        cache.zero_()
+        torch.mps.synchronize()
+        start = torch.mps.Event(enable_timing=True)
+        end = torch.mps.Event(enable_timing=True)
+        start.record()
+        fn()
+        end.record()
+        torch.mps.synchronize()
+        return start.elapsed_time(end)
+
+    fn()
+    torch.mps.synchronize()
+
+    estimate_ms = max(timed_once(), 1e-3)
+    for _ in range(max(1, int(warmup / estimate_ms))):
+        fn()
+    torch.mps.synchronize()
+
+    times = [timed_once() for _ in range(max(1, int(rep / estimate_ms)))]
+    return _summarize_statistics(times, quantiles, return_mode)
 
 
 class MetalDriver(DriverBase):
@@ -385,8 +602,7 @@ class MetalDriver(DriverBase):
         return 0
 
     def get_benchmarker(self):
-        from triton.testing import do_bench
-        return do_bench
+        return _mps_do_bench
 
     def get_empty_cache_for_benchmark(self):
         return _runtime().empty_cache()
