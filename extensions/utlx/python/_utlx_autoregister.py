@@ -37,6 +37,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TLX_LANGUAGE = "triton.language.extra.tlx"
 TLX_OPS_ROOT = "triton.tlx"
 
+# Core-Triton modules the fork ships under triton.language.extra and upstream
+# does not. Not TLX: vendored under utlx_plugin._triton_extra and published
+# here so the kernels' core-path imports resolve.
+EXTRA_ALIASES = {
+    "triton.language.extra.subtile_ops":
+    "utlx_plugin._triton_extra.subtile_ops",
+    "triton.language.extra.cuda.inline_ptx_lib":
+    "utlx_plugin._triton_extra.inline_ptx_lib",
+}
+
 
 def register():
     """Append the installed ``libutlx.so`` to ``TRITON_PLUGIN_PATHS``."""
@@ -102,6 +112,10 @@ class UtlxAliasFinder(importlib.abc.MetaPathFinder):
             return importlib.util.spec_from_loader(fullname,
                                                    _AliasLoader("utlx_plugin"),
                                                    is_package=True)
+        target = EXTRA_ALIASES.get(fullname)
+        if target is not None:
+            return importlib.util.spec_from_loader(fullname,
+                                                   _AliasLoader(target))
         if fullname == TLX_OPS_ROOT and os.path.isdir(self._OPS_ROOT):
             spec = importlib.util.spec_from_loader(fullname,
                                                    _PackageLoader(

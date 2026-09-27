@@ -8,6 +8,7 @@ __all__ = [
     "async_tasks",
     "async_task",
     # types
+    "layout",
     "layout_encoding",
     "shared_layout_encoding",
     "swizzled_shared_layout_encoding",
@@ -95,6 +96,7 @@ __all__ = [
     "_to_mxfp8_block",
     # warp_ops
     "vote_ballot_sync",
+    "warp_redux",
 ]
 
 # Imported first, ahead of anything that pulls in triton: importing it is the
@@ -158,6 +160,7 @@ from .types import (
     CLCPipelineContext,
     DummyRegisterLayoutEncoding,
     DummyTMEMLayoutEncoding,
+    layout,
     layout_encoding,
     mbarrier,
     mbarrier_type,
@@ -315,7 +318,7 @@ def _install_make_tensor_descriptor_layout_patch():
 _install_make_tensor_descriptor_layout_patch()
 
 from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
-from .warp_ops import vote_ballot_sync  # noqa: E402
+from .warp_ops import vote_ballot_sync, warp_redux  # noqa: E402
 
 from . import custom_stages  # noqa: E402
 
