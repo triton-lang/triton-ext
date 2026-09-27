@@ -140,19 +140,30 @@ def make_tensor_memory_scales_encoding_attr(self, CTASplitM, CTASplitN):
     return self.get_tensor_memory_scales_layout(cga_bases, "mnThenK")
 
 
+def make_linear_encoding_attr(self, reg_bases, lane_bases, warp_bases, shape):
+    """The fork's register-layout factory, on upstream's getter.
+
+    Upstream spells the same #ttg.linear attribute
+    ``get_distributed_linear_layout`` and takes a fourth basis list for the CTA
+    level, between warp and shape. uTLX emits single-CTA layouts, which is the
+    empty list -- the same convention ``_cga_bases`` enforces above.
+    """
+    return self.get_distributed_linear_layout(reg_bases, lane_bases,
+                                              warp_bases, [],
+                                              [int(d) for d in shape])
+
+
 #: Installed onto TLXOpBuilder. The remaining fork factories
 #: (make_dot_operand_encoding_attr, make_nv_mma_encoding_attr,
-#: make_dummy_register_layout_attr, make_dummy_tmem_layout_attr) are register
-#: layouts or TLX-dialect placeholders with no upstream equivalent reachable
-#: this way; they are deliberately absent so the AttributeError still names
-#: them rather than a wrong layout being built.
+#: make_dummy_register_layout_attr, make_dummy_tmem_layout_attr) are TLX-dialect
+#: placeholders or layouts with no upstream equivalent reachable this way; they
+#: are deliberately absent so the AttributeError still names them rather than a
+#: wrong layout being built.
 FACTORIES = {
-    "make_swizzled_shared_encoding_attr":
-    make_swizzled_shared_encoding_attr,
-    "make_nv_mma_shared_encoding_attr":
-    make_nv_mma_shared_encoding_attr,
-    "make_tensor_memory_encoding_attr":
-    make_tensor_memory_encoding_attr,
+    "make_swizzled_shared_encoding_attr": make_swizzled_shared_encoding_attr,
+    "make_nv_mma_shared_encoding_attr": make_nv_mma_shared_encoding_attr,
+    "make_tensor_memory_encoding_attr": make_tensor_memory_encoding_attr,
     "make_tensor_memory_scales_encoding_attr":
     make_tensor_memory_scales_encoding_attr,
+    "make_linear_encoding_attr": make_linear_encoding_attr,
 }
