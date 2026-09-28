@@ -8,6 +8,9 @@
 #ifndef AGPU_LAYOUT_BASIS_H
 #define AGPU_LAYOUT_BASIS_H
 
+#include "agpu/core/CoordGuard.h"
+#include "agpu/plan/AccessWidth.h"
+
 #include <cstdint>
 #include <vector>
 
@@ -71,7 +74,40 @@ struct LayoutBasis {
     const RuntimeBits rb = runtimeBits();
     return rb.disjoint && !(registerConstant(reg) & rb.mask);
   }
+
+  // Every coordinate this register can reach, across all lanes, warps and
+  // threadgroups. Overlapping bases return the whole dimension.
+  CoordRange rangeOf(int reg, int dim, int64_t dimSize) const {
+    const RuntimeBits rb = runtimeBits();
+    const int32_t constPart = registerConstant(reg);
+    if (!rb.disjoint || (constPart & rb.mask))
+      return CoordRange{dim, 0, dimSize - 1};
+    return CoordRange{dim, constPart, constPart | rb.mask};
+  }
 };
+
+// The register bases in the shape `planAccess` reads: `[bit][dim]`, the
+// transpose of one BasisRow per dimension.
+inline RegBases regBasesOf(const std::vector<LayoutBasis> &dims) {
+  std::size_t bits = 0;
+  for (const LayoutBasis &lb : dims)
+    bits = std::max(bits, lb.reg.size());
+  RegBases out(bits, std::vector<int32_t>(dims.size(), 0));
+  for (std::size_t d = 0; d < dims.size(); ++d)
+    for (std::size_t b = 0; b < dims[d].reg.size(); ++b)
+      out[b][d] = dims[d].reg[b];
+  return out;
+}
+
+// Condition (c)'s input: everything the runtime ids contribute, per dimension.
+inline RuntimeSpan runtimeSpanOf(const std::vector<LayoutBasis> &dims) {
+  RuntimeSpan out(dims.size(), 0);
+  for (std::size_t d = 0; d < dims.size(); ++d)
+    for (const BasisRow *row : {&dims[d].lane, &dims[d].warp, &dims[d].block})
+      for (int32_t b : *row)
+        out[d] |= b;
+  return out;
+}
 
 } // namespace agpu
 

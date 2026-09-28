@@ -44,6 +44,7 @@ private:
 
   void indent();
   void printExprAt(const Expr *e, int outerPrec);
+  void printPostfixBase(const Expr *e);
   void printLiteral(const Literal *l);
   void printParams(const Function *f);
 
@@ -74,6 +75,10 @@ private:
   int depth_ = 0;
   // Cleared by the next indent(), so an `else if` stays on one line.
   bool skipIndent_ = false;
+  bool barrierPending_ = false;
+  Barrier::Scope pendingScope_ = Barrier::Scope::Threadgroup;
+
+  void flushBarrier();
 };
 
 // A null clause is legal: `for (;;)`.

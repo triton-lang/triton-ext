@@ -4,6 +4,7 @@
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <objc/runtime.h>
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
@@ -13,6 +14,7 @@
 // getMTLBufferStorage mirrors PyTorch's ATen/native/mps/OperationUtils.h.
 #include <ATen/Tensor.h>
 #include <ATen/mps/MPSStream.h>
+#include <c10/metal/error.h>
 #include <torch/csrc/autograd/python_variable.h>
 
 static inline id<MTLBuffer> getMTLBufferStorage(const at::TensorBase &t) {
@@ -47,6 +49,110 @@ template <class Body> static PyObject *guarded(Body body) {
 // Use PyTorch's MPS device - same device that owns the tensor buffers.
 static id<MTLDevice> get_device(void) {
   return at::mps::getCurrentMPSStream()->device();
+}
+
+// A kernel that reads through an address reaches buffers no argument binds,
+// and Metal keeps those resident only when the encoder names them. Every
+// buffer whose address was handed out is recorded here, weakly: the table
+// keeps nothing alive and a freed buffer drops out. GIL held.
+static NSHashTable *exposedBuffers(void) {
+  static NSHashTable *table = [[NSHashTable weakObjectsHashTable] retain];
+  return table;
+}
+
+// Torch counts a failed command buffer as finished and raises only what
+// kernels write to its error buffer, so a failure is written there.
+static void reportFailure(at::mps::MPSStream *stream) {
+  static char watched;
+  id<MTLCommandBuffer> segment = stream->commandBuffer().rootCommandBuffer;
+  if (objc_getAssociatedObject(segment, &watched))
+    return;
+  objc_setAssociatedObject(segment, &watched, @YES,
+                           OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  id<MTLBuffer> errors = stream->getErrorBuffer();
+  [segment addCompletedHandler:^(id<MTLCommandBuffer> done) {
+    if (done.status != MTLCommandBufferStatusError)
+      return;
+    auto *msgs = static_cast<c10::metal::ErrorMessages *>([errors contents]);
+    if (__atomic_load_n(&msgs->count, __ATOMIC_ACQUIRE) == 0) {
+      c10::metal::ErrorMessage &m = msgs->msg[0];
+      snprintf(m.message, sizeof m.message, "Metal command buffer failed: %s",
+               done.error.localizedDescription.UTF8String);
+      snprintf(m.file, sizeof m.file, "%s", __FILE_NAME__);
+      snprintf(m.func, sizeof m.func, "%s", "reportFailure");
+      m.line = __LINE__;
+    }
+    __atomic_fetch_add(&msgs->count, 1, __ATOMIC_RELEASE);
+  }];
+}
+
+static bool kwargFlag(PyObject *kwargs, const char *name) {
+  PyObject *v = kwargs ? PyDict_GetItemString(kwargs, name) : NULL;
+  return v && PyObject_IsTrue(v) == 1;
+}
+
+// ── SharedBuffer - host-visible memory a kernel writes ───────────────────
+// Its buffer view reads the memory as it is, without waiting for the GPU: for
+// state that only ever moves one way, like an assert count.
+
+typedef struct {
+  PyObject_HEAD id<MTLBuffer> buf;
+  Py_ssize_t nbytes;
+} SharedBufferObject;
+
+static void SharedBuffer_dealloc(SharedBufferObject *self) {
+  [self->buf release];
+  self->buf = nil;
+  Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+static int SharedBuffer_getbuffer(SharedBufferObject *self, Py_buffer *view,
+                                  int flags) {
+  return PyBuffer_FillInfo(view, (PyObject *)self, [self->buf contents],
+                           self -> nbytes, 0, flags);
+}
+
+static PyBufferProcs SharedBuffer_as_buffer = {
+    (getbufferproc)SharedBuffer_getbuffer,
+    NULL,
+};
+
+static PyTypeObject SharedBufferType = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "metal_torch.SharedBuffer",
+    .tp_basicsize = sizeof(SharedBufferObject),
+    .tp_dealloc = (destructor)SharedBuffer_dealloc,
+    .tp_as_buffer = &SharedBuffer_as_buffer,
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+};
+
+static PyObject *py_alloc_shared(PyObject *, PyObject *args) {
+  Py_ssize_t nbytes;
+  if (!PyArg_ParseTuple(args, "n", &nbytes))
+    return NULL;
+  if (nbytes <= 0) {
+    PyErr_SetString(PyExc_ValueError, "nbytes must be positive");
+    return NULL;
+  }
+  return guarded([&]() -> PyObject * {
+    id<MTLBuffer> buf =
+        [get_device() newBufferWithLength:(NSUInteger)nbytes
+                                  options:MTLResourceStorageModeShared];
+    if (!buf) {
+      PyErr_Format(PyExc_MemoryError, "Metal could not allocate %zd bytes",
+                   nbytes);
+      return NULL;
+    }
+    memset([buf contents], 0, (size_t)nbytes);
+    auto *obj =
+        (SharedBufferObject *)SharedBufferType.tp_alloc(&SharedBufferType, 0);
+    if (!obj) {
+      [buf release];
+      return NULL;
+    }
+    obj->buf = buf;
+    obj->nbytes = nbytes;
+    return (PyObject *)obj;
+  });
 }
 
 // ── MetalKernel - callable PSO wrapper ───────────────────────────────────
@@ -175,6 +281,10 @@ static bool packArguments(PyObject *args, std::vector<ArgInfo> *out) {
       info.kind = ArgInfo::TENSOR;
       info.buf = getMTLBufferStorage(t);
       info.offset = t.storage_offset() * t.element_size();
+    } else if (PyObject_TypeCheck(arg, &SharedBufferType)) {
+      info.kind = ArgInfo::TENSOR;
+      info.buf = ((SharedBufferObject *)arg)->buf;
+      info.offset = 0;
     } else if (PyBytes_Check(arg)) {
       // Packed scalar blob, bound inline via setBytes. The args tuple keeps
       // the object alive across the dispatch_sync below.
@@ -183,7 +293,7 @@ static bool packArguments(PyObject *args, std::vector<ArgInfo> *out) {
       info.bytesLen = PyBytes_GET_SIZE(arg);
     } else {
       PyErr_Format(PyExc_TypeError,
-                   "Arg %zd: expected an MPS tensor or the "
+                   "Arg %zd: expected an MPS tensor, a SharedBuffer or the "
                    "packed scalar bytes",
                    i);
       return false;
@@ -208,7 +318,8 @@ static void bindArguments(id<MTLComputeCommandEncoder> enc,
 }
 
 static void encodeDispatch(MetalKernelObject *self, const LaunchGeometry &geom,
-                           const std::vector<ArgInfo> &argInfos) {
+                           const std::vector<ArgInfo> &argInfos,
+                           NSArray *resident) {
   // Dispatch on stream->queue() (serial) to serialize with other MPS ops.
   // Don't call endKernelCoalescing(): reusing torch's cached encoder
   // coalesces back-to-back dispatches and RAW deps are still honored.
@@ -226,11 +337,21 @@ static void encodeDispatch(MetalKernelObject *self, const LaunchGeometry &geom,
 
         bindArguments(enc, argInfos);
 
+        if (resident.count) {
+          std::vector<id<MTLResource>> rs;
+          for (id<MTLBuffer> b in resident)
+            rs.push_back(b);
+          [enc useResources:rs.data()
+                      count:rs.size()
+                      usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+        }
+
         MTLSize threadgroups = MTLSizeMake(geom.tx / geom.gx, geom.ty / geom.gy,
                                            geom.tz / geom.gz);
         MTLSize threadsPerGroup = MTLSizeMake(geom.gx, geom.gy, geom.gz);
         [enc dispatchThreadgroups:threadgroups
             threadsPerThreadgroup:threadsPerGroup];
+        reportFailure(stream);
       }
     });
   }
@@ -247,13 +368,22 @@ static PyObject *MetalKernel_call(MetalKernelObject *self, PyObject *args,
     if (!packArguments(args, &argInfos))
       return NULL;
 
+    if (kwargFlag(kwargs, "exposes_addresses"))
+      for (const ArgInfo &info : argInfos)
+        if (info.kind == ArgInfo::TENSOR)
+          [exposedBuffers() addObject:info.buf];
+    NSArray *resident = kwargFlag(kwargs, "reads_addresses")
+                            ? [[exposedBuffers() allObjects] retain]
+                            : nil;
+
     // Nothing below touches Python, and the args tuple keeps the borrowed
     // pointers in argInfos alive. Holding the GIL here would deadlock anything
     // on the MPS queue that wants it.
     {
       ReleasedGil unlocked;
-      encodeDispatch(self, geom, argInfos);
+      encodeDispatch(self, geom, argInfos, resident);
     }
+    [resident release];
     Py_RETURN_NONE;
   });
 }
@@ -387,9 +517,46 @@ static PyObject *py_is_available(PyObject *self, PyObject *Py_UNUSED(args)) {
   return PyBool_FromLong(MTLCreateSystemDefaultDevice() != nil);
 }
 
+// The address a shader dereferences: data_ptr() is the MTLBuffer object.
+static PyObject *py_gpu_address(PyObject *self, PyObject *args) {
+  return guarded([&]() -> PyObject * {
+    PyObject *arg = NULL;
+    if (!PyArg_ParseTuple(args, "O", &arg))
+      return NULL;
+    if (!THPVariable_Check(arg)) {
+      PyErr_SetString(PyExc_TypeError, "expected a tensor");
+      return NULL;
+    }
+
+    at::Tensor t = THPVariable_Unpack(arg);
+    if (!t.defined() || !t.has_storage()) {
+      PyErr_SetString(PyExc_RuntimeError,
+                      "tensor is undefined or has no storage");
+      return NULL;
+    }
+    if (!t.is_mps()) {
+      PyErr_Format(PyExc_RuntimeError, "tensor must be on MPS device, got %s",
+                   t.device().str().c_str());
+      return NULL;
+    }
+
+    id<MTLBuffer> buf = getMTLBufferStorage(t);
+    if (!buf) {
+      PyErr_SetString(PyExc_RuntimeError, "tensor has no Metal buffer");
+      return NULL;
+    }
+    const uint64_t addr =
+        [buf gpuAddress] + (uint64_t)(t.storage_offset() * t.element_size());
+    [exposedBuffers() addObject:buf];
+    return PyLong_FromUnsignedLongLong(addr);
+  });
+}
+
 static PyMethodDef module_methods[] = {
     {"load_metallib", py_load_metallib, METH_VARARGS, NULL},
     {"is_available", py_is_available, METH_NOARGS, NULL},
+    {"alloc_shared", py_alloc_shared, METH_VARARGS, NULL},
+    {"gpu_address", py_gpu_address, METH_VARARGS, NULL},
     {NULL}};
 
 static struct PyModuleDef module_def = {
@@ -405,9 +572,13 @@ PyMODINIT_FUNC PyInit_metal_torch(void) {
     return NULL;
   if (PyType_Ready(&MetalLibraryType) < 0)
     return NULL;
+  if (PyType_Ready(&SharedBufferType) < 0)
+    return NULL;
   Py_INCREF(&MetalKernelType);
   Py_INCREF(&MetalLibraryType);
+  Py_INCREF(&SharedBufferType);
   PyModule_AddObject(m, "MetalKernel", (PyObject *)&MetalKernelType);
   PyModule_AddObject(m, "MetalLibrary", (PyObject *)&MetalLibraryType);
+  PyModule_AddObject(m, "SharedBuffer", (PyObject *)&SharedBufferType);
   return m;
 }
