@@ -49,7 +49,7 @@ Extensions live in subdirectories, each built as a separate Triton wheel:
 
 ## Prerequisites
 
-- C++ compiler with C++17 support
+- C++ compiler with C++20 support
 - CMake
 - GitHub CLI ([`gh`]), for downloading pre-built dependencies (optional)
 - Ninja

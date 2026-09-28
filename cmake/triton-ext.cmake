@@ -51,7 +51,7 @@ macro(configure_triton_extension)
     # -------------------------------------------------------------------------
     # C++ standard — must match Triton and LLVM.
     # -------------------------------------------------------------------------
-    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD 20)
     set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
     find_package(Python COMPONENTS Interpreter REQUIRED)

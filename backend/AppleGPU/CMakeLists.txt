@@ -52,7 +52,7 @@ target_compile_options(TritonAppleGPUBackend PRIVATE
 set_target_properties(TritonAppleGPUBackend PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     OUTPUT_NAME "applegpu_backend"
-    CXX_STANDARD 17)
+    CXX_STANDARD 20)
 
 install(TARGETS TritonAppleGPUBackend
         LIBRARY DESTINATION triton_apple_backend)
