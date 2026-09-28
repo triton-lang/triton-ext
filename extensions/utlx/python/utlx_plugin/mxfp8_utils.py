@@ -114,7 +114,7 @@ def _amax_to_e8m0_and_quantize(
         FLOAT_MAX: tl.constexpr = 448.0
     else:
         tl.static_assert(dtype == tl.float8e5)
-        FLOAT_MAX: tl.constexpr = 57344.0
+        FLOAT_MAX = 57344.0
 
     scale_u32, quant_scale = _fused_amax_to_e8m0(block_amax, 1.0 / FLOAT_MAX)
     scale_e8m0 = scale_u32.to(tl.uint8)
@@ -154,7 +154,7 @@ def _to_mxfp8_32x32_block(
         FLOAT_MAX: tl.constexpr = 448.0
     else:
         tl.static_assert(dtype == tl.float8e5)
-        FLOAT_MAX: tl.constexpr = 57344.0
+        FLOAT_MAX = 57344.0
 
     data_reshaped = tl.reshape(data_input, [BLOCK_M, NUM_SCALES, VEC_SIZE])
 
