@@ -7,7 +7,10 @@ name = "triton-apple-backend"
 version = "0.1.0"
 description = "Apple GPU backend for Triton (Metal)"
 requires-python = ">=3.10"
-dependencies = ["torch"]
+# torch is the Metal runtime (MPS buffers and stream), used only on macOS. On
+# other platforms the wheel is compile-only and pulling torch would also pull
+# torch's own `triton` pin over the one this repo builds against.
+dependencies = ["torch; sys_platform == 'darwin'"]
 
 [project.entry-points."triton.backends"]
 apple = "triton_apple_backend"
