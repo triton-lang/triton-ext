@@ -39,6 +39,7 @@ def read_triton_hash():
     dir = os.path.dirname(os.path.abspath(__file__))
     file = os.path.join(dir, "triton-hash.txt")
     hash = open(file).read().strip()
+    LOG.debug(f"Found Triton hash: {hash}")
     return hash
 
 
@@ -68,24 +69,30 @@ def download_artifact(artifact_name):
 
 def main(commit: str | None, os_name: str | None, arch: str | None,
          build_number: str | None, dry_run: bool):
-
-    # Fetch LLVM build info from the pinned Triton revision if any fields are missing.
+    # If not provided, fetch the LLVM commit to download from the pinned
+    # Triton's LLVM build info.
+    pinned_triton_hash = read_triton_hash()
     build_info = None
-    if not commit or not build_number:
-        triton_rev = read_triton_hash()
-        LOG.debug(f"Found Triton hash: {triton_rev}")
-        build_info = fetch_llvm_build_info(triton_rev)
-        LOG.debug(f"Fetched LLVM build info: {build_info}")
-        assert build_info is not None
-
     if not commit:
+        build_info = fetch_llvm_build_info(pinned_triton_hash)
+        LOG.debug(f"Fetched LLVM build info: {build_info}")
         assert build_info is not None
         commit = build_info["llvm_hash"]
         LOG.debug(f"Found LLVM hash: {commit}")
+
+    # If not provided, do the same as above for the build number; default to 1.
     if not build_number:
-        assert build_info is not None
-        build_number = str(build_info["build_number"])
-        LOG.debug(f"Found LLVM build number: {build_number}")
+        if not build_info:
+            build_info = fetch_llvm_build_info(pinned_triton_hash)
+            LOG.debug(f"Fetched LLVM build info: {build_info}")
+        if build_info["llvm_hash"].startswith(commit):
+            build_number = str(build_info["build_number"])
+            LOG.debug(f"Found LLVM build number: {build_number}")
+        else:
+            LOG.warning(
+                f"LLVM hash {commit} does not match the hash in the pinned "
+                f"Triton; defaulting to build_number = 1")
+            build_number = "1"
 
     # If no OS or architecture is provided, probe the current system.
     probed_os, probed_arch = probe_sysinfo.run(refine_os=True)
@@ -98,7 +105,8 @@ def main(commit: str | None, os_name: str | None, arch: str | None,
     artifact = get_artifact_name(commit, os_name, arch, build_number)
     if not dry_run:
         tar_gz = download_artifact(artifact)
-        if build_info:
+        if build_info and build_info["llvm_hash"].startswith(commit) and str(
+                build_info["build_number"]) == build_number:
             common.verify_checksum(
                 tar_gz, build_info["sha256sum"][f"{os_name}-{arch}"])
         common.extract_artifact(tar_gz)
