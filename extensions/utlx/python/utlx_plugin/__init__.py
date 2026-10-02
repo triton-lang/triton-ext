@@ -407,6 +407,52 @@ if not _register_compiler_dispatch():
     _patch_visit_with()
 
 
+def _patch_verify_loop_carried_variable():
+    """Reject loop-carried TLX values whose type changes inside the loop.
+
+    Upstream's ``CodeGenerator._verify_loop_carried_variable`` only compares
+    types for ``tl.tensor``, so a TLX value -- e.g. a 2-buffer ``local_alloc``
+    reassigned to one ``local_view`` of it -- slips through and the mismatch
+    surfaces later as a raw MLIR verifier error on ``scf.for``/``scf.while``.
+    Meta's fork extends the check to TLX values; do the same here.
+
+    Compare the Python-side ``.type``, as upstream does, not the IR handles:
+    the check runs after the loop's dry-run block is erased, so ``loop_val``'s
+    handle is already dangling.
+    """
+    import triton.compiler.code_generator as _cg
+
+    from .types import tlx_value
+
+    if getattr(_cg.CodeGenerator, "_utlx_verify_loop_carried", False):
+        return
+
+    _orig_verify = _cg.CodeGenerator._verify_loop_carried_variable
+
+    def _verify_loop_carried_variable(self, name, loop_val, live_val):
+        _orig_verify(self, name, loop_val, live_val)
+        if not isinstance(loop_val, tlx_value):
+            return
+        try:
+            same = loop_val.type == live_val.type
+        except NotImplementedError:
+            # tl.base_type's default __eq__; nothing structural to compare.
+            return
+        if not same:
+            # Same wording as upstream's tl.tensor check.
+            raise AssertionError(
+                f'Loop-carried variable {name} has initial type '
+                f'{live_val.type} but is re-assigned to {loop_val.type} in '
+                f'loop! Please make sure that the type stays consistent.')
+
+    _cg.CodeGenerator._verify_loop_carried_variable = (
+        _verify_loop_carried_variable)
+    _cg.CodeGenerator._utlx_verify_loop_carried = True
+
+
+_patch_verify_loop_carried_variable()
+
+
 def _make_tlx_op_builder():
     """Build a hybrid op-builder class for tlx (non-gluon) kernels.
 
