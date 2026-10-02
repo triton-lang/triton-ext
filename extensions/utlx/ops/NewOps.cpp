@@ -614,6 +614,29 @@ void utlx::createClusterCtaRank(TritonOpBuilder &self,
 // Memory ops
 // ---------------------------------------------------------------------------
 
+// Triton main gives AsyncCopyGlobalToLocalOp a cachePolicy attr and isVolatile
+// flag; release/3.8 instead has cache/evict enums with defaults. The int
+// overload is preferred and drops out via SFINAE when the main signature is
+// missing.
+template <typename OpT>
+static auto createAsyncCopyGlobalToLocal(int, mlir::OpBuilder &builder,
+                                         mlir::Location loc, mlir::Type token,
+                                         mlir::Value src, mlir::Value result,
+                                         mlir::Value mask, mlir::Value other)
+    -> decltype(OpT::create(builder, loc, token, src, result, mask, other,
+                            mlir::Attribute(), false)) {
+  return OpT::create(builder, loc, token, src, result, mask, other,
+                     /*cachePolicy=*/mlir::Attribute(), /*isVolatile=*/false);
+}
+
+template <typename OpT>
+static OpT createAsyncCopyGlobalToLocal(long, mlir::OpBuilder &builder,
+                                        mlir::Location loc, mlir::Type token,
+                                        mlir::Value src, mlir::Value result,
+                                        mlir::Value mask, mlir::Value other) {
+  return OpT::create(builder, loc, token, src, result, mask, other);
+}
+
 /// utlx_async_load(result_slot, src, result_memdesc, [mask, other,]
 /// useBulk_flag,
 ///                  [bulk_size, barrier])
@@ -648,9 +671,8 @@ void utlx::createAsyncLoad(TritonOpBuilder &self,
   // "operand count (N) does not match the total size (0) specified in
   // attribute 'operandSegmentSizes'".
   auto token = self.getBuilder().getType<ttg::AsyncTokenType>();
-  auto op = ttg::AsyncCopyGlobalToLocalOp::create(
-      self.getBuilder(), self.getLastLoc(), token, src, result, mask, other,
-      /*cachePolicy=*/mlir::Attribute(), /*isVolatile=*/false);
+  auto op = createAsyncCopyGlobalToLocal<ttg::AsyncCopyGlobalToLocalOp>(
+      0, self.getBuilder(), self.getLastLoc(), token, src, result, mask, other);
   // NB: op->getResult(0), not op.getResult(). This op has an *operand* named
   // `result` (the destination memdesc), so the generated getResult() accessor
   // returns that operand and shadows Operation::getResult() -- which silently
