@@ -1,0 +1,189 @@
+name: Publish triton-utlx
+# Builds extensions/utlx into the `triton-utlx` wheel and publishes it to PyPI.
+#
+# libutlx.so is compiled against Triton's C++ headers and links against
+# libtriton.so, but the PyPI Triton wheels ship no headers. So this builds the
+# Triton release that extensions/utlx/pyproject.toml pins (`triton~=X.Y.Z`)
+# from source with TRITON_EXT_ENABLED=1, which writes the headers into the
+# source tree, and builds the plugin against that. The result runs against the
+# stock PyPI Triton of that release, which exports every symbol it needs; the
+# smoke test below checks exactly that.
+#
+# The build runs in the manylinux_2_28 image Triton's own wheels use, so the
+# wheel can carry a manylinux_2_28 tag. It is tagged `py3-none` because the
+# plugin is loaded by libtriton, not by the interpreter.
+#
+# Publishing uses PyPI Trusted Publishing, so no token is stored here. A
+# triton-utlx owner must first add a publisher at
+# https://pypi.org/manage/project/triton-utlx/settings/publishing/ with
+# repository triton-lang/triton-ext, workflow `publish-utlx.yml` and environment
+# `pypi` (and the same on test.pypi.org with environment `testpypi`).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Version to publish, e.g. 3.8.0.post3. Must be the pinned Triton
+          release or a .postN of it; PyPI never accepts a version twice.
+        type: string
+        required: true
+      publish_to:
+        description: Package index to publish to (`none` only builds and tests).
+        type: choice
+        options: [none, testpypi, pypi]
+        default: none
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build triton-utlx ${{ inputs.version }}
+    runs-on: ubuntu-22.04
+    container: quay.io/pypa/manylinux_2_28_x86_64
+    timeout-minutes: 300
+    defaults: {run: {shell: bash}}
+    env:
+      VERSION: ${{ inputs.version }}
+
+    steps:
+      - name: Checkout triton-ext
+        uses: actions/checkout@v6.0.2
+
+      - name: Resolve versions
+        id: versions
+        run: |
+          PYPROJECT=extensions/utlx/pyproject.toml
+          TRITON_VERSION=$(sed -nE 's/.*"triton~=([0-9.]+)".*/\1/p' "$PYPROJECT")
+          if [ -z "$TRITON_VERSION" ]; then
+            echo "::error::no \"triton~=X.Y.Z\" dependency in $PYPROJECT"
+            exit 1
+          fi
+          # The wheel's triton~= pin only stays truthful if the version tracks
+          # the Triton release it was built against.
+          case "$VERSION" in
+            "$TRITON_VERSION" | "$TRITON_VERSION".post[0-9]*) ;;
+            *)
+              echo "::error::version $VERSION must be $TRITON_VERSION or $TRITON_VERSION.postN"
+              exit 1
+              ;;
+          esac
+          echo "triton_version=$TRITON_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building triton-utlx $VERSION against Triton v$TRITON_VERSION"
+          # Pin Triton's download cache (LLVM lives under it) to a known path.
+          echo "TRITON_HOME=$GITHUB_WORKSPACE/.triton-home" >> "$GITHUB_ENV"
+
+      - name: Checkout Triton v${{ steps.versions.outputs.triton_version }}
+        uses: actions/checkout@v6.0.2
+        with:
+          repository: triton-lang/triton
+          ref: v${{ steps.versions.outputs.triton_version }}
+          path: triton
+
+      - name: Setup virtual environment
+        run: |
+          /opt/python/cp311-cp311/bin/python -m venv /opt/venv
+          echo "/opt/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Build Triton with extension headers
+        # Setup downloads the LLVM build Triton pins (the almalinux one, given
+        # this image's glibc) into $TRITON_HOME/.triton/llvm.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r triton/python/requirements.txt
+          cd triton
+          TRITON_EXT_ENABLED=1 MAX_JOBS=$(nproc) \
+            python -m pip install -e . --no-build-isolation
+          test -d python/triton/include/triton
+
+      - name: Build the wheel
+        run: |
+          python -m pip install "scikit-build-core>=0.10" "cmake>=3.20" ninja wheel
+          sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" extensions/utlx/pyproject.toml
+          LLVM_INSTALL_DIR="$TRITON_HOME/.triton/llvm/llvm-almalinux-x64" \
+          TRITON_WHEEL_DIR="$PWD/triton/python/triton" \
+            python -m pip wheel ./extensions/utlx --no-build-isolation --no-deps -v -w dist
+          python -m wheel tags --remove --python-tag py3 --abi-tag none \
+            --platform-tag manylinux_2_28_x86_64 dist/triton_utlx-*.whl
+          ls -l dist
+
+      - name: Check glibc and libstdc++ symbol versions
+        # Every versioned symbol libutlx.so needs must exist in this image's
+        # system libc and libstdc++, or the manylinux_2_28 tag is a lie.
+        run: |
+          mkdir -p /tmp/whl
+          python -m zipfile -e dist/triton_utlx-*.whl /tmp/whl
+          SO=/tmp/whl/utlx_plugin/libutlx.so
+          readelf -d "$SO" | grep -E 'NEEDED|RPATH|RUNPATH'
+          versions() { objdump -T "$1" | grep -oE "\b$2[0-9.]+" | sort -u; }
+          STATUS=0
+          for PAIR in GLIBC_:/usr/lib64/libc.so.6 GLIBCXX_:/usr/lib64/libstdc++.so.6; do
+            PREFIX=${PAIR%%:*} LIB=${PAIR#*:}
+            MISSING=$(comm -23 <(versions "$SO" "$PREFIX") <(versions "$LIB" "$PREFIX"))
+            if [ -n "$MISSING" ]; then
+              echo "::error::libutlx.so needs ${MISSING//$'\n'/ }, which $LIB lacks"
+              STATUS=1
+            fi
+          done
+          exit $STATUS
+
+      - name: Smoke test against PyPI Triton
+        # Run from /tmp: the workspace holds a `triton/` checkout that would
+        # shadow the installed package.
+        run: |
+          WHEEL=$(ls "$PWD"/dist/triton_utlx-*.whl)
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install "$WHEEL"
+          cd /tmp
+          /tmp/smoke/bin/python - <<'EOF'
+          import ctypes, importlib.metadata as md, os, subprocess
+          import triton
+          import utlx_plugin, tlx  # noqa: F401
+          plugin = os.path.join(os.path.dirname(utlx_plugin.__file__), "libutlx.so")
+          libtriton = os.path.join(os.path.dirname(triton.__file__), "_C", "libtriton.so")
+          print("triton", triton.__version__, "| triton-utlx", md.version("triton-utlx"))
+          assert os.environ.get("TRITON_PLUGIN_PATHS") == plugin, os.environ.get("TRITON_PLUGIN_PATHS")
+
+          def syms(path, flag):
+              out = subprocess.check_output(["nm", "-D", flag, path], text=True)
+              return {line.split()[-1] for line in out.splitlines() if line.strip()}
+
+          # Unversioned undefined symbols are the ones libtriton must provide.
+          needed = {s for s in syms(plugin, "--undefined-only") if "@" not in s}
+          missing = needed - syms(libtriton, "--defined-only")
+          missing -= {"__gmon_start__", "_ITM_registerTMCloneTable", "_ITM_deregisterTMCloneTable"}
+          assert not missing, f"{len(missing)} symbols missing from libtriton: {sorted(missing)[:10]}"
+          ctypes.CDLL(plugin)
+          print(f"libutlx.so loads; all {len(needed)} libtriton symbols resolve")
+          EOF
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: triton-utlx-wheel
+          path: dist/*.whl
+          if-no-files-found: error
+
+  publish:
+    name: Publish to ${{ inputs.publish_to }}
+    needs: build
+    if: inputs.publish_to != 'none'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.publish_to }}
+      url: ${{ inputs.publish_to == 'pypi' && 'https://pypi.org/p/triton-utlx' || 'https://test.pypi.org/p/triton-utlx' }}
+    permissions:
+      id-token: write  # PyPI Trusted Publishing (OIDC)
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: triton-utlx-wheel
+          path: dist
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          repository-url: ${{ inputs.publish_to == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
