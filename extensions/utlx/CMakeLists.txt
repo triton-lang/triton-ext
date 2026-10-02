@@ -115,6 +115,20 @@ if(NOT EXISTS "${TRITON_WHEEL_INCLUDE_DIR}/triton/Dialect/Triton/IR/TritonTypeEn
     target_compile_definitions(${TRITON_EXT_NAME} PRIVATE UTLX_TRITON_INT_ADDR_SPACE)
 endif()
 
+# Likewise, TMEMSubSliceOp's derived builder gained a trailing `int dim` on
+# Triton main; release/3.8's is (alloc, offset, size) and slices the last dim.
+set(_utlx_ttng_ops_td
+    "${TRITON_WHEEL_INCLUDE_DIR}/triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUOps.td")
+if(EXISTS "${_utlx_ttng_ops_td}")
+    file(READ "${_utlx_ttng_ops_td}" _utlx_ttng_ops_td_content)
+    string(FIND "${_utlx_ttng_ops_td_content}" "\"int\":$size, \"int\":$dim"
+           _utlx_tmem_subslice_dim_pos)
+    if(_utlx_tmem_subslice_dim_pos EQUAL -1)
+        message(STATUS "uTLX: TMEMSubSliceOp has no dim builder — enabling UTLX_TRITON_TMEM_SUBSLICE_NO_DIM")
+        target_compile_definitions(${TRITON_EXT_NAME} PRIVATE UTLX_TRITON_TMEM_SUBSLICE_NO_DIM)
+    endif()
+endif()
+
 # Shared compile flags + link-only-against-libtriton (single source of truth).
 target_link_libraries(${TRITON_EXT_NAME} PRIVATE triton_ext::plugin)
 # uTLX additionally disables C++ exceptions.

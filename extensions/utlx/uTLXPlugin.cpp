@@ -16,8 +16,6 @@
 #include "triton/Version.h"
 #include <iterator>
 
-#include <iterator>
-
 #ifndef TRITON_EXT_VERSION
 #define TRITON_EXT_VERSION "0.0.0"
 #endif
@@ -206,6 +204,13 @@ static void createTMEMSubSlice(TritonOpBuilder &self,
   if (!offset || !size)
     return;
 
+#ifdef UTLX_TRITON_TMEM_SUBSLICE_NO_DIM
+  // release/3.8's derived builder has no `dim` and always slices the last
+  // dimension, which is what TLX's local_slice wants
+  // (UTLX_TRITON_TMEM_SUBSLICE_NO_DIM is set by CMake in that case).
+  operands[0] = self.create<ttng::TMEMSubSliceOp>(
+      operands[1], static_cast<int>(*offset), static_cast<int>(*size));
+#else
   // Upstream's derived builder gained a `dim`: the op can now slice either
   // physical-layout dimension, or the leading pipeline dimension of a
   // multi-buffered descriptor. TLX's local_slice always takes columns, so
@@ -217,6 +222,7 @@ static void createTMEMSubSlice(TritonOpBuilder &self,
 
   operands[0] = self.create<ttng::TMEMSubSliceOp>(
       operands[1], static_cast<int>(*offset), static_cast<int>(*size), dim);
+#endif
 }
 
 // --- utlx_memdesc_subslice: Rectangular subslice of a memdesc ---
@@ -943,15 +949,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       dialects,
       std::size(dialects),
       ops,
-<<<<<<< HEAD
       std::size(ops),
-||||||| parent of 764d029 ([uTLX][WIP] AMD MFMA register layout: amd_mfma_layout, require/release_layout)
-      48, // numOps
-=======
-      std::size(ops), // numOps -- derived, so adding an op cannot silently
-                      // leave it unregistered
-
->>>>>>> 764d029 ([uTLX][WIP] AMD MFMA register layout: amd_mfma_layout, require/release_layout)
       TRITON_VERSION,
   };
   return &info;
