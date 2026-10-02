@@ -96,13 +96,52 @@ target_compile_definitions(${TRITON_EXT_NAME} PRIVATE
     TRITON_EXT_VERSION="${TRITON_EXT_VERSION}")
 
 # ---------------------------------------------------------------------------
-# Optional AMDGPU support (requires third_party AMD headers in the Triton wheel).
+# Optional AMDGPU support (requires the TritonAMDGPU dialect headers).
+#
+# Triton does not install those into the wheel, so also look in the Triton
+# source and build trees: TRITON_SOURCE_DIR (default: the checkout an editable
+# install's TRITON_WHEEL_DIR, <src>/python/triton, lives in) for the headers and
+# TRITON_BUILD_DIR (default: <src>/build/cmake.*) for their generated .inc
+# files. Both may be set as CMake variables or environment variables.
 # ---------------------------------------------------------------------------
-if(EXISTS "${TRITON_WHEEL_INCLUDE_DIR}/Dialect/TritonAMDGPU/IR/Dialect.h")
+set(_utlx_amd_header "Dialect/TritonAMDGPU/IR/Dialect.h")
+set(_utlx_amd_gen_header "amd/include/Dialect/TritonAMDGPU/IR/Ops.h.inc")
+if(EXISTS "${TRITON_WHEEL_INCLUDE_DIR}/${_utlx_amd_header}")
     message(STATUS "uTLX: AMDGPU dialect header found — enabling UTLX_HAS_AMDGPU")
     target_compile_definitions(${TRITON_EXT_NAME} PRIVATE UTLX_HAS_AMDGPU)
 else()
-    message(STATUS "uTLX: AMDGPU dialect header not found — AMD support disabled")
+    if(NOT DEFINED TRITON_SOURCE_DIR AND DEFINED ENV{TRITON_SOURCE_DIR})
+        set(TRITON_SOURCE_DIR "$ENV{TRITON_SOURCE_DIR}")
+    endif()
+    if(NOT DEFINED TRITON_SOURCE_DIR)
+        get_filename_component(TRITON_SOURCE_DIR "${TRITON_WHEEL_DIR}/../.." ABSOLUTE)
+    endif()
+    if(NOT DEFINED TRITON_BUILD_DIR AND DEFINED ENV{TRITON_BUILD_DIR})
+        set(TRITON_BUILD_DIR "$ENV{TRITON_BUILD_DIR}")
+    endif()
+    if(NOT DEFINED TRITON_BUILD_DIR)
+        file(GLOB _utlx_triton_build_dirs LIST_DIRECTORIES true
+             "${TRITON_SOURCE_DIR}/build/cmake.*")
+        foreach(_dir IN LISTS _utlx_triton_build_dirs)
+            if(EXISTS "${_dir}/third_party/${_utlx_amd_gen_header}")
+                set(TRITON_BUILD_DIR "${_dir}")
+                break()
+            endif()
+        endforeach()
+    endif()
+
+    if(EXISTS "${TRITON_SOURCE_DIR}/third_party/amd/include/${_utlx_amd_header}"
+       AND EXISTS "${TRITON_BUILD_DIR}/third_party/${_utlx_amd_gen_header}")
+        message(STATUS "uTLX: AMDGPU dialect headers found in ${TRITON_SOURCE_DIR} "
+                       "(generated: ${TRITON_BUILD_DIR}) — enabling UTLX_HAS_AMDGPU")
+        target_include_directories(${TRITON_EXT_NAME} SYSTEM PRIVATE
+            "${TRITON_SOURCE_DIR}/third_party/amd/include"
+            "${TRITON_BUILD_DIR}/third_party")
+        target_compile_definitions(${TRITON_EXT_NAME} PRIVATE UTLX_HAS_AMDGPU)
+    else()
+        message(STATUS "uTLX: AMDGPU dialect headers not found (set TRITON_SOURCE_DIR "
+                       "/ TRITON_BUILD_DIR) — AMD support disabled")
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
