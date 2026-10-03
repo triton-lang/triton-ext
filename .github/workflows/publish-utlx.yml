@@ -89,15 +89,18 @@ jobs:
       - name: Build Triton with extension headers
         # Setup downloads the LLVM build Triton pins (the almalinux one, given
         # this image's glibc) into $TRITON_HOME/.triton/llvm. Setup does not
-        # install the headers, so install CMake's `headers` component into the
-        # package dir, where triton-ext's CMake looks for them.
+        # install the headers, so install CMake's `headers` component and move
+        # it into the package dir, where triton-ext's CMake looks for them. The
+        # component copies python/ to include/python, so installing straight
+        # into python/triton would recurse into its own output.
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r triton/python/requirements.txt
           cd triton
           TRITON_EXT_ENABLED=1 MAX_JOBS=$(nproc) \
             python -m pip install -e . --no-build-isolation -v
-          cmake --install build/cmake.* --component headers --prefix python/triton > /dev/null
+          cmake --install build/cmake.* --component headers --prefix /tmp/triton-headers > /dev/null
+          mv /tmp/triton-headers/include python/triton/include
           test -d python/triton/include/triton
 
       - name: Build the wheel
