@@ -979,7 +979,10 @@ private:
 // After accelerate_matmul assigns DotOperandEncodingAttr to dot inputs,
 // this pass finds LocalLoadOps feeding DotOps and updates their source
 // MemDesc encodings to match what the dots require, propagating backward
-// through the MemDesc def chain (MemDescIndexOp → LocalAllocOp).
+// through the MemDesc def chain (MemDescIndexOp → LocalAllocOp) and forward
+// to the other views of the same buffer. Across a MemDescTransOp the encoding
+// is permuted, as in Meta's fork's LayoutPropagation, so the transposed view
+// stays verifier-consistent.
 // ===========================================================================
 
 class TLXInsertAndPropagateLayout
@@ -996,32 +999,107 @@ public:
            "requirements (combined InsertRequireLayout + PropagateLayout)";
   }
 
-  void propagateEncodingBackward(Value memDesc, Attribute targetEncoding,
-                                 DenseSet<Value> &visited) {
+  // The encoding a MemDescTransOp's source needs for its result to carry
+  // `resultEncoding`: the dialect's transpose inference, run with the inverse
+  // permutation.
+  static FailureOr<Attribute>
+  inferTransSourceEncoding(triton::gpu::MemDescTransOp transOp,
+                           Attribute resultEncoding) {
+    auto order = transOp.getOrder();
+    SmallVector<int32_t> inverse(order.size());
+    for (auto [i, dim] : llvm::enumerate(order))
+      inverse[dim] = i;
+    auto *inferLayout = dyn_cast<triton::DialectInferLayoutInterface>(
+        &resultEncoding.getDialect());
+    Attribute srcEncoding;
+    if (!inferLayout ||
+        failed(inferLayout->inferTransOpEncoding(
+            resultEncoding, transOp.getType().getShape(), inverse, srcEncoding,
+            transOp.getLoc())))
+      return failure();
+    return srcEncoding;
+  }
+
+  // The encoding a MemDescTransOp's result has when its source carries
+  // `srcEncoding`.
+  static FailureOr<Attribute>
+  inferTransResultEncoding(triton::gpu::MemDescTransOp transOp,
+                           Attribute srcEncoding) {
+    auto *inferLayout = dyn_cast<triton::DialectInferLayoutInterface>(
+        &srcEncoding.getDialect());
+    Attribute resultEncoding;
+    if (!inferLayout ||
+        failed(inferLayout->inferTransOpEncoding(
+            srcEncoding, transOp.getSrc().getType().getShape(),
+            transOp.getOrder(), resultEncoding, transOp.getLoc())))
+      return failure();
+    return resultEncoding;
+  }
+
+  // Give `memDesc` the encoding `targetEncoding`, then carry it to every view
+  // of the same buffer: backward through the def chain to the allocation, and
+  // forward from each value to the views taken of it (e.g. the memdesc_index a
+  // prologue async_copy writes through), so all of them agree.
+  LogicalResult propagateEncoding(Value memDesc, Attribute targetEncoding,
+                                  DenseSet<Value> &visited) {
     if (!visited.insert(memDesc).second)
-      return;
+      return success();
 
     auto memDescType = dyn_cast<triton::gpu::MemDescType>(memDesc.getType());
     if (!memDescType)
-      return;
+      return success();
 
     auto newType = triton::gpu::MemDescType::get(
         memDescType.getShape(), memDescType.getElementType(), targetEncoding,
         memDescType.getMemorySpace(), memDescType.getMutableMemory());
     memDesc.setType(newType);
 
-    if (auto defOp = memDesc.getDefiningOp()) {
-      for (auto operand : defOp->getOperands()) {
-        if (isa<triton::gpu::MemDescType>(operand.getType()))
-          propagateEncodingBackward(operand, targetEncoding, visited);
+    if (auto *defOp = memDesc.getDefiningOp()) {
+      if (auto transOp = dyn_cast<triton::gpu::MemDescTransOp>(defOp)) {
+        FailureOr<Attribute> srcEncoding =
+            inferTransSourceEncoding(transOp, targetEncoding);
+        if (failed(srcEncoding))
+          return transOp.emitError("cannot infer the source encoding of a "
+                                   "transposed view of ")
+                 << targetEncoding;
+        if (failed(propagateEncoding(transOp.getSrc(), *srcEncoding, visited)))
+          return failure();
+      } else {
+        for (auto operand : defOp->getOperands()) {
+          if (isa<triton::gpu::MemDescType>(operand.getType()) &&
+              failed(propagateEncoding(operand, targetEncoding, visited)))
+            return failure();
+        }
       }
     }
+
+    for (Operation *user : llvm::make_early_inc_range(memDesc.getUsers())) {
+      if (auto transOp = dyn_cast<triton::gpu::MemDescTransOp>(user)) {
+        if (transOp.getSrc() != memDesc)
+          continue;
+        FailureOr<Attribute> resultEncoding =
+            inferTransResultEncoding(transOp, targetEncoding);
+        if (failed(resultEncoding))
+          return transOp.emitError("cannot infer the encoding of a "
+                                   "transposed view of ")
+                 << targetEncoding;
+        if (failed(propagateEncoding(transOp.getResult(), *resultEncoding,
+                                     visited)))
+          return failure();
+      } else if (isa<triton::gpu::MemDescIndexOp,
+                     triton::gpu::MemDescSubsliceOp>(user)) {
+        if (failed(propagateEncoding(user->getResult(0), targetEncoding,
+                                     visited)))
+          return failure();
+      }
+    }
+    return success();
   }
 
   void runOnOperation() override {
     ModuleOp mod = getOperation();
 
-    mod.walk([&](triton::DotOp dotOp) {
+    WalkResult result = mod.walk([&](triton::DotOp dotOp) {
       SetVector<Operation *> backwardSet;
       BackwardSliceOptions options;
       options.inclusive = false;
@@ -1041,12 +1119,32 @@ public:
         if (!encoding)
           continue;
 
+        // The derived encoding takes its order from the loaded registers.
+        // Keep the order the memdesc already has instead, as fbtriton does: for
+        // a transposed view of a row-major load (tlx.local_trans) the register
+        // order would make the buffer column-major, which no direct-to-LDS
+        // async copy can write.
+        auto srcType = cast<triton::gpu::MemDescType>(
+            localLoadOp->getOperand(0).getType());
+        if (isa_and_nonnull<triton::gpu::SharedEncodingTrait>(
+                srcType.getEncoding())) {
+          SmallVector<unsigned> userOrder = triton::gpu::getOrder(srcType);
+          if (ArrayRef<unsigned>(userOrder) != encoding.getOrder())
+            encoding = triton::gpu::SwizzledSharedEncodingAttr::get(
+                encoding.getContext(), encoding.getVec(),
+                encoding.getPerPhase(), encoding.getMaxPhase(), userOrder,
+                encoding.getCGALayout());
+        }
+
         DenseSet<Value> visited;
-        propagateEncodingBackward(localLoadOp->getOperand(0),
-                                  cast<Attribute>(encoding), visited);
+        if (failed(propagateEncoding(localLoadOp->getOperand(0),
+                                     cast<Attribute>(encoding), visited)))
+          return WalkResult::interrupt();
       }
       return WalkResult::advance();
     });
+    if (result.wasInterrupted())
+      signalPassFailure();
   }
 };
 

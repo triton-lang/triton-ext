@@ -110,6 +110,35 @@ def visit_withAsyncTask(self, node):
     self.visit_compound_statement(node.body)
 
 
+def visit_withWarpPipelineStage(self, node):
+    """Emit the body inline, then the stage-border marker after it.
+
+    The marker is Gluon's: a ``rocdl.sched.barrier`` tagged with
+    ``triton.warp_pipeline.border`` (and ``.priority``). The hybrid tlx builder
+    inherits ``create_warp_pipeline_border`` from ``GluonOpBuilder``.
+    """
+    from triton.language.core import _unwrap_if_constexpr
+
+    target = getattr(self.builder.options, "arch", "")
+    if not str(target).startswith("gfx"):
+        raise ValueError(
+            "tlx.warp_pipeline_stage is only supported on AMD (HIP) targets")
+
+    context = node.items[0].context_expr
+    args = [_unwrap_if_constexpr(self.visit(arg)) for arg in context.args]
+    kwargs = {
+        kw.arg: _unwrap_if_constexpr(self.visit(kw.value))
+        for kw in context.keywords
+    }
+    # Validate the arguments the way the Python constructor does.
+    stage = _get_tlx().warp_pipeline_stage(*args, **kwargs)
+
+    self.visit_compound_statement(node.body)
+    priority = -1 if stage.priority is None else stage.priority
+    self.builder.create_warp_pipeline_border(stage.label or "cluster",
+                                             priority)
+
+
 def _validate_warp_group_start_ids(
     start_ids: List[int],
     num_warps: List[int],

@@ -7,6 +7,8 @@ __all__ = [
     # async_tasks
     "async_tasks",
     "async_task",
+    # warp_pipeline
+    "warp_pipeline_stage",
     # types
     "layout",
     "layout_encoding",
@@ -333,6 +335,7 @@ _install_make_tensor_descriptor_layout_patch()
 
 from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
 from .warp_ops import vote_ballot_sync, warp_redux  # noqa: E402
+from .warp_pipeline import warp_pipeline_stage  # noqa: E402
 
 from . import custom_stages  # noqa: E402
 from .compiler.semantic import install_semantic  # noqa: E402
@@ -451,6 +454,50 @@ def _patch_verify_loop_carried_variable():
 
 
 _patch_verify_loop_carried_variable()
+
+# Loop options Meta's fork adds to ``tl.range`` for NVIDIA automatic warp
+# specialization and its modulo scheduler. They are scheduling hints with no
+# meaning on upstream Triton, so they are accepted and dropped.
+_FORK_ONLY_RANGE_OPTIONS = frozenset({
+    "data_partition_factor",
+    "multi_cta",
+    "list_schedule_pick",
+    "mem_plan_pick",
+    "merge_epilogue",
+    "merge_epilogue_to_computation",
+    "merge_correction",
+    "separate_epilogue_store",
+    "tmem_alloc_algo",
+    "smem_alloc_algo",
+    "smem_budget",
+    "smem_circular_reuse",
+})
+
+
+def _patch_range_options():
+    """Let ``tl.range`` accept the fork's extra loop options.
+
+    TLX op kernels (e.g. the HSTU reference) pass them, and upstream's
+    ``range.__init__`` raises on the unknown keywords. Patch ``__init__`` in
+    place: the code generator recognises the iterator by identity
+    (``IteratorClass is language.range``), so a subclass would not work.
+    """
+    from triton.language import core as _core
+
+    if getattr(_core.range, "_utlx_fork_options", False):
+        return
+    _orig_init = _core.range.__init__
+
+    def __init__(self, *args, **kwargs):
+        for name in _FORK_ONLY_RANGE_OPTIONS.intersection(kwargs):
+            del kwargs[name]
+        _orig_init(self, *args, **kwargs)
+
+    _core.range.__init__ = __init__
+    _core.range._utlx_fork_options = True
+
+
+_patch_range_options()
 
 
 def _make_tlx_op_builder():
@@ -577,3 +624,9 @@ _compat.install_semantic_helpers()
 from . import _ctas_per_cga as _utlx_ctas_per_cga  # noqa: E402
 
 _utlx_ctas_per_cga.install()
+
+# Accept the fork's extra AMD compile options (LLVM codegen flags and the
+# sched-group-barrier scheduler knobs) -- see _hip_options.
+from . import _hip_options as _utlx_hip_options  # noqa: E402
+
+_utlx_hip_options.install()

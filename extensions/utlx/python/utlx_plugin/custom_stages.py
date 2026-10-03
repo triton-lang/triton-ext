@@ -140,6 +140,10 @@ def inspect_stages_hook(self=None,
             passes.common.add_canonicalizer(pm)
             passes.common.add_cse(pm)
             passes.common.add_symbol_dce(pm)
+            # Consume tlx.warp_pipeline_stage border markers. Gluon runs this in
+            # gluon_to_ttgir; make_llir already runs the conversion. Last, so
+            # the cleanup passes above cannot strip the markers first.
+            amd.passes.ttgpuir.add_warp_pipeline(pm)
             if getattr(options, 'instrumentation_mode', 'none') == "fpsan":
                 amd.passes.ttgpuir.add_fp_sanitizer(pm)
                 passes.ttgpuir.add_fp_sanitizer(pm)
