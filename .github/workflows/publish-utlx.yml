@@ -69,6 +69,14 @@ jobs:
               exit 1
               ;;
           esac
+          # PYPI_README.md becomes the PyPI project description; keep its
+          # heading from advertising a Triton line the wheel was not built for.
+          README=extensions/utlx/PYPI_README.md
+          TRITON_MINOR=${TRITON_VERSION%.*}
+          if ! head -1 "$README" | grep -qF "Triton $TRITON_MINOR build"; then
+            echo "::error::$README heading must name \"Triton $TRITON_MINOR build\"; update it for the new pin"
+            exit 1
+          fi
           echo "triton_version=$TRITON_VERSION" >> "$GITHUB_OUTPUT"
           echo "Building triton-utlx $VERSION against Triton v$TRITON_VERSION"
           # Pin Triton's download cache (LLVM lives under it) to a known path.

@@ -8,6 +8,10 @@ name = "triton-utlx"
 # against an unchanged Triton. 3.8.0 itself is taken (and yanked) on PyPI.
 version = "3.8.0.post1"
 description = "uTLX: Triton Language Extensions distributed as a Plugin"
+# The PyPI project page. README.md is the developer guide; this one is for
+# wheel users and names the Triton release line, which publish-utlx.yml checks.
+readme = {file = "PYPI_README.md", content-type = "text/markdown"}
+license = {text = "MIT"}
 requires-python = ">=3.9"
 # libutlx.so is built against one Triton release line and its version check
 # enforces that. Without the bound, pip will happily pair this wheel with a
