@@ -4,8 +4,8 @@ name: Publish triton-utlx
 # libutlx.so is compiled against Triton's C++ headers and links against
 # libtriton.so, but the PyPI Triton wheels ship no headers. So this builds the
 # Triton release that extensions/utlx/pyproject.toml pins (`triton~=X.Y.Z`)
-# from source with TRITON_EXT_ENABLED=1, which writes the headers into the
-# source tree, and builds the plugin against that. The result runs against the
+# from source with TRITON_EXT_ENABLED=1, installs its headers into the source
+# tree, and builds the plugin against that. The result runs against the
 # stock PyPI Triton of that release, which exports every symbol it needs; the
 # smoke test below checks exactly that.
 #
@@ -88,13 +88,16 @@ jobs:
 
       - name: Build Triton with extension headers
         # Setup downloads the LLVM build Triton pins (the almalinux one, given
-        # this image's glibc) into $TRITON_HOME/.triton/llvm.
+        # this image's glibc) into $TRITON_HOME/.triton/llvm. Setup does not
+        # install the headers, so install CMake's `headers` component into the
+        # package dir, where triton-ext's CMake looks for them.
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r triton/python/requirements.txt
           cd triton
           TRITON_EXT_ENABLED=1 MAX_JOBS=$(nproc) \
-            python -m pip install -e . --no-build-isolation
+            python -m pip install -e . --no-build-isolation -v
+          cmake --install build/cmake.* --component headers --prefix python/triton > /dev/null
           test -d python/triton/include/triton
 
       - name: Build the wheel
