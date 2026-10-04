@@ -87,6 +87,8 @@ add_library(${TRITON_EXT_NAME} SHARED
     tlx/dialect/lib/Analysis/LayoutPropagation.cpp
     # Runtime op creation
     ops/NewOps.cpp
+    # Layout passes
+    passes/DotOperandLocalLoad.cpp
     # Ported passes - NVIDIA
     passes/nvidia/PruneUnusedBarriers.cpp
     passes/nvidia/PingPong.cpp)

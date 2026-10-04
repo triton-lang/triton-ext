@@ -891,6 +891,16 @@ static void addPingPongSyncPass(mlir::PassManager *pm,
 
 static void registerPingPongSyncPassFn() { utlx::registerPingPongSyncPass(); }
 
+// --- AMD passes ---
+static void addDotOperandLocalLoadPass(mlir::PassManager *pm,
+                                       const std::vector<std::string> &) {
+  pm->addPass(utlx::createDotOperandLocalLoadPass());
+}
+
+static void registerDotOperandLocalLoadPassFn() {
+  utlx::registerDotOperandLocalLoadPass();
+}
+
 // --- Ported AMD passes ---
 // NOTE: AMD barrier passes are disabled until triton-tlx-core-changes patch
 // is applied. Uncomment when patched triton is available:
@@ -942,6 +952,9 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
        registerPingPongPrepPassFn},
       {"utlx_ping_pong_sync", TRITON_EXT_VERSION, addPingPongSyncPass,
        registerPingPongSyncPassFn},
+      // AMD passes
+      {"utlx_dot_operand_local_load", TRITON_EXT_VERSION,
+       addDotOperandLocalLoadPass, registerDotOperandLocalLoadPassFn},
       // Ported AMD passes (disabled until patched triton is available)
       // {"utlx_amd_lower_barrier_ops", TRITON_EXT_VERSION,
       //  addAMDLowerBarrierOpsPass, registerAMDLowerBarrierOpsPassFn},

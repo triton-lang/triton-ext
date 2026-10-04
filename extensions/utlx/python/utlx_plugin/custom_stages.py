@@ -93,6 +93,10 @@ def inspect_stages_hook(self=None,
             passes.plugin.utlx_propagate_layout(pm, [])
 
             passes.ttgpuir.add_remove_layout_conversions(pm)
+            # uTLX: stock RemoveLayoutConversions never moves a dot-operand
+            # convert backwards, so a hand-pipelined loop-carried local_load
+            # would be staged through extra shared memory per dot.
+            passes.plugin.utlx_dot_operand_local_load(pm, [])
             amd.passes.ttgpuir.add_optimize_epilogue(pm)
             amd.passes.ttgpuir.add_optimize_dot_operands(pm, options.arch)
             amd.passes.ttgpuir.add_hoist_layout_conversions(pm)

@@ -21,6 +21,10 @@ void registerPingPongPrepPass();
 std::unique_ptr<mlir::Pass> createPingPongSyncPass();
 void registerPingPongSyncPass();
 
+// Layout passes
+std::unique_ptr<mlir::Pass> createDotOperandLocalLoadPass();
+void registerDotOperandLocalLoadPass();
+
 // AMD passes
 std::unique_ptr<mlir::Pass> createAMDLowerBarrierOpsPass();
 void registerAMDLowerBarrierOpsPass();
