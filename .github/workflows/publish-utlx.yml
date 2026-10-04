@@ -112,9 +112,16 @@ jobs:
           test -d python/triton/include/triton
 
       - name: Build the wheel
+        # With clang, as PyPI Triton and its LLVM are built. MLIR keys the
+        # TypeID of a template trait (Elementwise, IsTerminator, ...) by its
+        # compiler-spelled type name, which GCC and clang spell differently. A
+        # GCC-built plugin then disagrees with the PyPI libtriton about every
+        # such trait, e.g. op->hasTrait<OpTrait::Elementwise>() is false.
         run: |
+          dnf install -y clang
           python -m pip install "scikit-build-core>=0.10" "cmake>=3.20" ninja wheel
           sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" extensions/utlx/pyproject.toml
+          CC=clang CXX=clang++ \
           LLVM_INSTALL_DIR="$TRITON_HOME/.triton/llvm/llvm-almalinux-x64" \
           TRITON_WHEEL_DIR="$PWD/triton/python/triton" \
             python -m pip wheel ./extensions/utlx --no-build-isolation --no-deps -v -w dist
