@@ -13,6 +13,8 @@ import triton.language as tlang
 import triton.language.core as tl
 from triton.runtime.jit import jit
 
+from .types import _value_layout, layout_encoding
+
 
 def _uw(x):
     return tl._unwrap_if_constexpr(x)
@@ -54,9 +56,84 @@ def _require(semantic, src, layout):
     from the frontend type of the returned value, which would otherwise be an
     unencoded block_type.
     """
+    layout = _uw(layout)
     handle = semantic.builder.utlx_require_with_layout_carrier(
-        [src.handle, layout.handle])
+        [src.handle, _layout_carrier(semantic, src, layout)])
     return _carrier(handle, src.type.scalar)
+
+
+def _layout_carrier(semantic, src, layout):
+    """Return a carrier handle for ``layout``, as required for ``src``.
+
+    Layouts built by the ops in this module are already carriers. Encoding
+    objects such as ``tlx.layout`` (shape/stride) are attributes instead; give
+    them a poison value of the encoded type, as only its type is ever read.
+    """
+    if not isinstance(layout, layout_encoding):
+        return layout.handle
+    b = semantic.builder
+    shape = [int(d) for d in src.shape]
+    try:
+        enc = layout.to_ir(b, shape, src.dtype)
+    except TypeError:
+        enc = layout.to_ir(b)
+    return b.create_poison(
+        b.get_distributed_ty(src.dtype.to_ir(b), shape, enc))
+
+
+class _register_layout(_value_layout, layout_encoding):
+    """A register layout kept as a description until an op applies it.
+
+    The fork's layouts are attributes. As carrier values instead, every layout
+    a kernel defines lands in the IR whether used or not, and the module
+    verifier rejects one whose warp count does not match the kernel's -- e.g.
+    the 4-warp variant a kernel defines next to the 8-warp one a config picks.
+    These lower through :func:`_layout_carrier` only when applied, and are
+    constexprs, so they cross @triton.jit calls as the fork's do.
+    """
+
+    def to_ir(self, builder, *_):
+        # The extra arguments are the shape and dtype _layout_carrier offers
+        # layouts that depend on them; register layouts do not.
+        raise NotImplementedError
+
+
+class amd_mfma_layout_encoding(_register_layout):
+
+    def __init__(self, version, instr_shape, transposed, warps_per_cta):
+        self.version = version
+        self.instr_shape = list(instr_shape)
+        self.transposed = transposed
+        self.warps_per_cta = list(warps_per_cta)
+
+    def to_ir(self, builder, *_):
+        rank = len(self.warps_per_cta)
+        return builder.get_amd_mfma_layout(self.version, self.warps_per_cta,
+                                           self.instr_shape, self.transposed,
+                                           [], [1] * rank, 32)
+
+
+class dot_operand_layout_encoding(_register_layout):
+
+    def __init__(self, op_idx, parent, k_width):
+        self.op_idx = op_idx
+        self.parent = parent
+        self.k_width = k_width
+
+    def to_ir(self, builder, *_):
+        return builder.get_dot_operand_layout(self.op_idx,
+                                              self.parent.to_ir(builder),
+                                              self.k_width)
+
+
+class slice_layout_encoding(_register_layout):
+
+    def __init__(self, parent, dim):
+        self.parent = parent
+        self.dim = dim
+
+    def to_ir(self, builder, *_):
+        return builder.get_slice_layout(self.dim, self.parent.to_ir(builder))
 
 
 @tl.builtin
@@ -89,12 +166,9 @@ def amd_mfma_layout(version,
         raise ValueError("warps_per_cta must have 2 entries (or 3 with a "
                          f"leading batch dim); got {len(warps_per_cta)}")
 
-    b = _semantic.builder
-    args = [b.get_int32(int(version))]
-    args += [b.get_int32(int(v)) for v in instr_shape]
-    args.append(b.get_int32(1 if transposed else 0))
-    args += [b.get_int32(int(v)) for v in warps_per_cta]
-    return _carrier(b.utlx_make_amd_mfma_layout(args))
+    return tl.constexpr(
+        amd_mfma_layout_encoding(int(version), instr_shape,
+                                        bool(transposed), warps_per_cta))
 
 
 @tl.builtin
@@ -106,6 +180,14 @@ def dot_operand_layout(op_idx, parent, k_width=None, _semantic=None):
     """
     op_idx = _uw(op_idx)
     k_width = _uw(k_width)
+    parent = _uw(parent)
+    if isinstance(parent, _register_layout):
+        if not k_width:
+            raise ValueError("dot_operand_layout of an AMD MFMA layout needs "
+                             "k_width")
+        return tl.constexpr(
+            dot_operand_layout_encoding(int(op_idx), parent,
+                                               int(k_width)))
     b = _semantic.builder
     args = [
         parent.handle,
@@ -119,6 +201,9 @@ def dot_operand_layout(op_idx, parent, k_width=None, _semantic=None):
 def slice_layout(parent, dim, _semantic=None):
     """Layout of ``parent`` with dimension ``dim`` sliced away."""
     dim = _uw(dim)
+    parent = _uw(parent)
+    if isinstance(parent, _register_layout):
+        return tl.constexpr(slice_layout_encoding(parent, int(dim)))
     b = _semantic.builder
     return _carrier(
         b.utlx_make_slice_layout([parent.handle,
