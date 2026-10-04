@@ -148,6 +148,10 @@ class UTLXSemantic(_BaseSemantic[_TensorTy], Generic[_TensorTy]):
                     return _require(self, v, carrier)
                 return v
 
+            # A scalar condition would be splatted without the layout.
+            condition = self.to_tensor(condition)
+            if not condition.type.is_block():
+                condition = self.splat(condition, shape)
             condition, x, y = fix(condition), fix(x), fix(y)
         return super().where(condition, x, y)
 
