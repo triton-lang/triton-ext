@@ -58,6 +58,15 @@ def _promote(handle, type):
     return _carrier_type(type.scalar, type.shape, ir_ty)
 
 
+def _promote_value(v):
+    """``v`` with its type promoted as by :func:`_promote`."""
+    if isinstance(v, tl.tensor) and not _has_layout(v):
+        ty = _promote(v.handle, v.type)
+        if ty is not v.type:
+            return tl.tensor(v.handle, ty)
+    return v
+
+
 #: Whether this Triton routes result construction through an overridable
 #: factory. Without it the same promotion has to be patched onto tl.tensor:
 #: the `tensor` attribute is not usable for this because `to_tensor` also tests
@@ -110,7 +119,7 @@ class UTLXSemantic(_BaseSemantic[_TensorTy], Generic[_TensorTy]):
         unencoded splat.
         """
         lhs, rhs = super().binary_op_type_checking_impl(
-            lhs, rhs, *args, **kwargs)
+            _promote_value(lhs), _promote_value(rhs), *args, **kwargs)
         lhs_c, rhs_c = _has_layout(lhs), _has_layout(rhs)
         if lhs_c == rhs_c:
             return lhs, rhs
@@ -126,6 +135,8 @@ class UTLXSemantic(_BaseSemantic[_TensorTy], Generic[_TensorTy]):
 
     def where(self, condition, x, y):
         """``arith.select`` requires condition, both arms and result to agree."""
+        condition, x, y = (_promote_value(condition), _promote_value(x),
+                           _promote_value(y))
         carrier = next((v for v in (x, y, condition) if _has_layout(v)), None)
         if carrier is not None:
             shape = list(carrier.type.shape)
