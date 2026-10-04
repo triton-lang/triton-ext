@@ -89,6 +89,7 @@ add_library(${TRITON_EXT_NAME} SHARED
     ops/NewOps.cpp
     # Layout passes
     passes/DotOperandLocalLoad.cpp
+    passes/KeepLoadLayout.cpp
     # Ported passes - NVIDIA
     passes/nvidia/PruneUnusedBarriers.cpp
     passes/nvidia/PingPong.cpp)

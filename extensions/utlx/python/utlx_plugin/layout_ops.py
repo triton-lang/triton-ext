@@ -292,6 +292,44 @@ def swizzled_layout(vector_size,
 # work unchanged on non-AMD targets.
 
 
+@tl.builtin
+def _load_keeping_layout(ptr, mask, other, cache, _semantic=None):
+    """tt.load whose result keeps ``ptr``'s register layout.
+
+    The semantic's load shim strips pointer layouts. buffer_load offsets are
+    laid out on purpose, though -- often in a dot operand layout so the values
+    reach MFMA registers without a conversion through LDS -- and Meta's fork
+    loads straight into that layout. Do the same, giving ``mask`` and
+    ``other`` the pointer's layout since tt.load requires all three to agree.
+    """
+    from .compiler.semantic import UTLXSemantic, _has_layout, _promote_value
+    cache = _uw(cache) or ""
+    ptr = _promote_value(ptr)
+    if not _has_layout(ptr):
+        # As tl.load: mask and other may be constexprs or Python scalars.
+        mask, other = _uw(mask), _uw(other)
+        mask = None if mask is None else _semantic.to_tensor(mask)
+        other = None if other is None else _semantic.to_tensor(other)
+        return _semantic.load(ptr, mask, other, (), "", cache, "", False)
+
+    def like_ptr(v):
+        v = _uw(v)
+        if v is None:
+            return None
+        v = _semantic.to_tensor(v)
+        if not v.type.is_block():
+            v = _semantic.splat(v, list(ptr.type.shape))
+        return v if _has_layout(v) else _require(_semantic, v, ptr)
+
+    out = super(UTLXSemantic, _semantic).load(ptr, like_ptr(mask),
+                                              like_ptr(other), (), "", cache,
+                                              "", False)
+    # Coalesce would re-lay the tensor-of-pointer load out; the
+    # utlx_keep_load_layout pass restores this layout afterwards.
+    out.handle.set_attr("utlx.keep_layout", _semantic.builder.get_unit_attr())
+    return out
+
+
 @jit
 def buffer_load(base,
                 offsets,
@@ -301,8 +339,7 @@ def buffer_load(base,
                 contiguity: tl.constexpr = 1):
     """Load ``base[offsets]``; the AMD backend lowers this to a buffer load.
 
-    Layouts are stripped from the pointer operands by the load/store shim, so
-    nothing to do here beyond the address arithmetic.
+    The result has the layout of ``offsets``, if they carry one.
 
     ``contiguity`` is the fork's trusted vector-width promise. It is accepted
     and checked but not forwarded: the backend's own axis analysis picks the
@@ -310,8 +347,7 @@ def buffer_load(base,
     """
     tlang.static_assert(contiguity > 0 and (contiguity & (contiguity - 1)) == 0,
                         "contiguity must be a positive power of two")
-    return tlang.load(base + offsets, mask=mask, other=other,
-                      cache_modifier=cache)
+    return _load_keeping_layout(base + offsets, mask, other, cache)
 
 
 @jit

@@ -77,6 +77,7 @@ def inspect_stages_hook(self=None,
             pm.enable_debug()
             emuTF32 = False
             passes.ttgpuir.add_coalesce(pm)
+            passes.plugin.utlx_keep_load_layout(pm, [])
             passes.ttgpuir.add_f32_dot_tc(pm, emuTF32)
             passes.ttgpuir.add_remove_layout_conversions(pm)
             passes.ttgpuir.add_optimize_thread_locality(pm)
