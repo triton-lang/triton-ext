@@ -10,9 +10,13 @@ __all__ = [
     # warp_pipeline
     "warp_pipeline_stage",
     # amd_ops (Meta-fork AMD ops on upstream Triton)
+    "buffer_load_to_local",
+    "buffer_atomic_add",
     "assert_same_layout",
+    "rematerialized_range",
     "amd_register_resident",
     "amd_register_class_anchor",
+    "amd_scheduled_mfma",
     "amd_mfma_commit",
     "amd_sched_barrier",
     "amd_iglp_opt",
@@ -348,9 +352,13 @@ from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
 from .warp_ops import vote_ballot_sync, warp_redux  # noqa: E402
 from .warp_pipeline import warp_pipeline_stage  # noqa: E402
 from .amd_ops import (  # noqa: E402
+    buffer_load_to_local,
+    buffer_atomic_add,
     assert_same_layout,
+    rematerialized_range,
     amd_register_resident,
     amd_register_class_anchor,
+    amd_scheduled_mfma,
     amd_mfma_commit,
     amd_sched_barrier,
     amd_iglp_opt,
