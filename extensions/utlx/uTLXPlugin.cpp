@@ -919,6 +919,15 @@ static void registerRematDotOperandSlicesPassFn() {
   utlx::registerRematDotOperandSlicesPass();
 }
 
+static void addFallbackAsyncCopyPass(mlir::PassManager *pm,
+                                     const std::vector<std::string> &) {
+  pm->addPass(utlx::createFallbackAsyncCopyPass());
+}
+
+static void registerFallbackAsyncCopyPassFn() {
+  utlx::registerFallbackAsyncCopyPass();
+}
+
 // --- Ported AMD passes ---
 // NOTE: AMD barrier passes are disabled until triton-tlx-core-changes patch
 // is applied. Uncomment when patched triton is available:
@@ -977,6 +986,8 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
        registerKeepLoadLayoutPassFn},
       {"utlx_remat_dot_operand_slices", TRITON_EXT_VERSION,
        addRematDotOperandSlicesPass, registerRematDotOperandSlicesPassFn},
+      {"utlx_fallback_async_copy", TRITON_EXT_VERSION, addFallbackAsyncCopyPass,
+       registerFallbackAsyncCopyPassFn},
       // Ported AMD passes (disabled until patched triton is available)
       // {"utlx_amd_lower_barrier_ops", TRITON_EXT_VERSION,
       //  addAMDLowerBarrierOpsPass, registerAMDLowerBarrierOpsPassFn},

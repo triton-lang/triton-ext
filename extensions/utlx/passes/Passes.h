@@ -30,6 +30,9 @@ std::unique_ptr<mlir::Pass> createRematDotOperandSlicesPass();
 void registerRematDotOperandSlicesPass();
 
 // AMD passes
+std::unique_ptr<mlir::Pass> createFallbackAsyncCopyPass();
+void registerFallbackAsyncCopyPass();
+
 std::unique_ptr<mlir::Pass> createAMDLowerBarrierOpsPass();
 void registerAMDLowerBarrierOpsPass();
 

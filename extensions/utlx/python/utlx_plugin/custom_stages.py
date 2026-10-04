@@ -121,6 +121,9 @@ def inspect_stages_hook(self=None,
                                             use_block_pingpong)
             if use_async_copy:
                 amd.passes.ttgpuir.add_coalesce_async_copy(pm, options.arch)
+                # uTLX: copies into a pinned shared layout that transposes the
+                # global data cannot be direct-to-LDS; load them via registers.
+                passes.plugin.utlx_fallback_async_copy(pm, [])
             amd.passes.ttgpuir.add_convert_to_tensor_ops(pm)
             passes.common.add_canonicalizer(pm)
             passes.ttgpuir.add_remove_layout_conversions(pm)

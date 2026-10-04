@@ -93,7 +93,9 @@ add_library(${TRITON_EXT_NAME} SHARED
     passes/RematDotOperandSlices.cpp
     # Ported passes - NVIDIA
     passes/nvidia/PruneUnusedBarriers.cpp
-    passes/nvidia/PingPong.cpp)
+    passes/nvidia/PingPong.cpp
+    # Ported passes - AMD
+    passes/amd/FallbackAsyncCopy.cpp)
 add_dependencies(${TRITON_EXT_NAME} uTLXTableGen)
 
 target_compile_definitions(${TRITON_EXT_NAME} PRIVATE
