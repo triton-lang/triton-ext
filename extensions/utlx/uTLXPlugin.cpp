@@ -292,6 +292,48 @@ static void createMemDescReinterpret(TritonOpBuilder &self,
   operands[0] = self.create<ttg::MemDescReinterpretOp>(resultType, operands[1]);
 }
 
+// --- utlx_amd_extract_slice: Static slice of an encoded register tensor ---
+//
+// Emits amdg.extract_slice, which keeps the source layout, so a slice of a
+// dot-operand tensor is still a dot operand. Built by registered name, as for
+// amdg.init_barrier in uTLXConversionPatterns.cpp: the wheel ships no AMD
+// dialect headers. Leaves the slot empty if the source has no encoding or the
+// dialect is not loaded, and the caller falls back to reshape/split.
+static void createAMDExtractSlice(TritonOpBuilder &self,
+                                  std::vector<mlir::Value> &operands) {
+  // operands[0]              = result slot
+  // operands[1]              = source tensor (must carry an encoding)
+  // operands[2 .. 2+rank)    = result shape
+  // operands[2+rank .. end)  = offsets
+  if (operands.size() < 2)
+    return;
+  auto srcType = mlir::dyn_cast<mlir::RankedTensorType>(operands[1].getType());
+  if (!srcType || !srcType.getEncoding())
+    return;
+  size_t rank = srcType.getRank();
+  if (operands.size() != 2 + 2 * rank)
+    return;
+
+  llvm::SmallVector<int64_t> shape, offsets;
+  for (size_t i = 0; i < 2 * rank; ++i) {
+    auto value = extractConstantInt(operands[2 + i]);
+    if (!value)
+      return;
+    (i < rank ? shape : offsets).push_back(*value);
+  }
+
+  auto &builder = self.getBuilder();
+  auto name = mlir::RegisteredOperationName::lookup("amdg.extract_slice",
+                                                    builder.getContext());
+  if (!name)
+    return;
+  mlir::OperationState state(self.getLastLoc(), *name);
+  state.addOperands(operands[1]);
+  state.addAttribute("static_offsets", builder.getDenseI64ArrayAttr(offsets));
+  state.addTypes(srcType.clone(shape));
+  operands[0] = builder.create(state)->getResult(0);
+}
+
 // --- utlx_tmem_load: Load a TMEM buffer into registers ---
 //
 // Upstream's create_tmem_load binding takes a distributed result type, i.e. a
@@ -906,6 +948,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_tmem_subslice", createTMEMSubSlice},
       {"utlx_memdesc_subslice", createMemDescSubslice},
       {"utlx_memdesc_reinterpret", createMemDescReinterpret},
+      {"utlx_amd_extract_slice", createAMDExtractSlice},
       {"utlx_tmem_load", createTMEMLoad},
       {"utlx_tmem_store", createTMEMStore},
       {"utlx_local_store", createLocalStore},
