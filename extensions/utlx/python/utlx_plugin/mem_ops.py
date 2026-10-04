@@ -673,6 +673,9 @@ def local_load(
     src: tlx.buffered_tensor,
     token: Optional[tlx.async_token] = None,
     layout=None,
+    relaxed=False,
+    rematerialize_coordinates=False,
+    rematerialize_coordinates_group=None,
     _semantic=None,
 ) -> tl.tensor:
     """Load from SMEM/TMEM buffer into a register tensor.
@@ -680,6 +683,12 @@ def local_load(
     ``layout`` optionally names the register layout the result should land in
     (a carrier from e.g. ``amd_mfma_layout`` / ``dot_operand_layout``), matching
     the ``layout=`` that ``local_alloc`` already accepts.
+
+    ``relaxed`` and ``rematerialize_coordinates(_group)`` are Meta-fork AMD
+    lowering hints (skip the redundant async-copy dependency/wait count after
+    an explicit wait; recompute LDS addresses at the load). They are accepted
+    and ignored: the load keeps upstream's conservative wait tracking and
+    addressing, which yields the same values.
     """
     block_type = tl.block_type(src.type.element_ty, src.type.shape)
     storage = src.type.storage

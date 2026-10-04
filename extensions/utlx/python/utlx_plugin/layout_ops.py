@@ -211,22 +211,34 @@ def slice_layout(parent, dim, _semantic=None):
 
 
 @tl.builtin
-def require_layout(src, layout, pin=False, _semantic=None):
+def require_layout(src,
+                   layout,
+                   pin=False,
+                   late_address_compute=False,
+                   _semantic=None):
     """Require that ``src`` be materialised in ``layout``.
 
-    ``pin`` is accepted for source compatibility and currently ignored:
-    tlx.require_layout has no pin attribute to forward it to.
+    ``pin`` and ``late_address_compute`` are accepted for source compatibility
+    and currently ignored: tlx.require_layout has no attributes to forward
+    them to. Neither changes the values produced.
     """
     return _require(_semantic, src, layout)
 
 
 @tl.builtin
-def release_layout(src, _semantic=None):
+def release_layout(src, relaxed=False, _semantic=None):
     """Drop an explicit layout, returning ``src`` with a default encoding.
 
     Passes through anything that is not an IR tensor (constexprs, scalars) so it
     can be applied unconditionally in helpers that accept either.
+
+    ``relaxed`` is accepted for fork compatibility. There it lets layout
+    optimization remove the release; here every release lowers to a plain
+    convert_layout that later passes may fold anyway, so it has no effect.
     """
+    relaxed = tl._unwrap_if_constexpr(relaxed)
+    assert isinstance(relaxed, bool), (
+        f"relaxed must be a constexpr bool, got {type(relaxed).__name__}")
     if not isinstance(src, tl.tensor):
         return src
     handle = _semantic.builder.utlx_release_layout([src.handle])
