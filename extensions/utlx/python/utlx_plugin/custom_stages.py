@@ -205,6 +205,20 @@ def inspect_stages_hook(self=None,
         stages["ttgir"] = lambda src, metadata: make_ttgir_wrapper(
             src, metadata)
 
+        # As on NVIDIA: make_llir's shared-memory alias analysis (via
+        # ConvertWarpPipeline and AllocateAMDGPUSharedMemory) rejects
+        # tlx.local_alias and StorageAliasLocalAllocOp.
+        original_amd_llir = stages["llir"]
+
+        def make_amd_llir_wrapper(mod, metadata):
+            pm = ir.pass_manager(mod.context)
+            pm.enable_debug()
+            passes.plugin.utlx_storage_alias_lowering(pm, [])
+            passes.plugin.utlx_rewrite_local_alias(pm, [])
+            pm.run(mod, 'utlx_storage_alias')
+            return original_amd_llir(mod, metadata)
+
+        stages["llir"] = make_amd_llir_wrapper
     else:
         # NVIDIA/CUDA: replace make_ttir to inject plugin pass after TTIR
         def make_ttir_wrapper(mod, metadata, opt, cap):
