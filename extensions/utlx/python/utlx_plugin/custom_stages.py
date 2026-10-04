@@ -26,6 +26,38 @@ def is_in_thread_transpose_enabled(arch):
     ) if knobs.amd.use_in_thread_transpose is None else knobs.amd.use_in_thread_transpose
 
 
+# TTIR ops only TLX introduces. Fork TLX's tlx-fixup tags modules containing
+# them with `triton.skip_generic_pipeline`, and its software pipeliners return
+# early on that tag.
+_TLX_TTIR_OPS = frozenset({
+    "ttg.local_load",
+    "ttg.local_store",
+    "ttg.warp_specialize",
+    "ttg.warp_yield",
+    "ttg.warp_return",
+    "ttng.async_tma_copy_global_to_local",
+    "ttng.async_tma_copy_local_to_global",
+    "ttng.tmem_alloc",
+    "ttng.tmem_load",
+    "ttng.tmem_store",
+    "ttng.tc_gen5_mma",
+})
+
+
+def is_tlx_module(mod):
+    """Whether `mod` (TTIR) is a TLX kernel, by the same test as fork TLX."""
+    found = False
+
+    def visit(op):
+        nonlocal found
+        name = op.get_name()
+        if name.startswith("tlx.") or name in _TLX_TTIR_OPS:
+            found = True
+
+    mod.walk(visit)
+    return found
+
+
 _cached_key = None
 _cached_hash = None
 
@@ -60,6 +92,13 @@ def inspect_stages_hook(self=None,
         warp_size = getattr(options, 'warp_size', 64)
 
         def make_ttgir_wrapper(mod, metadata):
+            # TLX kernels place their own async copies, waits and stage
+            # borders. Stock Pipeline lowers and merges waits regardless, e.g.
+            # once a one-trip main loop folds away it merges the prologue and
+            # loop waits; WarpPipeline then pulls a buffer's local_loads into
+            # a stage that races the other warp group's copy into it.
+            hand_pipelined = is_tlx_module(mod)
+
             # Phase 1: Plugin ConvertTritonToTritonGPU
             pm = ir.pass_manager(mod.context)
             pm.enable_debug()
@@ -116,9 +155,10 @@ def inspect_stages_hook(self=None,
                 options.arch, use_async_copy)
 
             amd.passes.ttgpuir.add_optimize_descriptor_encoding(pm)
-            amd.passes.ttgpuir.add_schedule_loops(pm, options.num_stages)
-            amd.passes.ttgpuir.add_pipeline(pm, use_async_copy,
-                                            use_block_pingpong)
+            if not hand_pipelined:
+                amd.passes.ttgpuir.add_schedule_loops(pm, options.num_stages)
+                amd.passes.ttgpuir.add_pipeline(pm, use_async_copy,
+                                                use_block_pingpong)
             if use_async_copy:
                 amd.passes.ttgpuir.add_coalesce_async_copy(pm, options.arch)
                 # uTLX: copies into a pinned shared layout that transposes the
@@ -164,6 +204,7 @@ def inspect_stages_hook(self=None,
 
         stages["ttgir"] = lambda src, metadata: make_ttgir_wrapper(
             src, metadata)
+
     else:
         # NVIDIA/CUDA: replace make_ttir to inject plugin pass after TTIR
         def make_ttir_wrapper(mod, metadata, opt, cap):
