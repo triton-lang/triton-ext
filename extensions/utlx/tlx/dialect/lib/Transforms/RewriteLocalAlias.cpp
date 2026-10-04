@@ -4,6 +4,7 @@
 #include "mlir/Transforms/Passes.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/LinearLayoutConversions.h"
 #include "triton/Dialect/TritonGPU/IR/Types.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "llvm/Support/Debug.h"
@@ -24,7 +25,91 @@ namespace tlx {
 
 #include "tlx/dialect/include/Transforms/Passes.h.inc"
 
+namespace {
+
+// Keep this calculation in sync with MemDescReinterpretOp::verify. The
+// physical allocation is described by the layout-ranked suffix; leading
+// dimensions represent repeated pipeline copies of that layout.
+int64_t getMemDescStorageBits(ttg::MemDescType ty) {
+  auto rank = cast<ttg::LayoutEncodingTrait>(ty.getEncoding()).getRank();
+  auto shape = ty.getAllocShape().take_back(rank);
+  LinearLayout layout = isa<ttg::PaddedSharedEncodingAttr>(ty.getEncoding())
+                            ? ttg::paddedLinearLayout(shape, ty.getEncoding())
+                            : ttg::toLinearLayout(shape, ty.getEncoding());
+  int64_t numLayoutCopies = 1;
+  for (int64_t dim : ty.getAllocShape().drop_back(rank))
+    numLayoutCopies *= dim;
+  auto *ctx = ty.getContext();
+  bool isSharedMemory = isa<ttg::SharedMemorySpaceAttr>(ty.getMemorySpace());
+  auto dim = StringAttr::get(ctx, isSharedMemory ? "offset" : "col");
+  return numLayoutCopies * layout.getInDimSize(dim) *
+         ty.getElementTypeBitWidth();
+}
+
+// Whether MemDescReinterpretOp::verify accepts a view between `a` and `b`
+// as far as padding goes: both unpadded, or both padded with the same
+// pattern of padding bytes.
+bool haveSamePadding(ttg::MemDescType a, ttg::MemDescType b) {
+  auto padA = dyn_cast<ttg::PaddedSharedEncodingAttr>(a.getEncoding());
+  auto padB = dyn_cast<ttg::PaddedSharedEncodingAttr>(b.getEncoding());
+  if (!padA || !padB)
+    return !padA && !padB;
+  auto pattern = [](ttg::PaddedSharedEncodingAttr enc, ttg::MemDescType ty) {
+    int64_t bytes = ty.getElementTypeBitWidth() / 8;
+    SmallVector<std::pair<int64_t, int64_t>> result;
+    for (auto [interval, padding] :
+         llvm::zip_equal(enc.getIntervals(), enc.getPaddings()))
+      result.push_back({interval * bytes, padding * bytes});
+    return result;
+  };
+  return pattern(padA, a) == pattern(padB, b);
+}
+
+// Stock MemDescReinterpretOp cannot change the padding of a view; fbtriton
+// exempts alias views from that check. Give each such alias its own
+// allocation instead. The shared-memory allocator overlaps it with the
+// buffer it was meant to reuse wherever their live ranges are disjoint,
+// which is what reuse is for: a buffer whose contents are dead by then. A
+// buffer is live from its allocation and kernels allocate everything up front,
+// so the new allocation goes right before the alias's first use.
+void splitIncompatibleAliases(ModuleOp m) {
+  SmallVector<tlx::LocalAliasOp> aliases;
+  m.walk([&](tlx::LocalAliasOp alias) { aliases.push_back(alias); });
+  // In program order, so an alias of a split alias sees its new allocation.
+  for (tlx::LocalAliasOp alias : aliases) {
+    auto root = alias.getSrc().getDefiningOp<ttg::LocalAllocOp>();
+    for (Value src = alias.getSrc(); !root;) {
+      auto srcAlias = src.getDefiningOp<tlx::LocalAliasOp>();
+      if (!srcAlias)
+        break;
+      src = srcAlias.getSrc();
+      root = src.getDefiningOp<ttg::LocalAllocOp>();
+    }
+    if (!root || haveSamePadding(root.getType(),
+                                 cast<ttg::MemDescType>(alias.getType())))
+      continue;
+    LDBG("Splitting alias with incompatible padding: " << alias);
+    Operation *firstUse = alias;
+    Block *block = alias->getBlock();
+    for (Operation *user : alias->getUsers()) {
+      Operation *ancestor = block->findAncestorOpInBlock(*user);
+      if (ancestor &&
+          (firstUse == alias || ancestor->isBeforeInBlock(firstUse)))
+        firstUse = ancestor;
+    }
+    OpBuilder builder(firstUse);
+    auto alloc =
+        ttg::LocalAllocOp::create(builder, alias.getLoc(), alias.getType());
+    alias.getResult().replaceAllUsesWith(alloc.getResult());
+    alias->erase();
+  }
+}
+
+} // namespace
+
 LogicalResult rewriteLocalAlias(ModuleOp m) {
+  splitIncompatibleAliases(m);
+
   // Build a closure of all local_alloc and local_alias ops that share the same
   // physical memory
   LDBG("rewriteLocalAlias\n");
@@ -98,12 +183,12 @@ LogicalResult rewriteLocalAlias(ModuleOp m) {
     auto allocType =
         dyn_cast<ttg::MemDescType>(allocOp->getResult(0).getType());
     auto maxStorageType = allocType;
-    auto maxStorageSize =
-        allocType.getNumElements() * allocType.getElementTypeBitWidth();
+    // Logical element count is insufficient for padded layouts: a view with
+    // the same or fewer elements may still need more storage.
+    auto maxStorageSize = getMemDescStorageBits(allocType);
     for (tlx::LocalAliasOp alias : aliases) {
       auto aliasType = dyn_cast<ttg::MemDescType>(alias.getResult().getType());
-      auto aliasStorageSize =
-          aliasType.getNumElements() * aliasType.getElementTypeBitWidth();
+      auto aliasStorageSize = getMemDescStorageBits(aliasType);
       if (aliasStorageSize > maxStorageSize) {
         maxStorageType = aliasType;
         maxStorageSize = aliasStorageSize;
