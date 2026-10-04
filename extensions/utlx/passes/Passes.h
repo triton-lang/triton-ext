@@ -26,6 +26,8 @@ std::unique_ptr<mlir::Pass> createDotOperandLocalLoadPass();
 void registerDotOperandLocalLoadPass();
 std::unique_ptr<mlir::Pass> createKeepLoadLayoutPass();
 void registerKeepLoadLayoutPass();
+std::unique_ptr<mlir::Pass> createRematDotOperandSlicesPass();
+void registerRematDotOperandSlicesPass();
 
 // AMD passes
 std::unique_ptr<mlir::Pass> createAMDLowerBarrierOpsPass();

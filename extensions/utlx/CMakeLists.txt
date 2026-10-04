@@ -90,6 +90,7 @@ add_library(${TRITON_EXT_NAME} SHARED
     # Layout passes
     passes/DotOperandLocalLoad.cpp
     passes/KeepLoadLayout.cpp
+    passes/RematDotOperandSlices.cpp
     # Ported passes - NVIDIA
     passes/nvidia/PruneUnusedBarriers.cpp
     passes/nvidia/PingPong.cpp)

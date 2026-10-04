@@ -910,6 +910,15 @@ static void registerKeepLoadLayoutPassFn() {
   utlx::registerKeepLoadLayoutPass();
 }
 
+static void addRematDotOperandSlicesPass(mlir::PassManager *pm,
+                                         const std::vector<std::string> &) {
+  pm->addPass(utlx::createRematDotOperandSlicesPass());
+}
+
+static void registerRematDotOperandSlicesPassFn() {
+  utlx::registerRematDotOperandSlicesPass();
+}
+
 // --- Ported AMD passes ---
 // NOTE: AMD barrier passes are disabled until triton-tlx-core-changes patch
 // is applied. Uncomment when patched triton is available:
@@ -966,6 +975,8 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
        addDotOperandLocalLoadPass, registerDotOperandLocalLoadPassFn},
       {"utlx_keep_load_layout", TRITON_EXT_VERSION, addKeepLoadLayoutPass,
        registerKeepLoadLayoutPassFn},
+      {"utlx_remat_dot_operand_slices", TRITON_EXT_VERSION,
+       addRematDotOperandSlicesPass, registerRematDotOperandSlicesPassFn},
       // Ported AMD passes (disabled until patched triton is available)
       // {"utlx_amd_lower_barrier_ops", TRITON_EXT_VERSION,
       //  addAMDLowerBarrierOpsPass, registerAMDLowerBarrierOpsPassFn},

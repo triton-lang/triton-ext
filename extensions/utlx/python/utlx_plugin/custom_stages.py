@@ -98,6 +98,9 @@ def inspect_stages_hook(self=None,
             # convert backwards, so a hand-pipelined loop-carried local_load
             # would be staged through extra shared memory per dot.
             passes.plugin.utlx_dot_operand_local_load(pm, [])
+            # Likewise for index arithmetic, e.g. buffer_load offsets laid
+            # out so the loaded tile lands in MFMA registers.
+            passes.plugin.utlx_remat_dot_operand_slices(pm, [])
             amd.passes.ttgpuir.add_optimize_epilogue(pm)
             amd.passes.ttgpuir.add_optimize_dot_operands(pm, options.arch)
             amd.passes.ttgpuir.add_hoist_layout_conversions(pm)
