@@ -730,11 +730,13 @@ void utlx::createGlobalScratchAlloc(TritonOpBuilder &self,
 /// attribute because plugin ops can only pass mlir::Values.
 void utlx::createMakeAmdMfmaLayout(TritonOpBuilder &self,
                                    std::vector<mlir::Value> &operands) {
-  if (operands.size() < 8)
+  // version, instrShape[3], transposed, then one warpsPerCTA entry per dim
+  // (2 for a matrix, 3 with a leading batch dim).
+  if (operands.size() < 8 || operands.size() > 9)
     return;
 
-  llvm::SmallVector<unsigned, 7> args;
-  for (size_t i = 1; i < 8; ++i) {
+  llvm::SmallVector<unsigned, 8> args;
+  for (size_t i = 1; i < operands.size(); ++i) {
     auto v = extractConstInt(operands[i]);
     if (!v)
       return;
@@ -744,18 +746,22 @@ void utlx::createMakeAmdMfmaLayout(TritonOpBuilder &self,
   unsigned version = args[0];
   llvm::SmallVector<unsigned, 3> instrShape = {args[1], args[2], args[3]};
   bool isTransposed = args[4] != 0;
-  llvm::SmallVector<unsigned, 2> warpsPerCTA = {args[5], args[6]};
+  llvm::SmallVector<unsigned, 3> warpsPerCTA(args.begin() + 5, args.end());
+  unsigned rank = warpsPerCTA.size();
 
   auto *context = self.getBuilder().getContext();
-  auto CGALayout = ttg::CGAEncodingAttr::get1CTALayout(context, 2);
+  auto CGALayout = ttg::CGAEncodingAttr::get1CTALayout(context, rank);
   auto encoding = ttg::AMDMfmaEncodingAttr::get(
       context, version, warpsPerCTA, instrShape, isTransposed, CGALayout);
 
-  // Nominal carrier shape: one full MFMA tile per warp across the CTA. Only
-  // the encoding is ever read back off this type.
-  llvm::SmallVector<int64_t, 2> shape = {
-      static_cast<int64_t>(instrShape[0] * warpsPerCTA[0]),
-      static_cast<int64_t>(instrShape[1] * warpsPerCTA[1])};
+  // Nominal carrier shape: one full MFMA tile per warp across the CTA (one
+  // batch entry per warp on a leading batch dim). Only the encoding is ever
+  // read back off this type.
+  llvm::SmallVector<int64_t, 3> shape;
+  if (rank == 3)
+    shape.push_back(warpsPerCTA[0]);
+  shape.push_back(static_cast<int64_t>(instrShape[0] * warpsPerCTA[rank - 2]));
+  shape.push_back(static_cast<int64_t>(instrShape[1] * warpsPerCTA[rank - 1]));
   auto elemTy = self.getBuilder().getF32Type();
 
   auto tensorType = mlir::RankedTensorType::get(shape, elemTy, encoding);

@@ -71,11 +71,12 @@ def amd_mfma_layout(version,
         version: MFMA instruction version (e.g. 4 for gfx950).
         instr_shape: [M, N, K] of the MFMA instruction, e.g. [16, 16, 32].
         transposed: whether the MFMA result is stored transposed.
-        warps_per_cta: warp grid, e.g. [4, 1]. Defaults to [num_warps, 1].
+        warps_per_cta: warp grid, e.g. [4, 1], or [B, M, N] for a batched
+            (rank-3) layout. Defaults to [num_warps, 1].
     """
     version = _uw(version)
     transposed = _uw(transposed)
-    instr_shape = [_uw(v) for v in instr_shape]
+    instr_shape = [_uw(v) for v in _uw(instr_shape)]
     if len(instr_shape) != 3:
         raise ValueError(
             f"instr_shape must be [M, N, K]; got {len(instr_shape)} entries")
@@ -83,10 +84,10 @@ def amd_mfma_layout(version,
     if warps_per_cta is None:
         warps_per_cta = [_semantic.builder.options.num_warps, 1]
     else:
-        warps_per_cta = [_uw(v) for v in warps_per_cta]
-    if len(warps_per_cta) != 2:
-        raise ValueError(
-            f"warps_per_cta must have 2 entries; got {len(warps_per_cta)}")
+        warps_per_cta = [_uw(v) for v in _uw(warps_per_cta)]
+    if len(warps_per_cta) not in (2, 3):
+        raise ValueError("warps_per_cta must have 2 entries (or 3 with a "
+                         f"leading batch dim); got {len(warps_per_cta)}")
 
     b = _semantic.builder
     args = [b.get_int32(int(version))]
