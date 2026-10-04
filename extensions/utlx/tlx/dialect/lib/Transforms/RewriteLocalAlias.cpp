@@ -90,6 +90,11 @@ LogicalResult rewriteLocalAlias(ModuleOp m) {
   for (auto &kv : aliasClasses) {
     auto allocOp = kv.first;
     auto &aliases = kv.second;
+    // Allocations without aliases do not participate in storage reuse. In
+    // particular, barrier arrays may have an NPOT extent that is legal for a
+    // memdesc but cannot be converted to a LinearLayout.
+    if (aliases.empty())
+      continue;
     auto allocType =
         dyn_cast<ttg::MemDescType>(allocOp->getResult(0).getType());
     auto maxStorageType = allocType;
@@ -126,6 +131,8 @@ LogicalResult rewriteLocalAlias(ModuleOp m) {
   DenseMap<Operation *, Operation *> allocToNewAlloc;
   OpBuilder builder(m.getContext());
   for (auto &kv : aliasClasses) {
+    if (kv.second.empty())
+      continue;
     Operation *baseAllocOp = kv.first;
     auto baseAllocType =
         dyn_cast<ttg::MemDescType>(baseAllocOp->getResult(0).getType());
@@ -150,6 +157,8 @@ LogicalResult rewriteLocalAlias(ModuleOp m) {
 
   // Rewrite uses of local_alias ops to use the new local_alloc op.
   for (auto &kv : aliasClasses) {
+    if (kv.second.empty())
+      continue;
     // Replace the base alloc op with the new one if it exists.
     Operation *baseAllocOp = kv.first;
     if (allocToNewAlloc.count(baseAllocOp)) {
