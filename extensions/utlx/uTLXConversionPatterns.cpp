@@ -1126,6 +1126,13 @@ public:
         // async copy can write.
         auto srcType = cast<triton::gpu::MemDescType>(
             localLoadOp->getOperand(0).getType());
+        // Padded and shared-linear encodings only come from an explicit
+        // tlx.local_alloc(layout=...): the kernel pinned that image (and sized
+        // its async copies for it), so it is not ours to retag.
+        if (isa_and_nonnull<triton::gpu::PaddedSharedEncodingAttr,
+                            triton::gpu::SharedLinearEncodingAttr>(
+                srcType.getEncoding()))
+          continue;
         if (isa_and_nonnull<triton::gpu::SharedEncodingTrait>(
                 srcType.getEncoding())) {
           SmallVector<unsigned> userOrder = triton::gpu::getOrder(srcType);

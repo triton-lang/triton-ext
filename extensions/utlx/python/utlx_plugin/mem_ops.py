@@ -162,6 +162,12 @@ def local_alloc(
         return _local_alloc_tmem(_semantic, dtype, full_shape, unwrapped_shape,
                                  unwrapped_num)
 
+    layout = tl._unwrap_if_constexpr(layout)
+    if isinstance(layout, (tlx.padded_shared_layout_encoding,
+                           tlx.shared_linear_layout_encoding)):
+        return _local_alloc_pinned(_semantic, dtype, full_shape,
+                                   unwrapped_shape, unwrapped_num, layout)
+
     type_carrier = _make_type_carrier(_semantic.builder, dtype)
     shape_values = [
         _semantic.builder.get_int32(int(dim)) for dim in full_shape
@@ -181,6 +187,27 @@ def local_alloc(
 
     return tlx.buffered_tensor(tensor_handle, dtype, unwrapped_shape,
                                unwrapped_num, storage, py_layout)
+
+
+def _local_alloc_pinned(semantic, dtype, full_shape, unwrapped_shape,
+                        unwrapped_num, layout):
+    """Allocate SMEM with an explicit padded/shared-linear encoding.
+
+    Other ``layout=`` values are ignored and the layout pass picks the
+    encoding from the consumers. These two describe a physical image the
+    kernel was written against (and that the AMD async copies are sized for),
+    so the encoding goes on the alloc as given and the layout pass leaves it
+    alone. The encoding may cover only the per-buffer dims; the leading
+    ``num`` dim is the multi-buffering dim upstream's verifier accepts.
+    """
+    builder = semantic.builder
+    mem_desc_ty = builder.get_shared_mem_desc_ty(dtype.to_ir(builder),
+                                                 full_shape,
+                                                 layout.to_ir(builder),
+                                                 full_shape)
+    tensor_handle = builder.create_local_alloc(mem_desc_ty)
+    return tlx.buffered_tensor(tensor_handle, dtype, unwrapped_shape,
+                               unwrapped_num, tlx.storage_kind.smem, layout)
 
 
 def _local_alloc_with_storage_alias(semantic, spec, dtype, full_shape,
