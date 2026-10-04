@@ -293,19 +293,39 @@ def swizzled_layout(vector_size,
 
 
 @jit
-def buffer_load(base, offsets, mask=None, other=None):
+def buffer_load(base,
+                offsets,
+                mask=None,
+                other=None,
+                cache: tl.constexpr = None,
+                contiguity: tl.constexpr = 1):
     """Load ``base[offsets]``; the AMD backend lowers this to a buffer load.
 
     Layouts are stripped from the pointer operands by the load/store shim, so
     nothing to do here beyond the address arithmetic.
+
+    ``contiguity`` is the fork's trusted vector-width promise. It is accepted
+    and checked but not forwarded: the backend's own axis analysis picks the
+    width here, which can only be narrower, never wrong.
     """
-    return tlang.load(base + offsets, mask=mask, other=other)
+    tlang.static_assert(contiguity > 0 and (contiguity & (contiguity - 1)) == 0,
+                        "contiguity must be a positive power of two")
+    return tlang.load(base + offsets, mask=mask, other=other,
+                      cache_modifier=cache)
 
 
 @jit
-def buffer_store(value, base, offsets, mask=None):
+def buffer_store(value,
+                 base,
+                 offsets,
+                 mask=None,
+                 cache: tl.constexpr = None,
+                 contiguity: tl.constexpr = 1):
     """Store ``value`` to ``base[offsets]`` as a buffer store.
 
-    Layouts are stripped by the load/store shim, as for buffer_load.
+    Layouts are stripped from the operands by the store shim, and
+    ``contiguity`` is accepted but not forwarded, as for buffer_load.
     """
-    tlang.store(base + offsets, value, mask=mask)
+    tlang.static_assert(contiguity > 0 and (contiguity & (contiguity - 1)) == 0,
+                        "contiguity must be a positive power of two")
+    tlang.store(base + offsets, value, mask=mask, cache_modifier=cache)
