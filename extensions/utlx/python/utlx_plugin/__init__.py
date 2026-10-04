@@ -495,6 +495,49 @@ def _patch_reconcile_region_types():
 _patch_reconcile_region_types()
 
 
+def _patch_extern_elementwise():
+    """Keep an explicit layout across ``tl.extern_elementwise``.
+
+    The builtin types its result as ``broadcast_arg.type.with_element_ty``,
+    which rebuilds a plain ``block_type``. With encoded operands that emits a
+    ``tt.extern_elementwise`` whose result is unencoded, which fails
+    ``SameOperandsAndResultEncoding`` during layout conversion (libdevice
+    calls such as HIP's ``fast_dividef`` on a ``require_layout``'d value).
+    Like ``cast``, round-trip: release the operands, call, re-apply the layout.
+    """
+    import triton.language.core as tl_core
+
+    from .compiler.semantic import _has_layout, _promote_value
+    from .layout_ops import _require
+
+    orig = tl_core.extern_elementwise
+    if getattr(orig, "_utlx", False):
+        return
+
+    @tl_core.builtin
+    def extern_elementwise(lib_name, lib_path, args, arg_type_symbol_dict,
+                           is_pure, _semantic=None):
+        args = [_promote_value(a) for a in args]
+        carrier = next((a for a in args if _has_layout(a)), None)
+        drop = getattr(_semantic, "_drop_layout", None)
+        if carrier is not None and drop is not None:
+            args = [drop(a) for a in args]
+        out = orig(lib_name, lib_path, args, arg_type_symbol_dict, is_pure,
+                   _semantic=_semantic)
+        if (carrier is not None and drop is not None and out.type.is_block()
+                and list(out.shape) == list(carrier.shape)):
+            out = _require(_semantic, out, carrier)
+        return out
+
+    extern_elementwise._utlx = True
+    tl_core.extern_elementwise = extern_elementwise
+    import triton.language as tl_lang
+    if getattr(tl_lang, "extern_elementwise", None) is orig:
+        tl_lang.extern_elementwise = extern_elementwise
+
+
+_patch_extern_elementwise()
+
 # Loop options Meta's fork adds to ``tl.range`` for NVIDIA automatic warp
 # specialization and its modulo scheduler. They are scheduling hints with no
 # meaning on upstream Triton, so they are accepted and dropped.
