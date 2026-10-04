@@ -259,6 +259,39 @@ static void createMemDescSubslice(TritonOpBuilder &self,
       self.create<ttg::MemDescSubsliceOp>(resultType, operands[1], offsets);
 }
 
+// --- utlx_memdesc_reinterpret: View a memdesc with a new dtype and shape ---
+//
+// Upstream's create_memdesc_reinterpret binding takes a caller-built result
+// type, but Python cannot read the source's encoding to build one. Keep the
+// source encoding, memory space and mutability here instead. The element type
+// arrives as a constant of that type, since plugin ops only take values.
+static void createMemDescReinterpret(TritonOpBuilder &self,
+                                     std::vector<mlir::Value> &operands) {
+  // operands[0]      = result slot
+  // operands[1]      = source memdesc
+  // operands[2]      = constant of the new element type
+  // operands[3 .. N] = new shape
+  if (operands.size() < 4)
+    return;
+
+  auto srcType = mlir::dyn_cast<ttg::MemDescType>(operands[1].getType());
+  if (!srcType)
+    return;
+
+  llvm::SmallVector<int64_t> shape;
+  for (size_t i = 3; i < operands.size(); ++i) {
+    auto dim = extractConstantInt(operands[i]);
+    if (!dim)
+      return;
+    shape.push_back(*dim);
+  }
+
+  auto resultType = ttg::MemDescType::get(
+      shape, operands[2].getType(), srcType.getEncoding(),
+      srcType.getMemorySpace(), srcType.getMutableMemory());
+  operands[0] = self.create<ttg::MemDescReinterpretOp>(resultType, operands[1]);
+}
+
 // --- utlx_tmem_load: Load a TMEM buffer into registers ---
 //
 // Upstream's create_tmem_load binding takes a distributed result type, i.e. a
@@ -872,6 +905,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_local_view", createLocalView},
       {"utlx_tmem_subslice", createTMEMSubSlice},
       {"utlx_memdesc_subslice", createMemDescSubslice},
+      {"utlx_memdesc_reinterpret", createMemDescReinterpret},
       {"utlx_tmem_load", createTMEMLoad},
       {"utlx_tmem_store", createTMEMStore},
       {"utlx_local_store", createLocalStore},

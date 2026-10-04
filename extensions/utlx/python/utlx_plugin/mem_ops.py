@@ -467,9 +467,21 @@ def local_reinterpret(
     src: tlx.buffered_tensor,
     dtype: tl.dtype,
     shape=None,
+    layout=None,
+    pin=True,
     _semantic=None,
 ) -> tlx.buffered_tensor:
-    """Reinterpret the dtype and shape of a buffered tensor."""
+    """Reinterpret the dtype and shape of a buffered tensor.
+
+    With ``layout`` the view also takes that explicit shared-memory layout, as
+    in fork TLX. ``pin`` is accepted for compatibility: explicit shared layouts
+    are always kept as given here. Without ``layout`` the source layout is
+    preserved.
+    """
+    layout = tl._unwrap_if_constexpr(layout)
+    pin = tl._unwrap_if_constexpr(pin)
+    assert isinstance(pin, bool), (
+        f"pin must be a constexpr bool, got {type(pin).__name__}")
     if shape is None:
         shape = src.type.shape
     else:
@@ -477,11 +489,24 @@ def local_reinterpret(
             src, tlx.buffered_tensor
         ) and src.type.storage == tlx.storage_kind.smem, (
             "TLX local_reinterpret with reshaping only supports SMEM")
+    shape = [int(tl._unwrap_if_constexpr(d)) for d in shape]
 
-    reinterpreted_value_handle = _semantic.builder.create_memdesc_reinterpret(
-        src.handle, dtype.to_ir(_semantic.builder), shape)
-    return tlx.buffered_tensor(reinterpreted_value_handle, dtype, shape,
-                               src.type.num, src.type.storage, src.type.layout)
+    b = _semantic.builder
+    if layout is not None:
+        assert (src.type.storage == tlx.storage_kind.smem
+                and isinstance(layout, tlx.shared_layout_encoding)), (
+                    "TLX local_reinterpret only supports explicit "
+                    "shared-memory layouts")
+        ty = b.get_shared_mem_desc_ty(dtype.to_ir(b), shape, layout.to_ir(b),
+                                      shape)
+        handle = b.create_memdesc_reinterpret(ty, src.handle)
+    else:
+        handle = b.utlx_memdesc_reinterpret(
+            [src.handle, b.get_null_value(dtype.to_ir(b))] +
+            [b.get_int32(d) for d in shape])
+        layout = src.type.layout
+    return tlx.buffered_tensor(handle, dtype, shape, src.type.num,
+                               src.type.storage, layout)
 
 
 @tl.builtin
