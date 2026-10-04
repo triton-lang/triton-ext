@@ -175,6 +175,13 @@ class UTLXSemantic(_BaseSemantic[_TensorTy], Generic[_TensorTy]):
         return super().store(self._drop_layout(ptr), self._drop_layout(val),
                              self._drop_layout(mask), *args, **kwargs)
 
+    def atom_red_typechecking_impl(self, ptr, val, mask, op):
+        """As :meth:`store`; the default mask is built plain, so an encoded
+        pointer or value would disagree with it."""
+        ptr, val, mask = super().atom_red_typechecking_impl(ptr, val, mask, op)
+        return (self._drop_layout(ptr), self._drop_layout(val),
+                self._drop_layout(mask))
+
 
 def _install_tensor_patch():
     """Fallback for a Triton without the make_tensor hook.
