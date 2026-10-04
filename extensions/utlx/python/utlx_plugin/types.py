@@ -834,8 +834,13 @@ class async_token(tlx_value):
         self.handle = handle
         self.type = async_token_type(handle)
 
+    def _set_name(self, builder, name: str) -> None:
+        if self.handle is not None:
+            super()._set_name(builder, name)
+
     def _flatten_ir(self, handles):
-        handles.append(self.handle)
+        if self.handle is not None:
+            handles.append(self.handle)
 
 
 class async_token_type(tl.base_type):
@@ -850,12 +855,18 @@ class async_token_type(tl.base_type):
         return "async_token_type"
 
     def mangle(self):
-        return "async_token_type"
+        return "async_token_type" if self.value is not None else "async_token_none"
 
+    # A token is one IR value, like any other, so it can cross a jit call or a
+    # loop. Ops that produce none leave a handle-less token that contributes
+    # nothing on either side.
     def _flatten_ir_types(self, builder, out) -> None:
-        return  # No-op: async tokens don't contribute IR types
+        if self.value is not None:
+            out.append(self.value.get_type())
 
     def _unflatten_ir(self, handles, cursor):
+        if self.value is None:
+            return async_token(None), cursor
         return async_token(handles[cursor]), cursor + 1
 
 

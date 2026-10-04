@@ -394,8 +394,11 @@ class TestAsyncToken:
                           if False else object)  # just check it doesn't crash
 
     def test_mangle(self):
+        # A handle-less token flattens to no IR values, a real one to one, so
+        # jit helpers taking either need distinct specializations.
         token = tlx.async_token(handle=None)
-        assert token.type.mangle() == "async_token_type"
+        assert token.type.mangle() == "async_token_none"
+        assert tlx.async_token(handle=object()).type.mangle() == "async_token_type"
 
 
 if __name__ == "__main__":

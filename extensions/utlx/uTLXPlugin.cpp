@@ -656,7 +656,7 @@ static void createAsyncCommitGroup(TritonOpBuilder &self,
 }
 
 // --- utlx_async_wait_group: Wait for async copies with token threading ---
-// operands[0] = result slot (unused for void ops, but kept for consistency)
+// operands[0] = result slot (the wait's token)
 // operands[1] = pendings (i32 constant)
 // operands[2..N] = input async tokens (optional)
 static void createAsyncWaitGroup(TritonOpBuilder &self,
@@ -671,7 +671,8 @@ static void createAsyncWaitGroup(TritonOpBuilder &self,
   llvm::SmallVector<mlir::Value> tokens;
   for (unsigned i = 2; i < operands.size(); ++i)
     tokens.push_back(operands[i]);
-  self.create<ttg::AsyncWaitOp>(tokens, static_cast<int>(*pendingsVal));
+  operands[0] =
+      self.create<ttg::AsyncWaitOp>(tokens, static_cast<int>(*pendingsVal));
 }
 
 // --- utlx_warp_group_dot_wait: WarpGroupDotWaitOp with ReleaseLayoutOp unwrap

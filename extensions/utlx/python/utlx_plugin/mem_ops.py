@@ -593,8 +593,8 @@ def async_load_wait_group(
         t.handle for t in tokens if t is not None and t.handle is not None
     ]
     args = [_semantic.builder.get_int32(pendings)] + handles
-    _semantic.builder.utlx_async_wait_group(args)
-    return tlx.async_token(None)
+    token = _semantic.builder.utlx_async_wait_group(args)
+    return tlx.async_token(checked_handle(token, "async_load_wait_group"))
 
 
 @tl.builtin
