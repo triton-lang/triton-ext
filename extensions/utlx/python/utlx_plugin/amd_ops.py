@@ -18,14 +18,23 @@ module provides each one on upstream Triton with the same results:
   ``ptr + offsets``.
 * ``extract_slice`` selects the slice with reshape/permute/split rather than
   ``amdg.extract_slice``, which needs encoded types TTIR does not have yet.
+* ``warp_predicate`` computes the body for every lane and selects the result
+  per lane, and ``warp_any`` reduces over the whole CTA rather than one wave.
+  Both are conservative: the fork's kernels only use them to skip work whose
+  result is masked anyway, so doing the work everywhere gives the same values.
 
 The scheduling these ops ask for is lost, so kernels written around them run
 correctly but not at the fork's speed.
 """
 
+import builtins
+
+import triton.language as tlang
 import triton.language.core as tl
+from triton.runtime.jit import jit
 
 from . import types as tlx
+from .compiler.semantic import _promote
 from .layout_ops import _carrier, _carrier_type, _require
 
 
@@ -51,6 +60,13 @@ def _verify_buffer_ops(ptr, offsets, mask=None, other=None):
         "offsets element type must be int32 or uint32"
     if other is not None:
         assert mask is not None, "when other is set, mask must also be set"
+
+
+def _keep_type(handle, like):
+    """Wrap ``handle`` like ``like``, keeping a layout carrier a carrier."""
+    if isinstance(like.type, _carrier_type):
+        return _carrier(handle, like.type.scalar)
+    return tl.tensor(handle, _promote(handle, like.type))
 
 
 # --- memory ---------------------------------------------------------------
@@ -313,3 +329,85 @@ def amd_iglp_opt(variant: tl.constexpr, _semantic=None):
         "variant must be a constexpr integer"
     assert 0 <= variant <= 3, \
         f"variant must be one of 0, 1, 2, or 3, got {variant}"
+
+
+# --- wave-level control ---------------------------------------------------
+
+
+@tl.builtin
+def num_warps(_semantic=None):
+    """The number of warps executing the current kernel."""
+    return tl.constexpr(_semantic.builder.options.num_warps)
+
+
+@jit
+def warp_any(pred):
+    """Whether any lane's predicate is true -- across the CTA, not one wave.
+
+    A CTA-wide vote is true whenever some wave's vote would be, so a guarded
+    region runs at least where the fork would run it.
+    """
+    return tlang.max(pred.to(tlang.int32)) != 0
+
+
+@tl.builtin
+def warp_predicate(predicate,
+                   inits,
+                   body,
+                   args=(),
+                   wave_uniform=False,
+                   _semantic=None,
+                   _generator=None):
+    """``body(*inits, *args)`` where ``predicate`` holds, ``inits`` elsewhere.
+
+    The fork runs ``body`` under an EXEC mask and skips inactive waves. Here
+    every lane computes ``body`` and the carried values are selected per
+    element, which yields the same values: ``body`` must be straight-line and
+    free of cross-wave synchronization in the fork too. A tensor predicate
+    may cover a leading prefix of the carried shape (e.g. one per row).
+    """
+    if isinstance(inits, tl.tensor):
+        inits = (inits, )
+    elif not isinstance(inits, (builtins.tuple, builtins.list, tl.tuple)):
+        raise TypeError("warp_predicate inits must be a tensor, tuple, or list")
+    if not isinstance(args, (builtins.tuple, builtins.list, tl.tuple)):
+        args = (args, )
+    inits = builtins.list(inits)
+    args = builtins.list(args)
+    if not inits:
+        raise ValueError("warp_predicate requires at least one carried value")
+    if not all(isinstance(v, tl.tensor) for v in inits):
+        raise TypeError("warp_predicate carried values must be tensors")
+    predicate = _semantic.to_tensor(predicate)
+    if predicate.dtype != tl.int1:
+        raise TypeError("warp_predicate predicate must have bool dtype, got "
+                        f"{predicate.dtype}")
+    if not isinstance(_uw(wave_uniform), builtins.bool):
+        raise TypeError("warp_predicate wave_uniform must be a bool")
+
+    body_result = _generator.call_JitFunction(body, inits + args, kwargs={})
+    if isinstance(body_result, tl.tensor):
+        results = [body_result]
+    elif isinstance(body_result, (builtins.tuple, builtins.list, tl.tuple)):
+        results = builtins.list(body_result)
+    else:
+        raise TypeError(
+            "warp_predicate body must return a tensor, tuple, or list")
+    if len(results) != len(inits):
+        raise TypeError(f"warp_predicate body returned {len(results)} values "
+                        f"for {len(inits)} carried values")
+
+    merged = []
+    for index, (init, result) in enumerate(zip(inits, results)):
+        if not isinstance(result, tl.tensor):
+            raise TypeError(f"warp_predicate result {index} is not a tensor")
+        cond = predicate
+        if cond.type.is_block():
+            while len(cond.shape) < len(init.shape):
+                cond = _semantic.expand_dims(cond, len(cond.shape))
+            # Full shape up front, so where() can give it init's layout.
+            cond = _semantic.broadcast_impl_shape(
+                cond, [_uw(d) for d in init.shape])
+        out = _semantic.where(cond, result, init)
+        merged.append(_keep_type(out.handle, init))
+    return merged[0] if len(merged) == 1 else builtins.tuple(merged)

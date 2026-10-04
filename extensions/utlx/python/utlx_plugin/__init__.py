@@ -21,6 +21,9 @@ __all__ = [
     "amd_mfma_commit",
     "amd_sched_barrier",
     "amd_iglp_opt",
+    "num_warps",
+    "warp_any",
+    "warp_predicate",
     # types
     "layout",
     "layout_encoding",
@@ -364,6 +367,9 @@ from .amd_ops import (  # noqa: E402
     amd_mfma_commit,
     amd_sched_barrier,
     amd_iglp_opt,
+    num_warps,
+    warp_any,
+    warp_predicate,
 )
 
 from . import custom_stages  # noqa: E402
