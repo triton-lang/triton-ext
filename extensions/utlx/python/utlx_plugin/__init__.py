@@ -9,6 +9,13 @@ __all__ = [
     "async_task",
     # warp_pipeline
     "warp_pipeline_stage",
+    # amd_ops (Meta-fork AMD ops on upstream Triton)
+    "assert_same_layout",
+    "amd_register_resident",
+    "amd_register_class_anchor",
+    "amd_mfma_commit",
+    "amd_sched_barrier",
+    "amd_iglp_opt",
     # types
     "layout",
     "layout_encoding",
@@ -340,6 +347,14 @@ _install_make_tensor_descriptor_layout_patch()
 from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
 from .warp_ops import vote_ballot_sync, warp_redux  # noqa: E402
 from .warp_pipeline import warp_pipeline_stage  # noqa: E402
+from .amd_ops import (  # noqa: E402
+    assert_same_layout,
+    amd_register_resident,
+    amd_register_class_anchor,
+    amd_mfma_commit,
+    amd_sched_barrier,
+    amd_iglp_opt,
+)
 
 from . import custom_stages  # noqa: E402
 from .compiler.semantic import install_semantic  # noqa: E402
