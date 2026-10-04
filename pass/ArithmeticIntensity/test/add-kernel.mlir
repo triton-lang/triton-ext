@@ -1,12 +1,12 @@
 // RUN: arithmetic_intensity.py %s | %filecheck %s
 
-// Stored values report a compute metric in addition to bandwidth. Loaded arrays
-// get bandwidth; the stored array additionally accumulates the chain's compute
-// (one elementwise addf over 256 elements = 256 ops).
+// Stored values report a compute metric in addition to store bytes. Loaded
+// arrays get load bytes; the stored array additionally accumulates the
+// chain's compute (one elementwise addf over 256 elements = 256 ops).
 // CHECK-LABEL: tt.func @add_kernel(
-// CHECK-SAME:  %arg0: !tt.ptr<f32> {tt.bandwidth = "1024", tt.compute = "256"}
-// CHECK-SAME:  %arg1: !tt.ptr<f32> {tt.bandwidth = "1024"}
-// CHECK-SAME:  %arg2: !tt.ptr<f32> {tt.bandwidth = "1024"}
+// CHECK-SAME:  %arg0: !tt.ptr<f32> {tai.op_count = "256", tai.store_bytes = "1024"}
+// CHECK-SAME:  %arg1: !tt.ptr<f32> {tai.load_bytes = "1024"}
+// CHECK-SAME:  %arg2: !tt.ptr<f32> {tai.load_bytes = "1024"}
 tt.func @add_kernel(%out: !tt.ptr<f32>,
                     %a: !tt.ptr<f32>,
                     %b: !tt.ptr<f32>) {

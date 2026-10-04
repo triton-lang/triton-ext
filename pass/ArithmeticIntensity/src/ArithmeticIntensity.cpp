@@ -4,14 +4,16 @@
 //
 //===---------------------------------------------------------------------===//
 //
-// `-triton-arithmetic-intensity` annotates each `tt.func` argument with two
+// `-triton-arithmetic-intensity` annotates each `tt.func` argument with
 // string attributes describing the work done by the kernel against that
 // argument:
 //
-//   - `tt.bandwidth`: an algebraic equation for the total bytes moved per
-//     CTA across all loads/stores rooted at this argument.
-//   - `tt.compute`:   an algebraic equation for the total FLOPs feeding the
-//     stores rooted at this argument.
+//   - `tai.load_bytes`:  an algebraic equation for the total bytes loaded
+//     per CTA across all loads rooted at this argument.
+//   - `tai.store_bytes`: an algebraic equation for the total bytes stored
+//     per CTA across all stores rooted at this argument.
+//   - `tai.op_count`:    an algebraic equation for the total op count
+//     (FLOPs) feeding the stores rooted at this argument.
 //
 // ## Algorithm
 //
@@ -47,10 +49,14 @@
 //   - `tt.dot` contributes `M * N * K * 2` FLOPs per block.
 //   - Elementwise / reduce / `tt.addptr` ops contribute one op per output
 //     element.
+//   - Layout ops (`tt.trans`, `tt.reshape`, `tt.split`) contribute nothing.
+//   - Each compute op is counted once per function: it is attributed to the
+//     first store (in program order) whose value chain reaches it, so an
+//     accumulator written by several stores is not counted several times.
 //
 // ## Control flow
 //
-//   - `scf.for` trip count = `(upper - lower) floordiv step`.
+//   - `scf.for` trip count = `cdiv(upper - lower, step)`
 //   - `scf.for` iter_args are substituted with their init value (exact
 //     when the iter_arg is loop-invariant, safe otherwise).
 //   - `scf.for` induction variables are substituted with the loop's upper
@@ -156,15 +162,16 @@ private:
 // the metrics map, and the result metrics.
 ////////////////////////////////////////////////////////////////////////////////
 class BlockMetrics {
-
-  bool isLoadLikeOp(Operation *op) const {
+public:
+  static bool isLoadLikeOp(Operation *op) {
     return isa<triton::LoadOp, triton::DescriptorLoadOp>(op);
   }
 
-  bool isStoreLikeOp(Operation *op) const {
+  static bool isStoreLikeOp(Operation *op) {
     return isa<triton::StoreOp, triton::DescriptorStoreOp>(op);
   }
 
+private:
   int64_t getNumElements(Type type) const {
     if (auto rankedType = dyn_cast<RankedTensorType>(type)) {
       auto elementSize = getNumElements(rankedType.getElementType());
@@ -245,7 +252,7 @@ class BlockMetrics {
                     getElementType(type));
     } else if (isa<triton::SplatOp, triton::BroadcastOp, triton::MakeRangeOp,
                    triton::ExpandDimsOp, triton::GetProgramIdOp,
-                   triton::TransOp, triton::ReshapeOp>(op)) {
+                   triton::TransOp, triton::ReshapeOp, triton::SplitOp>(op)) {
       return Metric(Metric::MetricKind::Compute, 0,
                     getElementType(value.getType()));
     } else if (isa<arith::SelectOp>(op)) {
@@ -585,10 +592,16 @@ class ArithmeticIntensityAnalysisDriver {
     auto upperBound = getSymbolicValue(forOp.getUpperBound());
     auto lowerBound = getSymbolicValue(forOp.getLowerBound());
     auto step = getSymbolicValue(forOp.getStep());
-    return (upperBound - lowerBound).floorDiv(step);
+    // `scf.for` runs `ceil((ub - lb) / step)` iterations (step > 0), e.g. a
+    // persistent loop `range(pid, num_tiles, NUM_SMS)`. Written with
+    // floordiv so that the equation printer (which has no `ceildiv`) and
+    // the Python evaluator keep working.
+    return (upperBound - lowerBound).ceilDiv(step);
   }
 
-  AffineExpr calculateBandwidth(Operation *op, AffineExpr size) {
+  // Multiply the per-execution `size` of `op` by the symbolic trip count of
+  // every enclosing `scf.for`, up to function scope.
+  AffineExpr scaleByTripCount(Operation *op, AffineExpr size) {
     auto parentOp = op->getParentOp();
     if (isa<FunctionOpInterface>(parentOp))
       return size;
@@ -600,7 +613,7 @@ class ArithmeticIntensityAnalysisDriver {
     } else {
       LDBG("Unsupported parent op: " << parentOp->getName());
     }
-    return calculateBandwidth(parentOp, size);
+    return scaleByTripCount(parentOp, size);
   }
 
   AffineExpr calculateCompute(Value value, DenseSet<Value> &visited,
@@ -644,7 +657,7 @@ class ArithmeticIntensityAnalysisDriver {
     AffineExpr computeSize = calculateCompute(value, visited, edges);
     auto *valueOp = value.getDefiningOp();
     if (computeSize && valueOp != nullptr)
-      computeSize = calculateBandwidth(valueOp, computeSize);
+      computeSize = scaleByTripCount(valueOp, computeSize);
     for (auto edge : edges) {
       AffineExpr edgeMetric = calculateCompute(edge, visited);
       if (edgeMetric)
@@ -655,7 +668,8 @@ class ArithmeticIntensityAnalysisDriver {
 
 public:
   ArithmeticIntensityAnalysisDriver(triton::FuncOp func)
-      : func(func), syms(func), bandwidthMetrics(func.getNumArguments()),
+      : func(func), syms(func), loadBytesMetrics(func.getNumArguments()),
+        storeBytesMetrics(func.getNumArguments()),
         computeMetrics(func.getNumArguments()) {}
 
   void run() {
@@ -666,51 +680,52 @@ public:
       acc = acc ? acc + addend : addend;
     };
 
-    for (auto &[block, blockMetrics] : metrics) {
-      for (auto *loadOp : blockMetrics.getLoadOps()) {
-        auto param = findPointerParam(loadOp->getOperand(0));
+    // Every compute op is counted once: the visited set is shared by all
+    // stores of the function, so a value reaching several stores (e.g. an
+    // accumulator written back in two epilogue sub-tiles, or one store per
+    // output argument) is attributed to the first store, in program order,
+    // whose value chain reaches it. Walking in program order keeps that
+    // attribution deterministic.
+    DenseSet<Value> visited;
+    func.walk([&](Operation *op) {
+      if (BlockMetrics::isLoadLikeOp(op)) {
+        auto param = findPointerParam(op->getOperand(0));
         if (!param) {
-          LDBG("Skipping load with no resolvable function-arg base: "
-               << *loadOp);
-          continue;
+          LDBG("Skipping load with no resolvable function-arg base: " << *op);
+          return;
         }
-        auto metric = blockMetrics.getMetric(loadOp->getResult(0));
+        auto metric = metrics.at(op->getBlock()).getMetric(op->getResult(0));
         if (metric) {
           AffineExpr total =
-              calculateBandwidth(loadOp, syms.constant(metric->getSize()));
-          add(bandwidthMetrics[param.getArgNumber()], total);
+              scaleByTripCount(op, syms.constant(metric->getSize()));
+          add(loadBytesMetrics[param.getArgNumber()], total);
         }
-      }
-      for (auto *storeOp : blockMetrics.getStoreOps()) {
-        auto param = findPointerParam(storeOp->getOperand(0));
+      } else if (BlockMetrics::isStoreLikeOp(op)) {
+        auto param = findPointerParam(op->getOperand(0));
         if (!param) {
-          LDBG("Skipping store with no resolvable function-arg base: "
-               << *storeOp);
-          continue;
+          LDBG("Skipping store with no resolvable function-arg base: " << *op);
+          return;
         }
-        Metric storeMetric = blockMetrics.getStoreOpMetric(storeOp);
+        Metric storeMetric = metrics.at(op->getBlock()).getStoreOpMetric(op);
         AffineExpr total =
-            calculateBandwidth(storeOp, syms.constant(storeMetric.getSize()));
-        add(bandwidthMetrics[param.getArgNumber()], total);
-        assert(!computeMetrics[param.getArgNumber()]);
-        DenseSet<Value> visited;
-        AffineExpr compute = calculateCompute(storeOp->getOperand(1), visited);
+            scaleByTripCount(op, syms.constant(storeMetric.getSize()));
+        add(storeBytesMetrics[param.getArgNumber()], total);
+        AffineExpr compute = calculateCompute(op->getOperand(1), visited);
         if (compute)
           add(computeMetrics[param.getArgNumber()], compute);
       }
-    }
+    });
     LLVM_DEBUG(dump());
   }
 
-  std::optional<std::string> getBandwidthMetric(unsigned index) const {
-    if (index >= bandwidthMetrics.size() || !bandwidthMetrics[index])
-      return std::nullopt;
-    return syms.print(bandwidthMetrics[index]);
+  std::optional<std::string> getLoadBytesMetric(unsigned index) const {
+    return printMetric(loadBytesMetrics, index);
+  }
+  std::optional<std::string> getStoreBytesMetric(unsigned index) const {
+    return printMetric(storeBytesMetrics, index);
   }
   std::optional<std::string> getComputeMetric(unsigned index) const {
-    if (index >= computeMetrics.size() || !computeMetrics[index])
-      return std::nullopt;
-    return syms.print(computeMetrics[index]);
+    return printMetric(computeMetrics, index);
   }
 
   void dump() {
@@ -719,27 +734,35 @@ public:
     llvm::errs() << "Function: " << func.getName() << "\n";
     for (auto [block, blockMetrics] : metrics)
       blockMetrics.dump();
-    llvm::errs() << "Bandwidth Metrics: " << bandwidthMetrics.size() << "\n";
-    for (unsigned i = 0; i < func.getNumArguments(); ++i) {
-      llvm::errs() << "Bandwidth Metric: index= " << i << ", size= "
-                   << (bandwidthMetrics[i] ? syms.print(bandwidthMetrics[i])
-                                           : std::string("<none>"))
-                   << "\n";
-    }
-    llvm::errs() << "Compute Metrics: " << computeMetrics.size() << "\n";
-    for (unsigned i = 0; i < func.getNumArguments(); ++i) {
-      llvm::errs() << "Compute Metric: index= " << i << ", size= "
-                   << (computeMetrics[i] ? syms.print(computeMetrics[i])
-                                         : std::string("<none>"))
+    dumpMetrics("Load Bytes", loadBytesMetrics);
+    dumpMetrics("Store Bytes", storeBytesMetrics);
+    dumpMetrics("Compute", computeMetrics);
+  }
+
+private:
+  std::optional<std::string> printMetric(ArrayRef<AffineExpr> exprs,
+                                         unsigned index) const {
+    if (index >= exprs.size() || !exprs[index])
+      return std::nullopt;
+    return syms.print(exprs[index]);
+  }
+
+  void dumpMetrics(StringRef label, ArrayRef<AffineExpr> exprs) const {
+    llvm::errs() << label << " Metrics: " << exprs.size() << "\n";
+    for (unsigned i = 0; i < exprs.size(); ++i) {
+      llvm::errs() << label << " Metric: index= " << i << ", size= "
+                   << (exprs[i] ? syms.print(exprs[i]) : std::string("<none>"))
                    << "\n";
     }
   }
 
-private:
   triton::FuncOp func;
   SymTable syms;
   DenseMap<Block *, BlockMetrics> metrics;
-  SmallVector<AffineExpr> bandwidthMetrics;
+  // Per function argument: bytes loaded from / stored to memory rooted at
+  // the argument, and FLOPs feeding the stores rooted at it.
+  SmallVector<AffineExpr> loadBytesMetrics;
+  SmallVector<AffineExpr> storeBytesMetrics;
   SmallVector<AffineExpr> computeMetrics;
 };
 
@@ -756,16 +779,16 @@ struct ArithmeticIntensityPass
     for (auto func : getOperation().getOps<triton::FuncOp>()) {
       ArithmeticIntensityAnalysisDriver driver(func);
       driver.run();
+      auto setAttr = [&](unsigned i, StringRef name,
+                         const std::optional<std::string> &value) {
+        if (value)
+          func.setArgAttr(i, name,
+                          StringAttr::get(func.getContext(), value.value()));
+      };
       for (unsigned i = 0; i < func.getNumArguments(); i++) {
-        if (auto bandwidth = driver.getBandwidthMetric(i)) {
-          func.setArgAttr(
-              i, "tt.bandwidth",
-              StringAttr::get(func.getContext(), bandwidth.value()));
-        }
-        if (auto compute = driver.getComputeMetric(i)) {
-          func.setArgAttr(i, "tt.compute",
-                          StringAttr::get(func.getContext(), compute.value()));
-        }
+        setAttr(i, "tai.load_bytes", driver.getLoadBytesMetric(i));
+        setAttr(i, "tai.store_bytes", driver.getStoreBytesMetric(i));
+        setAttr(i, "tai.op_count", driver.getComputeMetric(i));
       }
     }
   }

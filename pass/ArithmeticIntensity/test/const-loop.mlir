@@ -8,8 +8,8 @@
 //
 // 4 iterations * 256 elements * 4 bytes/elem = 4096 bytes per pointer.
 // CHECK-LABEL: tt.func @const_loop(
-// CHECK-SAME:  %arg0: tensor<256x!tt.ptr<f32>> {tt.bandwidth = "4096", tt.compute = "0"}
-// CHECK-SAME:  %arg1: tensor<256x!tt.ptr<f32>> {tt.bandwidth = "4096"}
+// CHECK-SAME:  %arg0: tensor<256x!tt.ptr<f32>> {tai.op_count = "0", tai.store_bytes = "4096"}
+// CHECK-SAME:  %arg1: tensor<256x!tt.ptr<f32>> {tai.load_bytes = "4096"}
 tt.func @const_loop(%out: tensor<256x!tt.ptr<f32>>,
                     %in: tensor<256x!tt.ptr<f32>>) {
   %c0 = arith.constant 0 : i32
