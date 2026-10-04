@@ -9,6 +9,7 @@
 /// Exports tritonGetPluginInfo() for loading via TRITON_PLUGIN_PATHS.
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
@@ -659,6 +660,16 @@ static void createLocalAlias(TritonOpBuilder &self,
   // operands[2] = type carrier (element type)
   // operands[3..N-1] = shape dims
   // operands[N-1] = storage hint (0=smem, 1=tmem)
+  // Alternatively operands[2] is a ub.poison of the full alias memdesc type,
+  // for an explicitly requested layout, and is the only other operand.
+  if (operands.size() == 3) {
+    auto poison = operands[2].getDefiningOp<mlir::ub::PoisonOp>();
+    if (!poison || !mlir::isa<ttg::MemDescType>(poison.getType()))
+      return;
+    operands[0] = self.create<tlx::LocalAliasOp>(poison.getType(), operands[1]);
+    poison->erase();
+    return;
+  }
   if (operands.size() < 5)
     return;
 

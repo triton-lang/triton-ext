@@ -156,7 +156,8 @@ def local_alloc(
     # If reuse is a buffered_tensor, use local_alias (share memory with existing buffer)
     if reuse is not None and isinstance(reuse, tlx.buffered_tensor):
         return _local_alloc_with_alias(_semantic, reuse, dtype, full_shape,
-                                       unwrapped_shape, unwrapped_num, storage)
+                                       unwrapped_shape, unwrapped_num, storage,
+                                       tl._unwrap_if_constexpr(layout))
 
     if storage == tlx.storage_kind.tmem:
         return _local_alloc_tmem(_semantic, dtype, full_shape, unwrapped_shape,
@@ -262,12 +263,30 @@ def _local_alloc_tmem(semantic, dtype, full_shape, unwrapped_shape,
 
 
 def _local_alloc_with_alias(semantic, reuse_tensor, dtype, full_shape,
-                            unwrapped_shape, unwrapped_num, storage):
-    """Allocate via utlx_local_alias (share memory with existing buffered_tensor)."""
+                            unwrapped_shape, unwrapped_num, storage,
+                            layout=None):
+    """Allocate via utlx_local_alias (share memory with existing buffered_tensor).
+
+    The alias takes the encoding of ``reuse_tensor`` unless ``layout`` is a
+    pinned encoding (see :func:`_local_alloc_pinned`). Those are tied to a
+    shape, so the source's would not fit an alias of a different shape.
+    """
     if reuse_tensor.type.storage != storage:
         raise ValueError(
             f"reuse tensor has storage {reuse_tensor.type.storage} but "
             f"allocation requests {storage}")
+    if storage == storage_kind.smem and isinstance(
+            layout, (tlx.padded_shared_layout_encoding,
+                     tlx.shared_linear_layout_encoding)):
+        builder = semantic.builder
+        mem_desc_ty = builder.get_shared_mem_desc_ty(dtype.to_ir(builder),
+                                                     full_shape,
+                                                     layout.to_ir(builder),
+                                                     full_shape)
+        carrier = builder.create_poison(mem_desc_ty)
+        tensor_handle = builder.utlx_local_alias([reuse_tensor.handle, carrier])
+        return tlx.buffered_tensor(tensor_handle, dtype, unwrapped_shape,
+                                   unwrapped_num, storage, layout)
     type_carrier = _make_type_carrier(semantic.builder, dtype)
     shape_values = [semantic.builder.get_int32(int(dim)) for dim in full_shape]
     is_tmem = storage == storage_kind.tmem
