@@ -8,6 +8,7 @@
 #include "ops/NewOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OperationSupport.h"
@@ -1047,4 +1048,82 @@ void utlx::createLocalSlice(TritonOpBuilder &self,
       srcTy.getMemorySpace(), srcTy.getMutableMemory(), srcTy.getAllocShape());
   operands[0] = self.create<ttg::MemDescSubsliceOp>(newType, src,
                                                     llvm::ArrayRef(offsets));
+}
+
+// ---------------------------------------------------------------------------
+// utlx_reconcile_region_types
+// ---------------------------------------------------------------------------
+// require_layout gives a value an encoded tensor type while frontend code
+// generation is still in progress. A variable that is plain on one control
+// flow edge and encoded on another, e.g. an accumulator initialised with
+// tl.zeros and reassigned from a require_layout'd value inside a loop, then
+// yields a type that differs from the scf.for iter arg or the scf.if result
+// in encoding alone. Fork TLX's frontend tolerates this; upstream's emits IR
+// that fails verification. The same happens at tt.call and tt.return, whose
+// signatures are built from the frontend types, which do not track encodings
+// picked up from operands (tl.dot with an encoded acc, arithmetic on one).
+// Once the function is finalised, this walks it and casts each such operand to
+// the expected type: release_layout when the expected type is plain,
+// require_layout when it is encoded.
+
+static mlir::Value castEncoding(mlir::OpBuilder &b, mlir::Value v,
+                                mlir::Type expected) {
+  auto srcTy = mlir::dyn_cast<mlir::RankedTensorType>(v.getType());
+  auto dstTy = mlir::dyn_cast<mlir::RankedTensorType>(expected);
+  if (!srcTy || !dstTy || srcTy == dstTy ||
+      srcTy.getShape() != dstTy.getShape() ||
+      srcTy.getElementType() != dstTy.getElementType())
+    return {};
+  if (!dstTy.getEncoding())
+    return tlx::ReleaseLayoutOp::create(b, v.getLoc(), dstTy, v);
+  return tlx::RequireLayoutOp::create(b, v.getLoc(), dstTy, v);
+}
+
+static void reconcileOperands(mlir::Operation *terminator,
+                              mlir::TypeRange expected) {
+  mlir::OpBuilder b(terminator);
+  unsigned first = terminator->getNumOperands() - expected.size();
+  for (auto [i, type] : llvm::enumerate(expected)) {
+    mlir::OpOperand &operand = terminator->getOpOperand(first + i);
+    if (mlir::Value cast = castEncoding(b, operand.get(), type))
+      operand.set(cast);
+  }
+}
+
+void utlx::createReconcileRegionTypes(TritonOpBuilder &self,
+                                      std::vector<mlir::Value> &operands) {
+  mlir::Block *block = self.getBuilder().getInsertionBlock();
+  mlir::Operation *fn = block ? block->getParentOp() : nullptr;
+  if (fn && !mlir::isa<mlir::triton::FuncOp>(fn))
+    fn = fn->getParentOfType<mlir::triton::FuncOp>();
+  if (!fn)
+    return;
+  mlir::FunctionType fnType =
+      mlir::cast<mlir::triton::FuncOp>(fn).getFunctionType();
+  fn->walk([&](mlir::Operation *op) {
+    mlir::Operation *parent = op->getParentOp();
+    if (auto yield = mlir::dyn_cast<mlir::scf::YieldOp>(op)) {
+      if (auto forOp = mlir::dyn_cast<mlir::scf::ForOp>(parent))
+        reconcileOperands(
+            yield, mlir::ValueRange(forOp.getRegionIterArgs()).getTypes());
+      else if (auto whileOp = mlir::dyn_cast<mlir::scf::WhileOp>(parent))
+        reconcileOperands(
+            yield, mlir::ValueRange(whileOp.getBeforeArguments()).getTypes());
+      else if (mlir::isa<mlir::scf::IfOp, mlir::scf::ExecuteRegionOp>(parent))
+        reconcileOperands(yield, parent->getResultTypes());
+    } else if (auto cond = mlir::dyn_cast<mlir::scf::ConditionOp>(op)) {
+      // getArgs() excludes the condition, which reconcileOperands skips.
+      auto whileOp = mlir::cast<mlir::scf::WhileOp>(parent);
+      reconcileOperands(
+          cond, mlir::ValueRange(whileOp.getAfterArguments()).getTypes());
+    } else if (auto ret = mlir::dyn_cast<mlir::triton::ReturnOp>(op)) {
+      reconcileOperands(ret, fnType.getResults());
+    } else if (auto call = mlir::dyn_cast<mlir::triton::CallOp>(op)) {
+      // Callees are generated, and finalised, before their first call.
+      if (auto callee =
+              mlir::SymbolTable::lookupNearestSymbolFrom<mlir::triton::FuncOp>(
+                  call, call.getCalleeAttr()))
+        reconcileOperands(call, callee.getFunctionType().getInputs());
+    }
+  });
 }

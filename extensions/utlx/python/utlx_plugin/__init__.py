@@ -459,6 +459,42 @@ def _patch_verify_loop_carried_variable():
 
 _patch_verify_loop_carried_variable()
 
+
+def _patch_reconcile_region_types():
+    """Reconcile scf yields that differ from their region only in encoding.
+
+    ``require_layout`` makes a value's IR type encoded during code generation,
+    so a variable can be plain on one control-flow edge and encoded on the
+    other -- e.g. ``acc = tl.zeros(...)`` before a loop that reassigns
+    ``acc`` from a ``require_layout``'d result. Meta's fork accepts this;
+    upstream emits an ``scf.for``/``scf.if`` whose yield types mismatch and
+    fails verification. ``tt.call`` and ``tt.return`` have the same problem:
+    their signatures come from frontend types, which miss encodings a value
+    inherits from its operands (``tl.dot`` with an encoded acc). Once a
+    function's returns are finalised, the plugin casts each such operand to
+    the type its region, callee or function expects.
+    """
+    import triton.compiler.code_generator as _cg
+
+    if getattr(_cg.CodeGenerator, "_utlx_reconcile_region_types", False):
+        return
+
+    _orig_handle_returns = _cg.CodeGenerator.handle_returns
+
+    def handle_returns(self):
+        _orig_handle_returns(self)
+        # Insertion point is back inside the function, after the final return.
+        reconcile = getattr(self.builder, "utlx_reconcile_region_types", None)
+        if reconcile is not None:
+            reconcile([])
+
+    _cg.CodeGenerator.handle_returns = handle_returns
+    _cg.CodeGenerator._utlx_reconcile_region_types = True
+
+
+_patch_reconcile_region_types()
+
+
 # Loop options Meta's fork adds to ``tl.range`` for NVIDIA automatic warp
 # specialization and its modulo scheduler. They are scheduling hints with no
 # meaning on upstream Triton, so they are accepted and dropped.

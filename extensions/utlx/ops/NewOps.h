@@ -54,6 +54,7 @@ void createAsyncLoad(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createGlobalScratchAlloc(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createMakeDummyRegisterLayout(TritonOpBuilder &,
                                    std::vector<mlir::Value> &);
+void createReconcileRegionTypes(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createRequireWithLayoutCarrier(TritonOpBuilder &,
                                     std::vector<mlir::Value> &);
 void createAllocClcResponses(TritonOpBuilder &, std::vector<mlir::Value> &);
