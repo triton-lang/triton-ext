@@ -16,6 +16,8 @@ module provides each one on upstream Triton with the same results:
   offsets`` (the AMD backend's buffer-op conversion turns that back into a
   buffer load), and ``buffer_atomic_add`` is ``tl.atomic_add`` on
   ``ptr + offsets``.
+* ``extract_slice`` selects the slice with reshape/permute/split rather than
+  ``amdg.extract_slice``, which needs encoded types TTIR does not have yet.
 
 The scheduling these ops ask for is lost, so kernels written around them run
 correctly but not at the fork's speed.
@@ -121,6 +123,71 @@ def assert_same_layout(lhs, rhs, _semantic=None) -> None:
 
 
 # --- registers / MFMA -----------------------------------------------------
+
+
+@tl.builtin
+def extract_slice(source, shape, offsets, _semantic=None):
+    """Return the static ``shape`` slice of ``source`` starting at ``offsets``.
+
+    Each sliced axis must split evenly into a power-of-two number of
+    ``shape``-sized pieces with ``offsets`` on a piece boundary -- the aligned
+    slices the fork accepts. The piece is picked by reshaping the axis into
+    ``[pieces, extent]`` and splitting the ``pieces`` dim bit by bit.
+    """
+    assert isinstance(source, tl.tensor), \
+        f"source must be a tensor, got {type(source).__name__}"
+    shape = [_uw(d) for d in shape]
+    offsets = [_uw(o) for o in offsets]
+    src_shape = [_uw(d) for d in source.shape]
+    rank = len(src_shape)
+    assert len(shape) == rank, f"shape must have rank {rank}, got {len(shape)}"
+    assert len(offsets) == rank, \
+        f"offsets must have rank {rank}, got {len(offsets)}"
+    b = _semantic.builder
+    if (isinstance(source.type, _carrier_type)
+            and getattr(b.options, "backend_name", None) == "hip"):
+        # An encoded source, e.g. a dot operand after require_layout: slice it
+        # in place so the result keeps that layout.
+        handle = b.utlx_amd_extract_slice(
+            [source.handle] + [b.get_int32(d) for d in shape] +
+            [b.get_int32(o) for o in offsets])
+        return _carrier(handle, source.type.scalar)
+    x = source
+    for axis, (extent, offset, src_extent) in enumerate(
+            zip(shape, offsets, src_shape)):
+        assert isinstance(extent, int) and extent > 0, \
+            "shape must contain positive constexpr integers"
+        assert isinstance(offset, int) and offset >= 0, \
+            "offsets must contain non-negative constexpr integers"
+        assert offset + extent <= src_extent, (
+            f"slice exceeds source extent at axis {axis}: "
+            f"{offset} + {extent} > {src_extent}")
+        if extent == src_extent:
+            continue
+        pieces = src_extent // extent
+        assert src_extent % extent == 0 and _is_pow2(pieces) \
+            and offset % extent == 0, (
+                f"unaligned slice at axis {axis}: extent {extent} at offset "
+                f"{offset} of {src_extent}")
+        x = _select_piece(_semantic, x, axis, extent, pieces, offset // extent)
+    return x
+
+
+def _select_piece(semantic, x, axis, extent, pieces, index):
+    cur = [_uw(d) for d in x.shape]
+    rest = cur[:axis] + [extent] + cur[axis + 1:]
+    # [.., pieces * extent, ..] -> [.., pieces, extent, ..] -> pieces last.
+    x = semantic.reshape(x, cur[:axis] + [pieces, extent] + cur[axis + 1:],
+                         False)
+    perm = [d for d in range(len(cur) + 1) if d != axis] + [axis]
+    x = semantic.permute(x, perm)
+    bits = pieces.bit_length() - 1
+    x = semantic.reshape(x, rest + [2] * bits, False)
+    # Row-major: the last dim is the lowest bit of the piece index.
+    for bit in range(bits):
+        lo, hi = semantic.split(x)
+        x = hi if (index >> bit) & 1 else lo
+    return x
 
 
 @tl.builtin
