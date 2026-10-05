@@ -38,7 +38,7 @@ class layout_encoding:
     def __repr__(self):
         return self.__class__.__name__
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder) -> ir.attribute:
         raise NotImplementedError(
             f"{self.__class__.__name__}.to_ir() must be overridden in subclasses"
         )
@@ -55,7 +55,7 @@ class shared_layout_encoding(layout_encoding):
             f"{self.__class__.__name__}.make_permute() must be overridden in subclasses"
         )
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder) -> ir.attribute:
         raise NotImplementedError(
             f"{self.__class__.__name__}.to_ir() must be overridden in subclasses"
         )
@@ -110,7 +110,7 @@ class swizzled_shared_layout_encoding(shared_layout_encoding):
             self.numCTAOrder,
         )
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder) -> ir.attribute:
         return builder.make_swizzled_shared_encoding_attr(
             self.vectorSize,
             self.perPhase,
@@ -249,7 +249,7 @@ class padded_shared_layout_encoding(_value_layout, shared_layout_encoding):
             block_bases=block_bases,
         )
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder) -> ir.attribute:
         offset_bases = self.offset_bases
         if offset_bases is None:
             offset_bases = _identity_offset_bases(self.shape, self.order)
@@ -278,7 +278,7 @@ class shared_linear_layout_encoding(_value_layout, shared_layout_encoding):
         # memdesc_trans describe the logical permutation (as the fork does).
         return self
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder) -> ir.attribute:
         return builder.get_shared_linear_layout(self.offset_bases,
                                                 self.block_bases,
                                                 self.alignment)
@@ -307,7 +307,7 @@ class tensor_memory_layout_encoding(shared_layout_encoding):
     def make_permute(self, dims):
         return self
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder) -> ir.attribute:
         return builder.make_tensor_memory_encoding_attr(
             self.blockM,
             self.blockN,
@@ -383,7 +383,7 @@ class nv_mma_shared_layout_encoding(shared_layout_encoding):
                 and self.fp4Padded == other.fp4Padded
                 and self.swizzled == other.swizzled)
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder) -> ir.attribute:
         return builder.make_nv_mma_shared_encoding_attr(
             [int(x) for x in self.shape],
             self.order,
@@ -406,7 +406,7 @@ class tensor_memory_scales_layout_encoding:
     def make_default(cls):
         return cls(CTASplitM=1, CTASplitN=1)
 
-    def to_ir(self, builder: ir.builder) -> None:
+    def to_ir(self, builder: ir.builder) -> ir.attribute:
         return builder.make_tensor_memory_scales_encoding_attr(
             self.CTASplitM, self.CTASplitN)
 
