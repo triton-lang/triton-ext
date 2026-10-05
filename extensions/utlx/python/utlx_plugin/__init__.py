@@ -356,20 +356,10 @@ from .mxfp8_utils import _to_mxfp8_block  # noqa: E402
 from .warp_ops import vote_ballot_sync, warp_redux  # noqa: E402
 from .warp_pipeline import warp_pipeline_stage  # noqa: E402
 from .amd_ops import (  # noqa: E402
-    buffer_load_to_local,
-    buffer_atomic_add,
-    assert_same_layout,
-    extract_slice,
-    rematerialized_range,
-    amd_register_resident,
-    amd_register_class_anchor,
-    amd_scheduled_mfma,
-    amd_mfma_commit,
-    amd_sched_barrier,
-    amd_iglp_opt,
-    num_warps,
-    warp_any,
-    warp_predicate,
+    buffer_load_to_local, buffer_atomic_add, assert_same_layout, extract_slice,
+    rematerialized_range, amd_register_resident, amd_register_class_anchor,
+    amd_scheduled_mfma, amd_mfma_commit, amd_sched_barrier, amd_iglp_opt,
+    num_warps, warp_any, warp_predicate,
 )
 
 from . import custom_stages  # noqa: E402
@@ -546,14 +536,22 @@ def _patch_extern_elementwise():
         return
 
     @tl_core.builtin
-    def extern_elementwise(lib_name, lib_path, args, arg_type_symbol_dict,
-                           is_pure, _semantic=None):
+    def extern_elementwise(lib_name,
+                           lib_path,
+                           args,
+                           arg_type_symbol_dict,
+                           is_pure,
+                           _semantic=None):
         args = [_promote_value(a) for a in args]
         carrier = next((a for a in args if _has_layout(a)), None)
         drop = getattr(_semantic, "_drop_layout", None)
         if carrier is not None and drop is not None:
             args = [drop(a) for a in args]
-        out = orig(lib_name, lib_path, args, arg_type_symbol_dict, is_pure,
+        out = orig(lib_name,
+                   lib_path,
+                   args,
+                   arg_type_symbol_dict,
+                   is_pure,
                    _semantic=_semantic)
         if (carrier is not None and drop is not None and out.type.is_block()
                 and list(out.shape) == list(carrier.shape)):

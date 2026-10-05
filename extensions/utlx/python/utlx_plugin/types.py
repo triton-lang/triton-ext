@@ -171,8 +171,15 @@ class padded_shared_layout_encoding(_value_layout, shared_layout_encoding):
     the identity form computes them here.
     """
 
-    def __init__(self, intervals, paddings, order, shape, numCTAsPerCGA=None,
-                 numCTASplit=None, numCTAOrder=None, offset_bases=None,
+    def __init__(self,
+                 intervals,
+                 paddings,
+                 order,
+                 shape,
+                 numCTAsPerCGA=None,
+                 numCTASplit=None,
+                 numCTAOrder=None,
+                 offset_bases=None,
                  block_bases=None):
         super().__init__()
         assert len(intervals) == len(paddings), \
@@ -194,7 +201,9 @@ class padded_shared_layout_encoding(_value_layout, shared_layout_encoding):
 
     @staticmethod
     @constexpr_function
-    def with_bases(interval_padding_pairs, offset_bases, shape,
+    def with_bases(interval_padding_pairs,
+                   offset_bases,
+                   shape,
                    block_bases=None):
         rank = len(shape)
         assert rank > 0, "shape must be non-empty"
@@ -707,8 +716,9 @@ class buffered_tensor_type(tl.block_type):
             shape += f"_{self.num}"
         # Explicit padded/linear layouts are part of the memdesc type, so a
         # jit helper called on two of them needs two specializations.
-        if isinstance(self.layout, (padded_shared_layout_encoding,
-                                    shared_linear_layout_encoding)):
+        if isinstance(
+                self.layout,
+            (padded_shared_layout_encoding, shared_linear_layout_encoding)):
             shape += f"_{self.layout.mangle()}"
         return f"buffered_{elt}S{shape}"
 

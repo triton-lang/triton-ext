@@ -398,7 +398,8 @@ class TestAsyncToken:
         # jit helpers taking either need distinct specializations.
         token = tlx.async_token(handle=None)
         assert token.type.mangle() == "async_token_none"
-        assert tlx.async_token(handle=object()).type.mangle() == "async_token_type"
+        assert tlx.async_token(
+            handle=object()).type.mangle() == "async_token_type"
 
 
 if __name__ == "__main__":

@@ -133,7 +133,8 @@ def assert_same_layout(lhs, rhs, _semantic=None) -> None:
     pass uTLX does not have. It never changes the program, only rejects it.
     """
     rhs = _uw(rhs)
-    if not isinstance(rhs, (tl.tensor, tlx.buffered_tensor, tlx.layout_encoding)):
+    if not isinstance(rhs,
+                      (tl.tensor, tlx.buffered_tensor, tlx.layout_encoding)):
         raise TypeError(
             "`rhs` must be a TLX tensor/buffer value or layout encoding")
 
@@ -164,13 +165,13 @@ def extract_slice(source, shape, offsets, _semantic=None):
             and getattr(b.options, "backend_name", None) == "hip"):
         # An encoded source, e.g. a dot operand after require_layout: slice it
         # in place so the result keeps that layout.
-        handle = b.utlx_amd_extract_slice(
-            [source.handle] + [b.get_int32(d) for d in shape] +
-            [b.get_int32(o) for o in offsets])
+        handle = b.utlx_amd_extract_slice([source.handle] +
+                                          [b.get_int32(d) for d in shape] +
+                                          [b.get_int32(o) for o in offsets])
         return _carrier(handle, source.type.scalar)
     x = source
-    for axis, (extent, offset, src_extent) in enumerate(
-            zip(shape, offsets, src_shape)):
+    for axis, (extent, offset,
+               src_extent) in enumerate(zip(shape, offsets, src_shape)):
         assert isinstance(extent, int) and extent > 0, \
             "shape must contain positive constexpr integers"
         assert isinstance(offset, int) and offset >= 0, \
@@ -369,7 +370,8 @@ def warp_predicate(predicate,
     if isinstance(inits, tl.tensor):
         inits = (inits, )
     elif not isinstance(inits, (builtins.tuple, builtins.list, tl.tuple)):
-        raise TypeError("warp_predicate inits must be a tensor, tuple, or list")
+        raise TypeError(
+            "warp_predicate inits must be a tensor, tuple, or list")
     if not isinstance(args, (builtins.tuple, builtins.list, tl.tuple)):
         args = (args, )
     inits = builtins.list(inits)
@@ -406,8 +408,8 @@ def warp_predicate(predicate,
             while len(cond.shape) < len(init.shape):
                 cond = _semantic.expand_dims(cond, len(cond.shape))
             # Full shape up front, so where() can give it init's layout.
-            cond = _semantic.broadcast_impl_shape(
-                cond, [_uw(d) for d in init.shape])
+            cond = _semantic.broadcast_impl_shape(cond,
+                                                  [_uw(d) for d in init.shape])
         out = _semantic.where(cond, result, init)
         merged.append(_keep_type(out.handle, init))
     return merged[0] if len(merged) == 1 else builtins.tuple(merged)

@@ -47,11 +47,11 @@ bool isIndexArithmetic(mlir::Operation *op) {
   // between e.g. a GCC-built plugin and a clang-built PyPI libtriton, so the
   // check is always false there. Ask libtriton, and list Triton's pure
   // elementwise ops, which lack the arith-style mappable traits.
-  bool elementwise = mlir::OpTrait::hasElementwiseMappableTraits(op) ||
-                     isa<tt::AddPtrOp, tt::BitcastOp, tt::ClampFOp,
-                         tt::FpToFpOp, tt::IntToPtrOp, tt::MulhiUIOp,
-                         tt::PreciseDivFOp, tt::PreciseSqrtOp,
-                         tt::PtrToIntOp>(op);
+  bool elementwise =
+      mlir::OpTrait::hasElementwiseMappableTraits(op) ||
+      isa<tt::AddPtrOp, tt::BitcastOp, tt::ClampFOp, tt::FpToFpOp,
+          tt::IntToPtrOp, tt::MulhiUIOp, tt::PreciseDivFOp, tt::PreciseSqrtOp,
+          tt::PtrToIntOp>(op);
   return elementwise && mlir::isMemoryEffectFree(op);
 }
 

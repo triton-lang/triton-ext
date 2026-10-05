@@ -262,8 +262,13 @@ def _local_alloc_tmem(semantic, dtype, full_shape, unwrapped_shape,
                                unwrapped_num, storage_kind.tmem, py_layout)
 
 
-def _local_alloc_with_alias(semantic, reuse_tensor, dtype, full_shape,
-                            unwrapped_shape, unwrapped_num, storage,
+def _local_alloc_with_alias(semantic,
+                            reuse_tensor,
+                            dtype,
+                            full_shape,
+                            unwrapped_shape,
+                            unwrapped_num,
+                            storage,
                             layout=None):
     """Allocate via utlx_local_alias (share memory with existing buffered_tensor).
 
@@ -284,7 +289,8 @@ def _local_alloc_with_alias(semantic, reuse_tensor, dtype, full_shape,
                                                      layout.to_ir(builder),
                                                      full_shape)
         carrier = builder.create_poison(mem_desc_ty)
-        tensor_handle = builder.utlx_local_alias([reuse_tensor.handle, carrier])
+        tensor_handle = builder.utlx_local_alias(
+            [reuse_tensor.handle, carrier])
         return tlx.buffered_tensor(tensor_handle, dtype, unwrapped_shape,
                                    unwrapped_num, storage, layout)
     type_carrier = _make_type_carrier(semantic.builder, dtype)
@@ -526,8 +532,8 @@ def local_reinterpret(
     """
     layout = tl._unwrap_if_constexpr(layout)
     pin = tl._unwrap_if_constexpr(pin)
-    assert isinstance(pin, bool), (
-        f"pin must be a constexpr bool, got {type(pin).__name__}")
+    assert isinstance(
+        pin, bool), (f"pin must be a constexpr bool, got {type(pin).__name__}")
     if shape is None:
         shape = src.type.shape
     else:

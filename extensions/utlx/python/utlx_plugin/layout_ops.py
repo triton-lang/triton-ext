@@ -77,8 +77,8 @@ def _layout_carrier(semantic, src, layout):
         enc = layout.to_ir(b, shape, src.dtype)
     except TypeError:
         enc = layout.to_ir(b)
-    return b.create_poison(
-        b.get_distributed_ty(src.dtype.to_ir(b), shape, enc))
+    return b.create_poison(b.get_distributed_ty(src.dtype.to_ir(b), shape,
+                                                enc))
 
 
 class _register_layout(_value_layout, layout_encoding):
@@ -167,8 +167,8 @@ def amd_mfma_layout(version,
                          f"leading batch dim); got {len(warps_per_cta)}")
 
     return tl.constexpr(
-        amd_mfma_layout_encoding(int(version), instr_shape,
-                                        bool(transposed), warps_per_cta))
+        amd_mfma_layout_encoding(int(version), instr_shape, bool(transposed),
+                                 warps_per_cta))
 
 
 @tl.builtin
@@ -186,8 +186,7 @@ def dot_operand_layout(op_idx, parent, k_width=None, _semantic=None):
             raise ValueError("dot_operand_layout of an AMD MFMA layout needs "
                              "k_width")
         return tl.constexpr(
-            dot_operand_layout_encoding(int(op_idx), parent,
-                                               int(k_width)))
+            dot_operand_layout_encoding(int(op_idx), parent, int(k_width)))
     b = _semantic.builder
     args = [
         parent.handle,
@@ -357,8 +356,9 @@ def buffer_load(base,
     and checked but not forwarded: the backend's own axis analysis picks the
     width here, which can only be narrower, never wrong.
     """
-    tlang.static_assert(contiguity > 0 and (contiguity & (contiguity - 1)) == 0,
-                        "contiguity must be a positive power of two")
+    tlang.static_assert(
+        contiguity > 0 and (contiguity & (contiguity - 1)) == 0,
+        "contiguity must be a positive power of two")
     return _load_keeping_layout(base + offsets, mask, other, cache)
 
 
@@ -374,6 +374,7 @@ def buffer_store(value,
     Layouts are stripped from the operands by the store shim, and
     ``contiguity`` is accepted but not forwarded, as for buffer_load.
     """
-    tlang.static_assert(contiguity > 0 and (contiguity & (contiguity - 1)) == 0,
-                        "contiguity must be a positive power of two")
+    tlang.static_assert(
+        contiguity > 0 and (contiguity & (contiguity - 1)) == 0,
+        "contiguity must be a positive power of two")
     tlang.store(base + offsets, value, mask=mask, cache_modifier=cache)

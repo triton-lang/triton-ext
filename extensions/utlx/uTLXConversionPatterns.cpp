@@ -1012,10 +1012,9 @@ public:
     auto *inferLayout = dyn_cast<triton::DialectInferLayoutInterface>(
         &resultEncoding.getDialect());
     Attribute srcEncoding;
-    if (!inferLayout ||
-        failed(inferLayout->inferTransOpEncoding(
-            resultEncoding, transOp.getType().getShape(), inverse, srcEncoding,
-            transOp.getLoc())))
+    if (!inferLayout || failed(inferLayout->inferTransOpEncoding(
+                            resultEncoding, transOp.getType().getShape(),
+                            inverse, srcEncoding, transOp.getLoc())))
       return failure();
     return srcEncoding;
   }
@@ -1088,8 +1087,8 @@ public:
           return failure();
       } else if (isa<triton::gpu::MemDescIndexOp,
                      triton::gpu::MemDescSubsliceOp>(user)) {
-        if (failed(propagateEncoding(user->getResult(0), targetEncoding,
-                                     visited)))
+        if (failed(
+                propagateEncoding(user->getResult(0), targetEncoding, visited)))
           return failure();
       }
     }

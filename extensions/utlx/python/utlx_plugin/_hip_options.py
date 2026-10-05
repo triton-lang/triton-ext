@@ -28,8 +28,10 @@ import dataclasses
 
 # Option name -> LLVM flag, as in the fork's _get_codegen_flags.
 _CODEGEN_FLAGS = {
-    "reverse_local_assignment": "greedy-reverse-local-assignment",
-    "sink_insts_to_avoid_spills": "sink-insts-to-avoid-spills",
+    "reverse_local_assignment":
+    "greedy-reverse-local-assignment",
+    "sink_insts_to_avoid_spills":
+    "sink-insts-to-avoid-spills",
     "regclass_priority_trumps_globalness":
     "greedy-regclass-priority-trumps-globalness",
     "disable_unclustered_high_rp_reschedule":
