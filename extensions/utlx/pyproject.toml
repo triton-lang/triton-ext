@@ -18,6 +18,11 @@ requires-python = ">=3.9"
 # Triton from another line, which corrupts the heap rather than failing cleanly.
 dependencies = ["triton~=3.8.0"]
 
+# Loaded by pytest wherever uTLX is installed, so fbtriton's TLX op tests find
+# the fork-only test helpers they import (see python/_utlx_pytest.py).
+[project.entry-points.pytest11]
+utlx = "_utlx_pytest"
+
 [tool.triton-ext]
 status = "experimental"
 enabled = false

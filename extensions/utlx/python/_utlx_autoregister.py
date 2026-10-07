@@ -19,6 +19,10 @@ This runs in every interpreter that has uTLX installed, including ones that
 never touch Triton, so it imports nothing but ``os``, ``sys`` and the
 ``importlib`` machinery, and imports no module until one of the aliases is
 actually requested.
+
+PYTEST_DONT_REWRITE: pytest marks every top-level module of a distribution with
+a pytest plugin (``_utlx_pytest``) for assertion rewriting, and warns about any
+already imported -- as this one always is, by the .pth. It has no asserts.
 """
 
 import importlib
