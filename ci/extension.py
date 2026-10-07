@@ -31,12 +31,13 @@ class Manifest:
 
     `name` is the short extension name used for display, CMake variables, and
     the plugin ABI; `wheel` is the `pyproject.toml` project name and
-    determines the wheel filename.
+    determines the wheel filename. `package` is the importable Python package,
+    taken from the wheel package declaration or the normalized wheel name.
 
     >>> Manifest(name="foo", wheel="triton-foo", path=Path("foo"), status="stable", enabled=True, version="1.2.3")
-    Manifest(name='foo', wheel='triton-foo', path=PosixPath('foo'), status='stable', enabled=True, version='1.2.3', owners=[])
+    Manifest(name='foo', wheel='triton-foo', path=PosixPath('foo'), status='stable', enabled=True, version='1.2.3', owners=[], package='triton_foo')
     >>> Manifest(name="bar", wheel="bar", path=Path("bar"))
-    Manifest(name='bar', wheel='bar', path=PosixPath('bar'), status='experimental', enabled=True, version='0.0.0', owners=[])
+    Manifest(name='bar', wheel='bar', path=PosixPath('bar'), status='experimental', enabled=True, version='0.0.0', owners=[], package='bar')
     """
     name: str
     wheel: str
@@ -45,6 +46,7 @@ class Manifest:
     enabled: bool = True
     version: str = "0.0.0"
     owners: list[str] = field(default_factory=list)
+    package: str = ""
 
     def __post_init__(self):
         """Validate the extension metadata."""
@@ -54,6 +56,10 @@ class Manifest:
         if not self.wheel or not isinstance(self.wheel, str):
             raise ValueError(
                 f"{self.path}: missing required string field 'wheel_name'")
+        if not self.package:
+            object.__setattr__(self, "package", self.wheel.replace("-", "_"))
+        if not isinstance(self.package, str):
+            raise ValueError(f"{self.path}: 'package' must be a string")
         if self.status not in VALID_STATUS:
             raise ValueError(
                 f"{self.path}: invalid status '{self.status}', must be one of: {sorted(VALID_STATUS)}"
@@ -146,6 +152,10 @@ def load(manifest_path: Path) -> Manifest:
                     path, wheel, TRITON_PREFIX, TRITON_PREFIX + wheel)
     name = wheel.removeprefix(TRITON_PREFIX)
     owners = owners_for(path.as_posix(), rules)
+    packages = data.get("tool", {}).get("scikit-build",
+                                        {}).get("wheel",
+                                                {}).get("packages", {})
+    package = next(iter(packages)) if packages else wheel.replace("-", "_")
     return Manifest(name=name,
                     wheel=wheel,
                     version=data["project"]["version"],
@@ -153,7 +163,8 @@ def load(manifest_path: Path) -> Manifest:
                         "status", "experimental"),
                     enabled=data["tool"]["triton-ext"].get("enabled", True),
                     path=path.parent,
-                    owners=owners)
+                    owners=owners,
+                    package=package)
 
 
 def _out_of_place(path: Path) -> bool:
