@@ -128,6 +128,14 @@ gfx950_addmm_interwave_template = TritonTemplate(
     source=load_tlx_template("gfx950_addmm_interwave"),
 )
 
+# The register kernel again, as the force-mode catch-all for addmm. A separate
+# identity so the addmm heuristic attaches to it independently of mm's.
+gfx950_addmm_register_template = TritonTemplate(
+    name="tlx_gfx950_addmm_register",
+    grid=mm_grid,
+    source="# tlx_gfx950_addmm_register\n" + load_tlx_template("gfx950_mm_register"),
+)
+
 # TLX warp-pipelined bmm template (MI350X/gfx950). Same warp-pipe core as the addmm, plus a
 # batch axis on the grid + a per-batch int64 base advance. B is the standard torch.bmm [BATCH,K,N]
 # row-major layout (loaded as (BLOCK_K, BLOCK_N) tiles, no transpose). Selection via TLX_MODE.
@@ -206,6 +214,8 @@ def _append_tlx_amd(templates, op_name):
         # separately from the per-tile warp-pipe.
         if gfx950_addmm_persistent_warppipe_template.uid not in uids:
             templates.append(gfx950_addmm_persistent_warppipe_template)
+        if gfx950_addmm_register_template.uid not in uids:
+            templates.append(gfx950_addmm_register_template)
     elif op_name == "bmm":
         # Compete as an additional candidate alongside the stock bmm_template + aten. Inject once,
         # gated on bmm_template already being present (the unified choice call).

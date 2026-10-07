@@ -56,6 +56,11 @@
     offs_k = tl.arange(0, BLOCK_K).to(tl.int32)
     reg_m = tl.max_contiguous(tl.multiple_of(offs_m, BLOCK_M), BLOCK_M)
     reg_n = tl.max_contiguous(tl.multiple_of(offs_n, BLOCK_N), BLOCK_N)
+    # Inductor picks a 64-bit INDEX_DTYPE only for operands spanning past int32
+    # elements; for everything else these casts are no-ops.
+    reg_m = reg_m.to(INDEX_DTYPE)
+    reg_n = reg_n.to(INDEX_DTYPE)
+    offs_k = offs_k.to(INDEX_DTYPE)
 
     acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=ACC_TYPE)
     full_k_tiles: tl.constexpr = K // BLOCK_K

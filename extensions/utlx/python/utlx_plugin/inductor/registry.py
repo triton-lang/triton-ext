@@ -98,6 +98,7 @@ from .mm_templates import (
     blackwell_gemm_ws_template,
     gfx950_addmm_interwave_template,
     gfx950_addmm_persistent_warppipe_template,
+    gfx950_addmm_register_template,
     gfx950_addmm_warppipe_template,
     gfx950_bmm_warppipe_template,
     gfx950_mm_interwave_template,
@@ -1272,6 +1273,29 @@ class BlackwellGemmWSConfigMixin(TMATemplateConfigMixin):
                 yield {**template_kwargs, "TMA_EPILOGUE_STORE": 1}
 
 
+def _gfx950_static_problem(kernel_inputs, dtypes):
+    """(M, N, K, out dtype) of a static MM with positive strides, any layout."""
+    if not isinstance(kernel_inputs, MMKernelInputs) or not _is_gfx950():
+        return None
+    dtype = kernel_inputs.dtype(kernel_inputs._mat1_idx)
+    if dtype not in dtypes or kernel_inputs.dtype(kernel_inputs._mat2_idx) != dtype:
+        return None
+    m, n, k = kernel_inputs.mnk_symbolic()
+    strides = kernel_inputs.strides_hinted()
+    values = (
+        m,
+        n,
+        k,
+        *strides[kernel_inputs._mat1_idx][-2:],
+        *strides[kernel_inputs._mat2_idx][-2:],
+    )
+    if not all(isinstance(value, (int, sympy.Integer)) for value in values):
+        return None
+    if min(int(value) for value in values) <= 0:
+        return None
+    return int(m), int(n), int(k), kernel_inputs.out_dtype()
+
+
 def _gfx950_static_tn_problem(kernel_inputs, dtypes):
     if not isinstance(kernel_inputs, MMKernelInputs) or not _is_gfx950():
         return None
@@ -1605,18 +1629,85 @@ class Gfx950MMLocalSplitUTemplateConfigHeuristic(
         )
 
 
+class _Gfx950RegisterFallbackMixin:
+    """Offer the register kernel when no other gfx950 template takes a problem.
+
+    Only under ``tlx_mode="force"``, where no candidate at all is a hard
+    NoValidChoicesError (a transposed A, N off the inter-wave tiles, a K too
+    short for the warp pipe, ...). The register kernel reads any static
+    positive-stride layout with masked tails, so it covers those, untuned.
+    ``_fallback_for`` names the heuristics that take precedence.
+    """
+
+    def _fallback_for(self):
+        raise NotImplementedError
+
+    def _force_fallback_configs(self, kernel_inputs, op_name):
+        if config.triton.tlx_mode != "force":
+            return
+        problem = _gfx950_static_problem(
+            kernel_inputs,
+            (torch.float16, torch.bfloat16),
+        )
+        if problem is None:
+            return
+        for other in self._fallback_for():
+            if next(other()._get_template_configs_impl(kernel_inputs, op_name), None):
+                return
+        m, n, k, out_dtype = problem
+        plan = _gfx950_register_intermediate_config(m, n, k)
+        # No 32-bit pointer-range promise: the operands may span more than
+        # 2 GiB, and the template widens its offsets when they need it.
+        triton_config = self.triton_config(
+            plan["num_stages"],
+            plan["num_warps"],
+            BLOCK_M=plan["BLOCK_M"],
+            BLOCK_N=plan["BLOCK_N"],
+            BLOCK_K=plan["BLOCK_K"],
+            GROUP_M=plan["GROUP_M"],
+            NUM_XCDS=plan["NUM_XCDS"],
+            matrix_instr_nonkdim=plan["matrix_instr_nonkdim"],
+            waves_per_eu=plan["waves_per_eu"],
+            kpack=plan["kpack"],
+        )
+        yield self._convert_config_to_template_kwargs(
+            triton_config,
+            m,
+            n,
+            k,
+            out_dtype,
+        )
+
+
 @register_template_heuristic(
     gfx950_mm_register_template.uid,
     "cuda",
     register=IS_ROCM,
     op_name="mm",
 )
-class Gfx950MMRegisterTemplateConfigHeuristic(ROCmMMTemplateConfigHeuristic):
-    """Offer the register fallback only when its geometry policy selects it."""
+class Gfx950MMRegisterTemplateConfigHeuristic(
+    _Gfx950RegisterFallbackMixin, ROCmMMTemplateConfigHeuristic
+):
+    """Offer the register fallback only when its geometry policy selects it,
+    and as the force-mode catch-all for plain MM."""
+
+    def _fallback_for(self):
+        return (
+            Gfx950MMInterWaveTemplateConfigHeuristic,
+            Gfx950MMLocalSplitUTemplateConfigHeuristic,
+            Gfx950MMPersistentTemplateConfigHeuristic,
+        )
 
     def _get_template_configs_impl(self, kernel_inputs, op_name):
         if op_name != "mm":
             return
+        planned = list(self._planned_configs(kernel_inputs))
+        if planned:
+            yield from planned
+        else:
+            yield from self._force_fallback_configs(kernel_inputs, op_name)
+
+    def _planned_configs(self, kernel_inputs):
         problem = _gfx950_static_tn_problem(
             kernel_inputs,
             (torch.float16, torch.bfloat16),
@@ -1713,6 +1804,30 @@ class Gfx950MMPersistentTemplateConfigHeuristic(
             k,
             out_dtype,
         )
+
+
+@register_template_heuristic(
+    gfx950_addmm_register_template.uid,
+    "cuda",
+    register=IS_ROCM,
+    op_name="addmm",
+)
+class Gfx950AddMMRegisterTemplateConfigHeuristic(
+    AddMMConfigMixin, _Gfx950RegisterFallbackMixin, ROCmMMTemplateConfigHeuristic
+):
+    """Force-mode catch-all for AddMM: the register kernel with the bias
+    applied by store_output's addmm epilogue."""
+
+    def _fallback_for(self):
+        return (
+            Gfx950AddMMInterWaveTemplateConfigHeuristic,
+            Gfx950AddMMWarpPipeConfigHeuristic,
+            Gfx950AddMMPersistentWarpPipeConfigHeuristic,
+        )
+
+    def _get_template_configs_impl(self, kernel_inputs, op_name):
+        if op_name == "addmm":
+            yield from self._force_fallback_configs(kernel_inputs, op_name)
 
 
 @register_template_heuristic(

@@ -109,6 +109,56 @@ class UTLXSemantic(_BaseSemantic[_TensorTy], Generic[_TensorTy]):
                         super().cast(plain, dst_ty, fp_downcast_rounding),
                         input)
 
+    def bitcast(self, input, dst_ty):
+        """``.to(dtype, bitcast=True)``: the same round-trip as :meth:`cast`.
+
+        Without it ``tt.bitcast`` gets an encoded operand and a plain result
+        and fails ``SameOperandsAndResultEncoding``.
+        """
+        input = _promote_value(input)
+        if not _has_layout(input):
+            return super().bitcast(input, dst_ty)
+        if input.type.scalar == dst_ty.scalar:
+            return input
+        plain = self._drop_layout(input)
+        return _require(self, super().bitcast(plain, dst_ty), input)
+
+    # -- dot ----------------------------------------------------------------
+
+    def _release_dot_operands(self, lhs, rhs, acc):
+        """Release A/B layouts that ``tt.dot`` cannot take as they are.
+
+        The verifier wants A and B both in dot-operand encodings or both plain.
+        A value pinned to a register layout (fbtriton's gfx950 MXFP8 flash
+        attention feeds its row sums a reshaped, require_layout'd P against a
+        plain constant B) fails that with "mismatching encoding between A and B
+        operands". Release both and let layout assignment convert them; an
+        accumulator layout is released too and returned so it can be re-applied
+        to the result. Operands already in dot-operand encodings are untouched.
+        """
+        lhs, rhs, acc = (_promote_value(lhs), _promote_value(rhs),
+                         _promote_value(acc))
+
+        def is_dot_operand(v):
+            return _has_layout(v) and "dot_op" in str(v.handle.get_type())
+
+        if not (_has_layout(lhs) or _has_layout(rhs)) or (
+                is_dot_operand(lhs) and is_dot_operand(rhs)):
+            return lhs, rhs, acc, None
+        carrier = acc if acc is not None and _has_layout(acc) else None
+        return (self._drop_layout(lhs), self._drop_layout(rhs),
+                self._drop_layout(acc), carrier)
+
+    def _repin(self, out, carrier):
+        if carrier is not None and list(out.shape) == list(carrier.shape):
+            return _require(self, out, carrier)
+        return out
+
+    def dot(self, lhs, rhs, acc, *args, **kwargs):
+        lhs, rhs, acc, carrier = self._release_dot_operands(lhs, rhs, acc)
+        return self._repin(super().dot(lhs, rhs, acc, *args, **kwargs),
+                           carrier)
+
     # -- mixed-encoding binary ops -----------------------------------------
 
     def binary_op_type_checking_impl(self, lhs, rhs, *args, **kwargs):

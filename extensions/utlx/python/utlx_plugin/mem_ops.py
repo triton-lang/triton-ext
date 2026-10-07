@@ -35,6 +35,11 @@ _DTYPE_TO_BUILDER_METHOD = {
 def _make_type_carrier(builder, dtype):
     """Create a type-carrier scalar constant of the desired element type."""
     builder_method = _DTYPE_TO_BUILDER_METHOD.get(dtype)
+    if builder_method is None and dtype.is_fp8():
+        # The builder has no fp8 constant getters. Only the carrier's element
+        # type is read, so an int8 zero reinterpreted as fp8 serves.
+        return builder.create_bitcast(builder.get_int8(0),
+                                      dtype.to_ir(builder))
     if builder_method is None:
         raise ValueError(f"Unsupported dtype: {dtype}")
 

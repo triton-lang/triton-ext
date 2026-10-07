@@ -8,8 +8,8 @@ module provides each one on upstream Triton with the same results:
 
 * Value-preserving markers (``amd_register_resident``,
   ``amd_register_class_anchor``, ``amd_mfma_commit``, ``assert_same_layout``,
-  ``amd_sched_barrier``, ``amd_iglp_opt``) validate their arguments as the fork
-  does and return their inputs unchanged.
+  ``amd_sched_barrier``, ``amd_iglp_opt``, ``assume_uniform``) validate their
+  arguments as the fork does and return their inputs unchanged.
 * Ops with an upstream equivalent are rewritten onto it:
   ``amd_scheduled_mfma`` is ``tl.dot``, ``rematerialized_range`` is
   ``tl.arange``, ``buffer_load_to_local`` is ``async_load`` on ``ptr +
@@ -236,6 +236,23 @@ def amd_register_resident(value,
     assert register_class in ("agpr", "vgpr"), \
         f'register_class must be "agpr" or "vgpr", got {register_class!r}'
     assert isinstance(value, tl.tensor), "value must be a tensor"
+    return value
+
+
+@tl.builtin
+def assume_uniform(value, _semantic=None):
+    """Wave-uniformity hint; returns ``value`` unchanged.
+
+    The fork emits ``amdg.assume_uniform`` (``v_readfirstlane``) so a scalar
+    loaded from memory -- typically a buffer-op base pointer -- can live in an
+    SGPR. Upstream has no such op; without it the backend keeps the value
+    per-lane, which may mean a waterfall loop around buffer accesses, but the
+    results are the same.
+    """
+    assert isinstance(value, tl.tensor), "value must be a tensor"
+    ty = value.type
+    assert ty.is_ptr() or ty.primitive_bitwidth >= 16, \
+        f"assume_uniform expects a scalar pointer or a 16/32/64-bit value, got {ty}"
     return value
 
 

@@ -17,6 +17,7 @@ __all__ = [
     "rematerialized_range",
     "amd_register_resident",
     "amd_register_class_anchor",
+    "assume_uniform",
     "amd_scheduled_mfma",
     "amd_mfma_commit",
     "amd_sched_barrier",
@@ -358,8 +359,8 @@ from .warp_pipeline import warp_pipeline_stage  # noqa: E402
 from .amd_ops import (  # noqa: E402
     buffer_load_to_local, buffer_atomic_add, assert_same_layout, extract_slice,
     rematerialized_range, amd_register_resident, amd_register_class_anchor,
-    amd_scheduled_mfma, amd_mfma_commit, amd_sched_barrier, amd_iglp_opt,
-    num_warps, warp_any, warp_predicate,
+    assume_uniform, amd_scheduled_mfma, amd_mfma_commit, amd_sched_barrier,
+    amd_iglp_opt, num_warps, warp_any, warp_predicate,
 )
 
 from . import custom_stages  # noqa: E402
@@ -566,6 +567,67 @@ def _patch_extern_elementwise():
 
 
 _patch_extern_elementwise()
+
+
+def _patch_inline_asm_elementwise():
+    """Keep an explicit layout across ``tl.inline_asm_elementwise``.
+
+    Same failure as ``extern_elementwise``: the results are typed with
+    ``broadcast_arg.type.with_element_ty``, and an operand pinned with
+    ``require_layout`` next to one that is not (fbtriton's gfx950 MXFP8 flash
+    attention converts bf16 P with a pinned scale) gives a
+    ``tt.elementwise_inline_asm`` that fails ``SameOperandsAndResultEncoding``.
+    Round-trip the same way: release the operands, emit, re-apply the layout
+    to every result.
+    """
+    import triton.language.core as tl_core
+
+    from .compiler.semantic import _has_layout, _promote_value
+    from .layout_ops import _require
+
+    orig = tl_core.inline_asm_elementwise
+    if getattr(orig, "_utlx", False):
+        return
+
+    @tl_core.builtin
+    def inline_asm_elementwise(asm,
+                               constraints,
+                               args,
+                               dtype,
+                               is_pure,
+                               pack,
+                               _semantic=None):
+        args = [_promote_value(a) for a in args]
+        carrier = next((a for a in args if _has_layout(a)), None)
+        drop = getattr(_semantic, "_drop_layout", None)
+        if carrier is not None and drop is not None:
+            args = [drop(a) for a in args]
+        out = orig(asm,
+                   constraints,
+                   args,
+                   dtype,
+                   is_pure,
+                   pack,
+                   _semantic=_semantic)
+        if carrier is None or drop is None:
+            return out
+
+        def pin(t):
+            if t.type.is_block() and list(t.shape) == list(carrier.shape):
+                return _require(_semantic, t, carrier)
+            return t
+
+        return tuple(pin(t)
+                     for t in out) if isinstance(out, tuple) else pin(out)
+
+    inline_asm_elementwise._utlx = True
+    tl_core.inline_asm_elementwise = inline_asm_elementwise
+    import triton.language as tl_lang
+    if getattr(tl_lang, "inline_asm_elementwise", None) is orig:
+        tl_lang.inline_asm_elementwise = inline_asm_elementwise
+
+
+_patch_inline_asm_elementwise()
 
 # Loop options Meta's fork adds to ``tl.range`` for NVIDIA automatic warp
 # specialization and its modulo scheduler. They are scheduling hints with no
