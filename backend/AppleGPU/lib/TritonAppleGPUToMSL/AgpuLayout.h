@@ -140,6 +140,48 @@ inline int64_t registerCount(RankedTensorType rt) {
   return registerCount(gpu::toLinearLayout(rt), rt.getContext());
 }
 
+// The source element feeding a result register, across a shape change that
+// moves no data (expand_dims, broadcast). Works in coordinates, since an
+// index means different things under two layouts.
+inline std::optional<int64_t>
+elemThroughRebind(RankedTensorType srcTy, RankedTensorType resTy, int resReg) {
+  const ArrayRef<int64_t> srcShape = srcTy.getShape();
+  const ArrayRef<int64_t> resShape = resTy.getShape();
+
+  const std::optional<SmallVector<int32_t>> got =
+      applyAt(gpu::toLinearLayout(resTy), resTy.getContext(), resShape, resReg,
+              0, 0, 0);
+  if (!got)
+    return std::nullopt;
+  const SmallVector<int32_t> &coord = *got;
+
+  SmallVector<int32_t> srcCoord;
+  if (resShape.size() == srcShape.size()) {
+    for (std::size_t d = 0; d < coord.size(); ++d)
+      srcCoord.push_back(srcShape[d] == 1 ? 0 : coord[d]);
+  } else if (resShape.size() == srcShape.size() + 1) {
+    std::size_t s = 0;
+    for (std::size_t d = 0; d < coord.size(); ++d) {
+      if (s < srcShape.size() && resShape[d] == srcShape[s]) {
+        srcCoord.push_back(coord[d]);
+        ++s;
+        continue;
+      }
+      if (resShape[d] != 1)
+        return std::nullopt;
+    }
+    if (s != srcShape.size())
+      return std::nullopt;
+  } else {
+    return std::nullopt;
+  }
+
+  for (std::size_t d = 0; d < srcCoord.size(); ++d)
+    if (srcCoord[d] < 0 || srcCoord[d] >= srcShape[d])
+      return std::nullopt;
+  return flatIndex(srcShape, srcCoord);
+}
+
 } // namespace mlir::triton::applegpu::bridge
 
 #endif // AGPU_BRIDGE_LAYOUT_H
