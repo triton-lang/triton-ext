@@ -192,3 +192,6 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/python/utlx_plugin.pth"
     "${CMAKE_CURRENT_SOURCE_DIR}/python/_utlx_autoregister.py"
     DESTINATION .)
+# The pytest plugin goes there too, so importing it does not import utlx_plugin
+# (and with it Triton) in every pytest run.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/python/_utlx_pytest.py" DESTINATION .)
