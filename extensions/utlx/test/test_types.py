@@ -355,6 +355,25 @@ class TestTensorMemoryLayoutEncoding:
         assert layout.colStride == 1
 
 
+class TestLayoutEncodingModule:
+    """Layout classes carry the name Triton admits as a kernel global."""
+
+    def test_layout_encodings_live_under_triton_language(self):
+        encodings = [
+            value for value in vars(tlx).values()
+            if isinstance(value, type) and issubclass(value, (
+                tlx.layout_encoding, tlx.tensor_memory_scales_layout_encoding))
+        ]
+        assert tlx.layout in encodings
+        for cls in encodings:
+            assert cls.__module__ == "triton.language.extra.tlx", cls
+            assert getattr(tlx, cls.__qualname__) is cls
+
+    def test_layout_instance_is_an_admissible_global(self):
+        layout = tlx.layout(shape=((128, 4), (4, )), stride=((4, 0), (1, )))
+        assert layout.__module__.startswith("triton.language")
+
+
 # ---------------------------------------------------------------------------
 # mbarrier type
 # ---------------------------------------------------------------------------
