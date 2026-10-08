@@ -1,3 +1,6 @@
 # Executed by site.py at interpreter startup. A Triton older than `extend_with`
 # can only see the plugin if TRITON_PLUGIN_PATHS is already set by then.
 import _utlx_autoregister
+# Backfills triton._internal_testing from UTLX_FBTRITON_ROOT, if set, in every
+# process -- test subprocesses included (see _utlx_fbtriton.py).
+import _utlx_fbtriton
