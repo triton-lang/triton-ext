@@ -81,7 +81,8 @@ LLVM_INSTALL_DIR=$(realpath $PROJECT_ROOT/triton-ext/llvm-*) \
 ## Run AMD Group GEMM
 
 ```bash
-python $PROJECT_ROOT/triton-ext/extensions/utlx/tlx/tutorials/amd-gemm-pipelined_test.py
+cd $PROJECT_ROOT/triton-ext/extensions/utlx/test
+python -m pytest test_amd_gemm_pipelined.py
 ```
 
 ## Run tests
