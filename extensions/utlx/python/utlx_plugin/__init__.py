@@ -235,6 +235,19 @@ import triton.language.extra as _extra
 _sys.modules['triton.language.extra.tlx'] = _sys.modules[__name__]
 _extra.tlx = _sys.modules[__name__]
 
+# Kernels keep layouts in module globals (`_L = tlx.layout(...)`), and Triton's
+# code generator admits a non-constexpr global only if its `__module__` starts
+# with "triton.language". Meta's fork defines these classes under
+# triton.language.extra.tlx.types; give uTLX's the name this package is
+# published under, where each one resolves by its bare name.
+for _name, _cls in list(vars().items()):
+    if (isinstance(_cls, type) and issubclass(
+            _cls, (layout_encoding, tensor_memory_scales_layout_encoding))
+            and _cls.__qualname__ == _name
+            and _cls.__module__.startswith(__name__ + ".")):
+        _cls.__module__ = 'triton.language.extra.tlx'
+del _name, _cls
+
 # Multi-CTA (a 2-CTA cluster sharing one MMA) needs tlx.remote_view, which
 # lowers to ttng.map_to_remote_buffer -- see the refusal in mem_ops. Meta's TLX
 # does not publish this flag, so a consumer should read it as True when absent.

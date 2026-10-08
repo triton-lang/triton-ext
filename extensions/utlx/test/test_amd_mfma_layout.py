@@ -271,3 +271,32 @@ def test_buffer_load_store():
     y = torch.empty_like(x)
     _buffer_roundtrip[(1, )](x, y, N, num_warps=4)
     torch.testing.assert_close(y, x * 2.0, atol=0, rtol=0)
+
+
+# ---------------------------------------------------------------------------
+# Module-level layout globals
+#
+# Kernels keep tlx.layout values in plain module globals. Triton rejects a
+# non-constexpr global unless its type's __module__ starts with
+# "triton.language", which fbtriton's layout classes satisfy by definition.
+# ---------------------------------------------------------------------------
+
+# [128, 4] slice, one 4-element row per lane; the two extra thread bits
+# broadcast over the 512-thread (8 x 64) workgroup.
+_ROW_PER_LANE_LAYOUT = tlx.layout(shape=((128, 4), (4, )),
+                                  stride=((4, 0), (1, )))
+
+
+@triton.jit
+def _layout_global_copy(X, Y):
+    offs = tlx.require_layout(
+        tl.arange(0, 128)[:, None] * 4 + tl.arange(0, 4)[None, :],
+        _ROW_PER_LANE_LAYOUT)
+    tl.store(Y + offs, tl.load(X + offs) + 1.0)
+
+
+def test_layout_module_global():
+    x = torch.randn(512, device=DEVICE, dtype=torch.float32)
+    y = torch.empty_like(x)
+    _layout_global_copy[(1, )](x, y, num_warps=8)
+    torch.testing.assert_close(y, x + 1.0, atol=0, rtol=0)
