@@ -41,8 +41,8 @@ import extension  # noqa: E402  (ci/ is added to sys.path above)
 # Map from extension *name* (as in triton-ext.toml / pyproject.toml) to the
 # importable Python package name.
 _PACKAGE_MAP: dict[str, str] = {
-    "arithmetic_intensity": "triton_arithmetic_intensity",
-    "triton_arithmetic_intensity": "triton_arithmetic_intensity",
+    "intensity": "triton_intensity",
+    "triton_intensity": "triton_intensity",
     "loop_split": "triton_loop_split",
     "triton_loop_split": "triton_loop_split",
     "example": "triton_example",
