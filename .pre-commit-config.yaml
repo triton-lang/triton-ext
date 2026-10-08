@@ -87,7 +87,6 @@ repos:
 # which is everything else under extensions/utlx, stays covered.
 exclude: |
   (?x)^extensions/utlx/python/utlx_plugin/(
-      _triton_tlx
-    | hw
+      hw
     | inductor
   )/

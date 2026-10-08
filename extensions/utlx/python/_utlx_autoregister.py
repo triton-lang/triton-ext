@@ -33,8 +33,8 @@ import sys
 
 PLUGIN_PATHS_ENV = "TRITON_PLUGIN_PATHS"
 OPT_OUT_ENV = "UTLX_NO_AUTOREGISTER"
-# Directory to serve ``triton.tlx`` from instead of the vendored op library,
-# e.g. an fbtriton checkout's third_party/tlx (see ``_utlx_pytest``).
+# Directory to serve ``triton.tlx`` (the TLX op library, which uTLX does not
+# ship) from, e.g. an fbtriton checkout's third_party/tlx (see ``_utlx_pytest``).
 OPS_ROOT_ENV = "UTLX_TLX_OPS_ROOT"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -106,19 +106,18 @@ class UtlxAliasFinder(importlib.abc.MetaPathFinder):
     packages physically inside the installed Triton. Importing uTLX on demand
     makes the two orders equivalent.
 
-    ``triton.tlx`` is the TLX op library, vendored under ``_triton_tlx``, or
-    the directory named by ``UTLX_TLX_OPS_ROOT``. It is aliased as a package
-    rather than a module so that ``triton.tlx.ops`` and everything below it
-    load under their real names, rather than a second identity for the same
-    files. The variable is read on each lookup, so setting it any time before
-    the first ``triton.tlx`` import takes effect.
+    ``triton.tlx`` is the TLX op library. uTLX does not ship it; it is served
+    from the directory named by ``UTLX_TLX_OPS_ROOT``, and does not exist when
+    that is unset. It is aliased as a package rather than a module so that
+    ``triton.tlx.ops`` and everything below it load under their real names,
+    rather than a second identity for the same files. The variable is read on
+    each lookup, so setting it any time before the first ``triton.tlx`` import
+    takes effect.
     """
 
-    _VENDORED_OPS_ROOT = os.path.join(HERE, "utlx_plugin", "_triton_tlx")
-
-    @classmethod
-    def ops_root(cls):
-        return os.environ.get(OPS_ROOT_ENV) or cls._VENDORED_OPS_ROOT
+    @staticmethod
+    def ops_root():
+        return os.environ.get(OPS_ROOT_ENV)
 
     def find_spec(self, fullname, path=None, target=None):
         if fullname == TLX_LANGUAGE:
