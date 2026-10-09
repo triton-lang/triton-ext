@@ -1306,10 +1306,10 @@ def _gfx950_static_problem(kernel_inputs, dtypes):
 def _gfx950_exceeds_32bit_pointer_range(kernel_inputs):
     """Whether A, B or the output spans more bytes than a 32-bit offset reaches.
 
-    The register kernel is offered only within that range, as in Meta's TLX,
-    whether its geometry plan picks a problem or it is the force-mode
-    catch-all. Problems that are not static fp16/bf16 MMs return False and are
-    left to the callers' own checks.
+    The register kernel's planned configs promise that range, so they stop at
+    it, as in Meta's TLX; the force-mode catch-all does not, since its template
+    widens offsets. Problems that are not static fp16/bf16 MMs return False and
+    are left to the callers' own checks.
     """
     if _gfx950_static_problem(kernel_inputs,
                               (torch.float16, torch.bfloat16)) is None:
@@ -1753,15 +1753,16 @@ class _Gfx950RegisterFallbackMixin:
             kernel_inputs,
             (torch.float16, torch.bfloat16),
         )
-        if problem is None or _gfx950_exceeds_32bit_pointer_range(kernel_inputs):
+        if problem is None:
             return
         for other in self._fallback_for():
             if next(other()._get_template_configs_impl(kernel_inputs, op_name), None):
                 return
         m, n, k, out_dtype = problem
         plan = _gfx950_register_intermediate_config(m, n, k)
-        # Within the 32-bit pointer range (checked above), like the planned
-        # configs; the template's offset widening is not relied on.
+        # No 32-bit pointer-range promise: the operands may span more than
+        # 2 GiB, and the template widens its offsets when they need it. Only
+        # the planned configs, which do promise the range, stop at it.
         triton_config = self.triton_config(
             plan["num_stages"],
             plan["num_warps"],
@@ -1805,14 +1806,14 @@ class Gfx950MMRegisterTemplateConfigHeuristic(
     def _get_template_configs_impl(self, kernel_inputs, op_name):
         if op_name != "mm":
             return
-        # Before anything else, as Meta's TLX does: past the 32-bit pointer
-        # range there is no register config, planned or catch-all.
-        if _gfx950_exceeds_32bit_pointer_range(kernel_inputs):
-            return
-        planned = list(self._planned_configs(kernel_inputs))
+        # The planned configs promise a 32-bit pointer range, so past it there
+        # are none, as in Meta's TLX. Only force mode's catch-all, whose
+        # template widens its offsets, still offers the kernel there.
+        planned = ([] if _gfx950_exceeds_32bit_pointer_range(kernel_inputs)
+                   else list(self._planned_configs(kernel_inputs)))
         if planned:
             yield from planned
-        else:
+        elif config.triton.tlx_mode == "force":
             yield from self._force_fallback_configs(kernel_inputs, op_name)
 
     def _planned_configs(self, kernel_inputs):
