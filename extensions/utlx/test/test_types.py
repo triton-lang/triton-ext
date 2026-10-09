@@ -21,6 +21,40 @@ from conftest import tlx
 # ---------------------------------------------------------------------------
 
 
+class TestSwizzledLayout:
+    """tlx.swizzled_layout is Meta's TLX CuTe Swizzle<B, M, S>."""
+
+    def test_resolves_with_shape(self):
+        enc = tlx.swizzled_layout(3, 3, 5, order=[1, 0])._to_encoding([64, 64])
+        assert isinstance(enc, tlx.swizzled_shared_layout_encoding)
+        # vec = 2**3, maxPhase = 2**3, perPhase = 2**(5 + 3) // 64.
+        assert (enc.vectorSize, enc.perPhase, enc.maxPhase) == (8, 4, 8)
+        assert list(enc.order) == [1, 0]
+
+    def test_order_defaults_to_row_major(self):
+        layout = tlx.swizzled_layout(4, 3, 5)
+        assert layout.order is None
+        assert list(layout._to_encoding([32, 256]).order) == [1, 0]
+
+    def test_make_default_is_no_swizzle(self):
+        enc = tlx.swizzled_layout.make_default(2)._to_encoding()
+        assert (enc.vectorSize, enc.perPhase, enc.maxPhase) == (1, 1, 1)
+
+    def test_rejects_per_phase_below_one(self):
+        with pytest.raises(ValueError, match="perPhase < 1"):
+            tlx.swizzled_layout(1, 1, 1, order=[1, 0])._to_encoding([32, 32])
+
+    def test_unwraps_constexpr_args(self):
+        layout = tlx.swizzled_layout(tl.constexpr(2),
+                                     tl.constexpr(2),
+                                     tl.constexpr(3),
+                                     order=[tl.constexpr(1),
+                                            tl.constexpr(0)])
+        assert (layout.bits, layout.base, layout.shift) == (2, 2, 3)
+        assert layout.order == [1, 0]
+        assert layout == tlx.swizzled_layout(2, 2, 3, order=[1, 0])
+
+
 class TestStorageKind:
 
     def test_values(self):

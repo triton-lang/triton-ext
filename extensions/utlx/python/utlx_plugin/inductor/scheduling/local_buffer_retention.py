@@ -35,6 +35,18 @@ from torch.utils._ordered_set import OrderedSet
 from ...hw.target import target_for_device
 
 
+def _has_strict_reduction(node: SchedulerNode) -> bool:
+    """Whether ``node`` has a reduction with a fixed, reproducible order.
+
+    Newer torch spells this ``SchedulerNode.has_strict_reduction``; torch 2.14
+    has only the narrower ``has_strict_sum``, which flags the same strict
+    (deterministic-order) sums.
+    """
+    check = getattr(node, "has_strict_reduction", None) or getattr(
+        node, "has_strict_sum", None)
+    return bool(check is not None and check())
+
+
 @dataclasses.dataclass(frozen=True)
 class LocalBufferRetentionSpec:
     """One global buffer access interval that can use CTA-local memory."""
@@ -249,7 +261,7 @@ class LocalBufferRetention:
                     node.node, ComputedBuffer
                 ):
                     return None
-                if node.has_strict_reduction():
+                if _has_strict_reduction(node):
                     return None
                 reductions.append(node)
                 if isinstance(node.node.data, Reduction):
