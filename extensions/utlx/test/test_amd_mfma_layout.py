@@ -197,11 +197,11 @@ def test_zeros_with_layout():
 
 
 def test_swizzled_layout_is_a_shared_encoding():
-    """swizzled_layout is the TLX spelling of swizzled_shared_layout_encoding."""
+    """swizzled_layout takes CuTe Swizzle<B, M, S> bit counts plus an order."""
 
     @triton.jit
     def _k(Y, M: tl.constexpr, N: tl.constexpr):
-        layout: tl.constexpr = tlx.swizzled_layout(1, 1, 1, order=[1, 0])
+        layout: tl.constexpr = tlx.swizzled_layout(1, 1, 4, order=[1, 0])
         buf = tlx.local_alloc((M, N), tl.float32, 1, layout=layout)
         v = tl.zeros((M, N), tl.float32)
         tlx.local_store(tlx.local_view(buf, 0), v)
@@ -210,6 +210,24 @@ def test_swizzled_layout_is_a_shared_encoding():
 
     M = N = 32
     y = torch.full((M, N), 3.0, device=DEVICE, dtype=torch.float32)
+    _k[(1, )](y, M, N, num_warps=4)
+    torch.testing.assert_close(y, torch.zeros_like(y), atol=0, rtol=0)
+
+
+def test_swizzled_layout_positional_bits():
+    """The three-positional CuTe form Meta's TLX templates use (no order)."""
+
+    @triton.jit
+    def _k(Y, M: tl.constexpr, N: tl.constexpr):
+        layout: tl.constexpr = tlx.swizzled_layout(4, 3, 5)
+        buf = tlx.local_alloc((M, N), tl.float16, 2, layout=layout)
+        v = tl.zeros((M, N), tl.float16)
+        tlx.local_store(tlx.local_view(buf, 1), v)
+        offs = tl.arange(0, M)[:, None] * N + tl.arange(0, N)[None, :]
+        tl.store(Y + offs, tlx.local_load(tlx.local_view(buf, 1)))
+
+    M, N = 32, 256
+    y = torch.full((M, N), 3.0, device=DEVICE, dtype=torch.float16)
     _k[(1, )](y, M, N, num_warps=4)
     torch.testing.assert_close(y, torch.zeros_like(y), atol=0, rtol=0)
 
@@ -226,7 +244,7 @@ def test_swizzled_layout_is_a_shared_encoding():
 
 @triton.jit
 def _async_load_token(X, Y, M: tl.constexpr, N: tl.constexpr):
-    layout: tl.constexpr = tlx.swizzled_layout(1, 1, 1, order=[1, 0])
+    layout: tl.constexpr = tlx.swizzled_layout(1, 1, 4, order=[1, 0])
     buf = tlx.local_alloc((M, N), tl.float32, 1, layout=layout)
     offs = tl.arange(0, M)[:, None] * N + tl.arange(0, N)[None, :]
     token = tlx.async_load(X + offs, tlx.local_view(buf, 0))

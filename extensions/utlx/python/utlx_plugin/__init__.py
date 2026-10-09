@@ -242,8 +242,8 @@ _extra.tlx = _sys.modules[__name__]
 # published under, where each one resolves by its bare name.
 for _name, _cls in list(vars().items()):
     if (isinstance(_cls, type) and issubclass(
-            _cls, (layout_encoding, tensor_memory_scales_layout_encoding))
-            and _cls.__qualname__ == _name
+            _cls, (layout_encoding, tensor_memory_scales_layout_encoding,
+                   swizzled_layout)) and _cls.__qualname__ == _name
             and _cls.__module__.startswith(__name__ + ".")):
         _cls.__module__ = 'triton.language.extra.tlx'
 del _name, _cls
@@ -803,6 +803,7 @@ PLUGIN_DIR = _compat.PLUGIN_DIR
 PLUGIN_LIBRARY = _compat.PLUGIN_LIBRARY
 _compat.register_plugin(PLUGIN_LIBRARY)
 _compat.install_semantic_helpers()
+_compat.install_codegen_helpers()
 
 # Accept TLX's ctas_per_cga launch option, converting it to the num_ctas
 # spelling upstream understands. Patches only Triton's Config and launch path,

@@ -96,6 +96,8 @@ from . import tlx_config
 from .mm_templates import (
     amd_bmm_shared_a_template,
     blackwell_gemm_ws_template,
+    gfx942_addmm_template,
+    gfx942_mm_template,
     gfx950_addmm_interwave_template,
     gfx950_addmm_persistent_warppipe_template,
     gfx950_addmm_register_template,
@@ -141,6 +143,11 @@ def _amd_num_xcds() -> int:
     classes in ``tlx.hw.resources``.
     """
     return current_target().num_xcds
+
+
+def _is_gfx942() -> bool:
+    """Whether the live device is MI300X/CDNA3."""
+    return current_target().is_gfx942
 
 
 def _is_gfx950() -> bool:
@@ -1296,6 +1303,29 @@ def _gfx950_static_problem(kernel_inputs, dtypes):
     return int(m), int(n), int(k), kernel_inputs.out_dtype()
 
 
+def _gfx950_exceeds_32bit_pointer_range(kernel_inputs):
+    """Whether A, B or the output spans more bytes than a 32-bit offset reaches.
+
+    The register kernel's planned configs promise that range, so they stop at
+    it, as in Meta's TLX; the force-mode catch-all does not, since its template
+    widens offsets. Problems that are not static fp16/bf16 MMs return False and
+    are left to the callers' own checks.
+    """
+    if _gfx950_static_problem(kernel_inputs,
+                              (torch.float16, torch.bfloat16)) is None:
+        return False
+    m, n, k = (int(value) for value in kernel_inputs.mnk_symbolic())
+    strides = kernel_inputs.strides_hinted()
+    stride_am, stride_ak = (int(s) for s in strides[kernel_inputs._mat1_idx][-2:])
+    stride_bk, stride_bn = (int(s) for s in strides[kernel_inputs._mat2_idx][-2:])
+    itemsize = kernel_inputs.dtype(kernel_inputs._mat1_idx).itemsize
+    a_span_bytes = ((m - 1) * stride_am + (k - 1) * stride_ak + 1) * itemsize
+    b_span_bytes = ((k - 1) * stride_bk + (n - 1) * stride_bn + 1) * itemsize
+    c_span_bytes = m * n * kernel_inputs.out_dtype().itemsize
+    return (max(a_span_bytes, b_span_bytes, c_span_bytes)
+            > torch.iinfo(torch.int32).max)
+
+
 def _gfx950_static_tn_problem(kernel_inputs, dtypes):
     if not isinstance(kernel_inputs, MMKernelInputs) or not _is_gfx950():
         return None
@@ -1329,6 +1359,80 @@ def _gfx950_static_tn_problem(kernel_inputs, dtypes):
     if max(a_span_bytes, b_span_bytes, c_span_bytes) > int32_max:
         return None
     return m, n, k, out_dtype
+
+
+class _Gfx942MMTemplateConfigHeuristic(ROCmMMTemplateConfigHeuristic):
+    """Feed the gfx942 tlx.ops heuristic into an Inductor GEMM template."""
+
+    def _get_template_configs_impl(self, kernel_inputs, op_name):
+        if not isinstance(kernel_inputs, MMKernelInputs) or not _is_gfx942():
+            return
+        dtype = kernel_inputs.dtype(kernel_inputs._mat1_idx)
+        if dtype not in (torch.float16, torch.bfloat16):
+            return
+        if kernel_inputs.dtype(kernel_inputs._mat2_idx) != dtype:
+            return
+
+        m, n, k = kernel_inputs.mnk_symbolic()
+        strides = kernel_inputs.strides_hinted()
+        a_strides = strides[kernel_inputs._mat1_idx]
+        b_strides = strides[kernel_inputs._mat2_idx]
+        values = (m, n, k, *a_strides[-2:], *b_strides[-2:])
+        if not all(isinstance(value, (int, sympy.Integer)) for value in values):
+            return
+        m, n, k, stride_am, stride_ak, stride_bk, stride_bn = (
+            int(value) for value in values
+        )
+        if min(m, n, k, stride_am, stride_ak, stride_bk, stride_bn) <= 0:
+            return
+
+        # Keep TorchTLX and tlx.ops on the same measured shape policy.  The
+        # special split-panel/local-split-U paths have different program grids;
+        # this template is the common direct-load path only.
+        from triton.tlx.ops.kernels.mm.gfx942 import heuristic_config
+
+        for config in heuristic_config(m, n, k):
+            meta = dict(config.kwargs)
+            if meta.pop("SPLIT_M_128_32", False) or meta.pop(
+                "USE_LOCAL_SPLIT_U", False
+            ):
+                continue
+            meta.pop("XCD_CHUNK", None)  # fixed to four in the template source
+            triton_config = self.triton_config(
+                config.num_stages,
+                config.num_warps,
+                **meta,
+                matrix_instr_nonkdim=16,
+            )
+            yield self._convert_config_to_template_kwargs(
+                triton_config,
+                m,
+                n,
+                k,
+                kernel_inputs.out_dtype(),
+            )
+
+
+@register_template_heuristic(
+    gfx942_mm_template.uid,
+    "cuda",
+    register=IS_ROCM,
+    op_name="mm",
+)
+class Gfx942MMTemplateConfigHeuristic(_Gfx942MMTemplateConfigHeuristic):
+    """MI300X TorchTLX MM using the gfx942 tlx.ops shape heuristic."""
+
+
+@register_template_heuristic(
+    gfx942_addmm_template.uid,
+    "cuda",
+    register=IS_ROCM,
+    op_name="addmm",
+)
+class Gfx942AddMMTemplateConfigHeuristic(
+    AddMMConfigMixin, _Gfx942MMTemplateConfigHeuristic
+):
+    """MI300X TorchTLX AddMM using the gfx942 tlx.ops shape heuristic."""
 
 
 _GFX950_REGISTER_BLOCK_M = 256
@@ -1657,7 +1761,8 @@ class _Gfx950RegisterFallbackMixin:
         m, n, k, out_dtype = problem
         plan = _gfx950_register_intermediate_config(m, n, k)
         # No 32-bit pointer-range promise: the operands may span more than
-        # 2 GiB, and the template widens its offsets when they need it.
+        # 2 GiB, and the template widens its offsets when they need it. Only
+        # the planned configs, which do promise the range, stop at it.
         triton_config = self.triton_config(
             plan["num_stages"],
             plan["num_warps"],
@@ -1701,10 +1806,14 @@ class Gfx950MMRegisterTemplateConfigHeuristic(
     def _get_template_configs_impl(self, kernel_inputs, op_name):
         if op_name != "mm":
             return
-        planned = list(self._planned_configs(kernel_inputs))
+        # The planned configs promise a 32-bit pointer range, so past it there
+        # are none, as in Meta's TLX. Only force mode's catch-all, whose
+        # template widens its offsets, still offers the kernel there.
+        planned = ([] if _gfx950_exceeds_32bit_pointer_range(kernel_inputs)
+                   else list(self._planned_configs(kernel_inputs)))
         if planned:
             yield from planned
-        else:
+        elif config.triton.tlx_mode == "force":
             yield from self._force_fallback_configs(kernel_inputs, op_name)
 
     def _planned_configs(self, kernel_inputs):

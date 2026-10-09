@@ -259,39 +259,100 @@ def zeros(shape, dtype, layout=None, _semantic=None):
     return z if layout is None else _require(_semantic, z, layout)
 
 
-@tl.builtin
-def swizzled_layout(vector_size,
-                    per_phase,
-                    max_phase,
-                    order,
-                    num_ctas=1,
-                    _semantic=None):
-    """Swizzled shared-memory layout.
+class swizzled_layout:
+    """A CuTe ``Swizzle<B, M, S>`` shared-memory layout, as Meta's TLX defines it.
 
-    The spelling TLX kernels use for :class:`swizzled_shared_layout_encoding`,
-    with the CTA/CGA parameters defaulted to the single-CTA case. A builtin
-    rather than a plain function so it can be called from a @triton.jit kernel
-    (the JIT's reference walker rejects ordinary Python callables), and returns
-    a constexpr so it can be bound to a `tl.constexpr` name.
+    Constructed like ``cute::Swizzle<B, M, S>`` with three positional bit-count
+    args, e.g. ``tlx.swizzled_layout(3, 3, 3)``:
+
+      - ``bits``  (B): log2 number of XOR phases      -> ``maxPhase = 2**B``
+      - ``base``  (M): log2 unswizzled contiguous unit -> ``vec = 2**M``
+      - ``shift`` (S): distance between the XOR'd bit fields in log2 units
+
+    ``order`` lists axes fastest-varying first; omitted, it defaults to
+    row-major once the rank is known. CuTe's ``S`` is defined on the flat
+    offset while Triton's ``perPhase`` is per-row, so the concrete
+    ``(vec, perPhase, maxPhase)`` is known only with the buffer shape:
+    ``_to_encoding(shape)`` resolves it, with
+    ``perPhase = 2**(shift + base) // shape[order[0]]``.
+
+    Callable from a @triton.jit kernel (a Triton builtin) and bindable to a
+    ``tl.constexpr`` name. Like other non-pinned ``layout=`` values, uTLX's
+    ``local_alloc`` leaves the shared encoding to the layout pass.
     """
-    from .types import swizzled_shared_layout_encoding
-    vector_size = _uw(vector_size)
-    per_phase = _uw(per_phase)
-    max_phase = _uw(max_phase)
-    order = [_uw(o) for o in _uw(order)]
-    num_ctas = _uw(num_ctas)
-    rank = len(order)
-    return tl.constexpr(
-        swizzled_shared_layout_encoding(
-            vector_size,
-            per_phase,
-            max_phase,
-            order,
-            num_ctas,
-            [1] * rank,
-            [1] * rank,
-            list(reversed(range(rank))),
-        ))
+
+    __triton_builtin__ = True
+
+    def __init__(self, bits, base=0, shift=0, order=None, _semantic=None):
+        self.bits = int(_uw(bits))  # B
+        self.base = int(_uw(base))  # M
+        self.shift = int(_uw(shift))  # S
+        order = _uw(order)
+        self.order = ([int(_uw(dim))
+                       for dim in order] if order is not None else None)
+
+    @classmethod
+    def make_default(cls, rank):
+        """No swizzle (``Swizzle<0,0,0>``), row-major order."""
+        return cls(bits=0, base=0, shift=0, order=list(reversed(range(rank))))
+
+    @property
+    def maxPhase(self):
+        return 1 << self.bits
+
+    @property
+    def vectorSize(self):
+        return 1 << self.base
+
+    def __repr__(self):
+        return (
+            f"swizzled_layout(Swizzle<{self.bits},{self.base},{self.shift}>"
+            f", order={self.order})")
+
+    def __eq__(self, other):
+        return (isinstance(other, swizzled_layout) and self.bits == other.bits
+                and self.base == other.base and self.shift == other.shift
+                and self.order == other.order)
+
+    def __hash__(self):
+        return hash((self.bits, self.base, self.shift,
+                     tuple(self.order) if self.order else None))
+
+    def _to_encoding(self, shape=None):
+        """The :class:`swizzled_shared_layout_encoding` for a ``shape`` buffer.
+
+        ``shape`` is required for a real swizzle (``maxPhase > 1``); the
+        trivial ``Swizzle<0,0,0>`` is shape-independent.
+        """
+        from .types import swizzled_shared_layout_encoding
+        if self.order is not None:
+            rank = len(self.order)
+        elif shape is not None:
+            rank = len(shape)
+        else:
+            raise ValueError(
+                "swizzled_layout: cannot resolve without an order or a shape")
+        order = (list(self.order) if self.order is not None else list(
+            reversed(range(rank))))
+        if self.maxPhase == 1:
+            per_phase = 1
+        else:
+            if shape is None:
+                raise ValueError(
+                    "swizzled_layout: a non-trivial Swizzle requires the "
+                    "buffer shape")
+            num_contig = int(shape[order[0]])
+            span = 1 << (self.shift + self.base)
+            if span % num_contig:
+                raise ValueError(
+                    f"swizzled_layout: Swizzle<{self.bits},{self.base},"
+                    f"{self.shift}> gives perPhase < 1 for contiguous extent "
+                    f"{num_contig} (need shift + base >= log2({num_contig}))")
+            per_phase = span // num_contig
+        return swizzled_shared_layout_encoding(self.vectorSize, per_phase,
+                                               self.maxPhase, order, 1,
+                                               [1] * rank, [1] * rank,
+                                               list(reversed(range(rank))))
 
 
 # --- AMD buffer ops --------------------------------------------------------
