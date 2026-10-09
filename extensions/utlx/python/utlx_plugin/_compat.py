@@ -10,6 +10,10 @@ predates both: it loads every library named in ``TRITON_PLUGIN_PATHS`` while
 Neither Triton has ``TritonSemantic.dot_precheck`` or
 ``TritonSemantic._prepare_legacy_load``; those were only ever split out of
 ``dot`` and ``load`` in Meta's TLX fork, so uTLX has to supply them itself.
+Likewise the fork's code generator accepts list comprehensions over a
+constexpr ``range(...)`` and with ``if`` filters, which TLX kernels use to build
+``tl.tuple``s of buffers; upstream only iterates tuples (see
+``install_codegen_helpers``).
 
 Every shim is feature-detected, so the package runs unchanged on either Triton.
 """
@@ -80,6 +84,61 @@ def install_semantic_helpers():
         TritonSemantic.dot_precheck = dot_precheck
     if not hasattr(TritonSemantic, "_prepare_legacy_load"):
         TritonSemantic._prepare_legacy_load = _prepare_legacy_load
+
+
+def install_codegen_helpers():
+    """Extend ``CodeGenerator.visit_ListComp`` to the fork's comprehensions.
+
+    Meta's fork lets ``[f(i) for i in range(N)]`` (``N`` constexpr) and ``if``
+    filters appear in a kernel, e.g. ``tl.tuple([tlx.local_alloc(...) for i in
+    range(STAGES)])`` in the fork's gfx950 persistent GEMM. Upstream iterates
+    only a ``tl.tuple`` and raises "only tuple comprehensions are supported".
+    Those two forms are handled here, matching the fork; every other
+    comprehension goes to upstream's implementation unchanged.
+    """
+    import ast
+
+    import triton.compiler.code_generator as cg
+    from triton.language.core import _unwrap_if_constexpr, constexpr
+    from triton.language.core import tuple as tl_tuple
+
+    upstream = cg.CodeGenerator.visit_ListComp
+    if getattr(upstream, "_utlx", False):
+        return
+
+    def visit_ListComp(self, node: ast.ListComp):
+        if len(node.generators) != 1:
+            return upstream(self, node)
+        comp = node.generators[0]
+        call = comp.iter if isinstance(comp.iter, ast.Call) else None
+        over_range = call is not None and self.visit(call.func) is range
+        if not over_range and not comp.ifs:
+            return upstream(self, node)
+        if call is not None and over_range:
+            args = [_unwrap_if_constexpr(self.visit(a)) for a in call.args]
+            items = [constexpr(i) for i in range(*args)]
+        else:
+            iterable = self.visit(comp.iter)
+            if not isinstance(iterable, tl_tuple):
+                raise NotImplementedError(
+                    "comprehension iterable must be a tuple or constexpr "
+                    "range(...)")
+            items = list(iterable)
+        if not isinstance(comp.target, ast.Name):
+            raise NotImplementedError(
+                "comprehension target must be a single name")
+        results = []
+        for item in items:
+            self.set_value(comp.target.id, item)
+            # The filters are constexpr, so they select at compile time.
+            if all(
+                    _unwrap_if_constexpr(self.visit(cond))
+                    for cond in comp.ifs):
+                results.append(self.visit(node.elt))
+        return tl_tuple(results)
+
+    visit_ListComp._utlx = True
+    cg.CodeGenerator.visit_ListComp = visit_ListComp
 
 
 def checked_handle(handle, op):
