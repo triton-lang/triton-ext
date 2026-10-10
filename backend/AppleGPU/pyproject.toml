@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core>=0.10", "cmake>=3.20", "ninja"]
+requires = ["scikit-build-core>=0.10"]
 build-backend = "scikit_build_core.build"
 
 [project]

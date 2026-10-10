@@ -2,6 +2,8 @@
 #ifndef AGPU_BRIDGE_LAYOUT_H
 #define AGPU_BRIDGE_LAYOUT_H
 
+#include "AgpuShape.h"
+
 #include "Dialect/TritonAppleGPU/IR/LinearLayoutDims.h"
 #include "agpu/bind/LayoutBind.h"
 #include "agpu/core/Units.h"
@@ -12,6 +14,7 @@
 #include "triton/Tools/LinearLayout.h"
 
 #include <optional>
+#include <set>
 #include <vector>
 
 namespace mlir::triton::applegpu::bridge {
@@ -52,6 +55,14 @@ inline std::optional<StringAttr> outDimAt(const LinearLayout &ll, int axis) {
       return n;
   return std::nullopt;
 }
+
+// `group` is the coordinate on every axis but the scanned one; sorting by it
+// makes each scan a contiguous run.
+struct ScanRegisterKey {
+  std::vector<int64_t> group;
+  int64_t position = 0;
+  int reg = 0;
+};
 
 // LinearLayout::apply requires a dimension the layout does not have be
 // skipped.
@@ -100,7 +111,26 @@ inline std::optional<std::vector<int64_t>> registerCoordAt(RankedTensorType rt,
   return std::vector<int64_t>(c->begin(), c->end());
 }
 
-// Register `reg`'s lane-0 position as one flat, row-major index.
+// Whether a difference of two registers' lane-0 coordinates holds in every
+// lane, on every axis. True only where register bases and lane/warp/block
+// bases are disjoint.
+inline bool registerDeltasAreAffine(RankedTensorType rt, int regs) {
+  const LinearLayout ll = gpu::toLinearLayout(rt);
+  for (int axis = 0; axis < (int)rt.getRank(); ++axis) {
+    const std::optional<StringAttr> dim = outDimAt(ll, axis);
+    if (!dim)
+      return false;
+    const agpu::LayoutBasis lb =
+        layoutSourceOf(ll, rt.getContext(), *dim).basis();
+    for (int r = 0; r < regs; ++r)
+      if (!lb.registerDeltasAreAffine(r))
+        return false;
+  }
+  return true;
+}
+
+// The element register `reg` holds for lane 0, as a flat row-major index
+// into the tensor's shape. Meaningful only when it does not depend on lane.
 inline std::optional<int64_t> flatElemAt(RankedTensorType rt, int reg) {
   const std::optional<std::vector<int64_t>> coord = registerCoordAt(rt, reg);
   if (!coord)
@@ -109,8 +139,103 @@ inline std::optional<int64_t> flatElemAt(RankedTensorType rt, int reg) {
   return flatIndex(rt.getShape(), *coord);
 }
 
-// Bitmask of this dimension's bases that move nothing: a set bit is an index
-// bit the layout ignores, so the value is replicated across it.
+// Whether two layouts put the same element in the same register of the same
+// thread, so a value under one can be renamed to the other.
+inline bool layoutsInterchangeable(RankedTensorType a, RankedTensorType b) {
+  if (a.getShape() != b.getShape())
+    return false;
+  return gpu::toLinearLayout(a) == gpu::toLinearLayout(b);
+}
+
+// The source element feeding a result register, across a shape change that
+// moves no data (expand_dims, broadcast, convert_layout). Works in
+// coordinates, since an index means different things under two layouts.
+inline std::optional<int64_t>
+elemThroughRebind(RankedTensorType srcTy, RankedTensorType resTy, int resReg) {
+  const ArrayRef<int64_t> srcShape = srcTy.getShape();
+  const ArrayRef<int64_t> resShape = resTy.getShape();
+
+  const std::optional<SmallVector<int32_t>> got =
+      applyAt(gpu::toLinearLayout(resTy), resTy.getContext(), resShape, resReg,
+              0, 0, 0);
+  if (!got)
+    return std::nullopt;
+  const SmallVector<int32_t> &coord = *got;
+
+  SmallVector<int32_t> srcCoord;
+  if (resShape.size() == srcShape.size()) {
+    for (std::size_t d = 0; d < coord.size(); ++d)
+      srcCoord.push_back(srcShape[d] == 1 ? 0 : coord[d]);
+  } else if (resShape.size() == srcShape.size() + 1) {
+    std::size_t s = 0;
+    for (std::size_t d = 0; d < coord.size(); ++d) {
+      if (s < srcShape.size() && resShape[d] == srcShape[s]) {
+        srcCoord.push_back(coord[d]);
+        ++s;
+        continue;
+      }
+      if (resShape[d] != 1)
+        return std::nullopt;
+    }
+    if (s != srcShape.size())
+      return std::nullopt;
+  } else {
+    return std::nullopt;
+  }
+
+  for (std::size_t d = 0; d < srcCoord.size(); ++d)
+    if (srcCoord[d] < 0 || srcCoord[d] >= srcShape[d])
+      return std::nullopt;
+  return flatIndex(srcShape, srcCoord);
+}
+
+// The source element feeding a result register of a transpose. `order[d]`
+// names which source axis becomes result axis d, the `tt.trans` convention.
+inline std::optional<int64_t> elemThroughTranspose(RankedTensorType srcTy,
+                                                   RankedTensorType resTy,
+                                                   ArrayRef<int32_t> order,
+                                                   int resReg) {
+  const std::optional<std::vector<int64_t>> coord =
+      registerCoordAt(resTy, resReg);
+  if (!coord)
+    return std::nullopt;
+
+  const ArrayRef<int64_t> srcShape = srcTy.getShape();
+  if (order.size() != coord->size() || srcShape.size() != coord->size())
+    return std::nullopt;
+
+  std::vector<int64_t> srcCoord(srcShape.size(), 0);
+  for (std::size_t d = 0; d < coord->size(); ++d) {
+    const int32_t s = order[d];
+    if (s < 0 || (std::size_t)s >= srcShape.size())
+      return std::nullopt;
+    if ((*coord)[d] < 0 || (*coord)[d] >= srcShape[s])
+      return std::nullopt;
+    srcCoord[(std::size_t)s] = (*coord)[d];
+  }
+
+  return flatIndex(srcShape, srcCoord);
+}
+
+// A reshape moves no data: element k of the source is element k of the
+// result, row-major. `allow_reorder` is ignored; taking that permission
+// would make source and result disagree about which element is which.
+inline std::optional<int64_t>
+elemThroughReshape(RankedTensorType srcTy, RankedTensorType resTy, int resReg) {
+  int64_t srcCount = 1, resCount = 1;
+  for (int64_t d : srcTy.getShape())
+    srcCount *= d;
+  for (int64_t d : resTy.getShape())
+    resCount *= d;
+  if (srcCount != resCount)
+    return std::nullopt;
+  return flatElemAt(resTy, resReg);
+}
+
+// Bits of one input dimension whose value does not move the address (zero
+// basis on every output dim): threads/registers differing only in such a bit
+// are replicas of one location. Matters for atomics, where a replica
+// performing one is a wrong answer.
 inline unsigned freeBitsOf(const LinearLayout &ll, MLIRContext *ctx,
                            llvm::StringRef inDim) {
   const auto dim = StringAttr::get(ctx, inDim);
@@ -139,6 +264,19 @@ inline int64_t registerCount(const LinearLayout &ll, MLIRContext *ctx) {
 inline int64_t registerCount(RankedTensorType rt) {
   return registerCount(gpu::toLinearLayout(rt), rt.getContext());
 }
+
+// Which elements one warp of a layout holds, as a set of flat indices.
+std::set<int64_t> elemsOfWarp(RankedTensorType rt, int32_t warp);
+
+// Whether every warp holds the same elements under both layouts, so a
+// shuffle can move them without crossing a warp boundary.
+bool warpsAgree(RankedTensorType srcTy, RankedTensorType resTy,
+                llvm::ArrayRef<int32_t> order);
+
+// Per register, the flat element each lane holds. Costs registers x 32
+// layout applications, so callers that ask repeatedly go through
+// AgpuEmitter::elemsPerLaneOf, which memoises it.
+std::vector<std::vector<int64_t>> elemsPerLane(RankedTensorType rt);
 
 } // namespace mlir::triton::applegpu::bridge
 
