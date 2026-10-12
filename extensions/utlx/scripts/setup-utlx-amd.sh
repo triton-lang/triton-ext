@@ -1,4 +1,6 @@
 
+echo ""
+echo ""
 echo "Setup Environment..."
 # D=$(mktemp -d -t utlx-tests.XXXXXX)
 D=`pwd`
@@ -11,12 +13,25 @@ pip3 install torch  --index-url https://download.pytorch.org/whl/rocm7.2
 
 pip install pytest numpy
 pip install triton-utlx
+pip install expecttest
 # pip uninstall -y triton
 
+echo ""
+echo ""
 echo "Cloning fbtriton and triton-ext..."
 git clone https://github.com/facebookexperimental/triton fbtriton
 git clone https://github.com/triton-lang/triton-ext
 
+
+echo ""
+echo ""
+echo "Reseting fbtriton to a stable hash"
+cd fbtriton
+git reset --hard  d0fce1bbdb0087eb73b1e46cd6cb5b7aaa4a0cb9
+cd -
+
+echo ""
+echo ""
 echo "Running Kimi KDA..."
 
 # Never reuse cached results: Triton's cache key ignores the uTLX plugin, so
@@ -26,13 +41,30 @@ export TRITON_CACHE_DIR=$D/triton-cache
 
 # --import-mode=importlib: fbtriton/python/conftest.py would otherwise put the
 # unbuilt fbtriton/python/triton ahead of the installed Triton on sys.path.
+echo ""
+echo ""
 echo "Running Kimi KDA from fbtriton..."
 python -m pytest fbtriton/python/test/unit/tlx_ops/test_kda_gfx950.py -q --import-mode=importlib
 python -m pytest fbtriton/python/test/unit/tlx_ops/test_kda_gfx950.py -k decode -q --import-mode=importlib
 
+echo ""
+echo ""
 echo "Running Kimi KDA from triton-ext..."
 python -m pytest triton-ext/extensions/utlx/test/tlx_ops/test_kda_gfx950.py -q
 python -m pytest triton-ext/extensions/utlx/test/tlx_ops/test_kda_gfx950.py -k decode -q
 
+echo ""
+echo ""
 echo "Running Kimi KDA prefill run.py..."
 python triton-ext/extensions/utlx/examples/kda_prefill/run.py
+
+echo ""
+echo ""
+echo "Running TorchTLX Unit Tests..."
+python -m pytest fbtriton/python/test/unit/tlx_ops/test_torchtlx_*.py -q --import-mode=importlib
+python -m pytest fbtriton/python/test/unit/language/test_torchtlx_*.py -q --import-mode=importlib
+
+echo ""
+echo ""
+echo "Running ALL TLX.ops Tests..."
+python -m pytest fbtriton/python/test/unit/tlx_ops -q --import-mode=importlib

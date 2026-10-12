@@ -33,8 +33,9 @@ import sys
 
 PLUGIN_PATHS_ENV = "TRITON_PLUGIN_PATHS"
 OPT_OUT_ENV = "UTLX_NO_AUTOREGISTER"
-# Directory to serve ``triton.tlx`` (the TLX op library, which uTLX does not
-# ship) from, e.g. an fbtriton checkout's third_party/tlx (see ``_utlx_pytest``).
+# Directories (``os.pathsep``-separated) to serve ``triton.tlx`` (the TLX op
+# library, which uTLX does not ship) from, e.g. an fbtriton checkout's
+# python/triton/tlx and third_party/tlx (see ``_utlx_pytest``).
 OPS_ROOT_ENV = "UTLX_TLX_OPS_ROOT"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -84,10 +85,10 @@ class _AliasLoader(importlib.abc.Loader):
 
 
 class _PackageLoader(importlib.abc.Loader):
-    """Create an empty package rooted at *path*, for a purely namespace alias."""
+    """Create an empty package spanning *paths*, for a purely namespace alias."""
 
-    def __init__(self, path):
-        self.path = path
+    def __init__(self, paths):
+        self.paths = paths
 
     def create_module(self, spec):
         return None  # default module object; __path__ comes from the spec
@@ -107,17 +108,20 @@ class UtlxAliasFinder(importlib.abc.MetaPathFinder):
     makes the two orders equivalent.
 
     ``triton.tlx`` is the TLX op library. uTLX does not ship it; it is served
-    from the directory named by ``UTLX_TLX_OPS_ROOT``, and does not exist when
-    that is unset. It is aliased as a package rather than a module so that
-    ``triton.tlx.ops`` and everything below it load under their real names,
-    rather than a second identity for the same files. The variable is read on
-    each lookup, so setting it any time before the first ``triton.tlx`` import
-    takes effect.
+    from the directories listed in ``UTLX_TLX_OPS_ROOT``, earlier ones first,
+    and does not exist when none of them does. It is aliased as a package
+    rather than a module so that ``triton.tlx.ops`` and everything below it
+    load under their real names, rather than a second identity for the same
+    files. The variable is read on each lookup, so setting it any time before
+    the first ``triton.tlx`` import takes effect.
     """
 
     @staticmethod
-    def ops_root():
-        return os.environ.get(OPS_ROOT_ENV)
+    def ops_roots():
+        return [
+            p for p in os.environ.get(OPS_ROOT_ENV, "").split(os.pathsep)
+            if p and os.path.isdir(p)
+        ]
 
     def find_spec(self, fullname, path=None, target=None):
         if fullname == TLX_LANGUAGE:
@@ -128,12 +132,12 @@ class UtlxAliasFinder(importlib.abc.MetaPathFinder):
         if target is not None:
             return importlib.util.spec_from_loader(fullname,
                                                    _AliasLoader(target))
-        root = self.ops_root() if fullname == TLX_OPS_ROOT else None
-        if root and os.path.isdir(root):
+        roots = self.ops_roots() if fullname == TLX_OPS_ROOT else []
+        if roots:
             spec = importlib.util.spec_from_loader(fullname,
-                                                   _PackageLoader(root),
+                                                   _PackageLoader(roots),
                                                    is_package=True)
-            spec.submodule_search_locations = [root]
+            spec.submodule_search_locations = roots
             return spec
         return None
 

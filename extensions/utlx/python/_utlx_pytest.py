@@ -7,10 +7,12 @@ pytest is given live in an fbtriton checkout, this plugin takes both from that
 checkout, so everything the tests touch comes from fbtriton except the TLX
 implementation under test, uTLX itself:
 
-- ``triton.tlx`` is served from ``<checkout>/third_party/tlx`` by setting
-  ``UTLX_TLX_OPS_ROOT`` (see ``_utlx_autoregister``). As an environment
-  variable it reaches the subprocesses some tests start too. An explicitly set
-  ``UTLX_TLX_OPS_ROOT`` is left alone.
+- ``triton.tlx`` is served from ``<checkout>/python/triton/tlx`` (modules such
+  as ``pytorch``) and ``<checkout>/third_party/tlx`` (``ops``, which a built
+  checkout symlinks into the former) by setting ``UTLX_TLX_OPS_ROOT`` (see
+  ``_utlx_autoregister``). As an environment variable it reaches the
+  subprocesses some tests start too. An explicitly set ``UTLX_TLX_OPS_ROOT``
+  is left alone.
 - Helpers stock Triton's ``triton._internal_testing`` lacks are copied in from
   ``<checkout>/python/triton/_internal_testing.py`` by setting
   ``UTLX_FBTRITON_ROOT`` (see ``_utlx_fbtriton``), which also reaches test
@@ -70,8 +72,12 @@ def pytest_load_initial_conftests(early_config, parser, args):
     root = find_fbtriton_root(paths or [str(params.dir)])
     if root is None:
         return
-    os.environ.setdefault(OPS_ROOT_ENV, os.path.join(root, "third_party",
-                                                     "tlx"))
+    os.environ.setdefault(
+        OPS_ROOT_ENV,
+        os.pathsep.join([
+            os.path.join(root, "python", "triton", "tlx"),
+            os.path.join(root, "third_party", "tlx"),
+        ]))
     if not os.environ.get(_utlx_fbtriton.ROOT_ENV):  # empty counts as unset
         os.environ[_utlx_fbtriton.ROOT_ENV] = root
     _utlx_fbtriton.install(os.environ[_utlx_fbtriton.ROOT_ENV])
