@@ -14,7 +14,7 @@ pip install triton-utlx
 
 echo "Cloning fbtriton and triton-ext..."
 git clone https://github.com/facebookexperimental/triton fbtriton
-git clone https://github.com/triton-lang/triton-ext 
+git clone https://github.com/triton-lang/triton-ext
 
 echo "Running Kimi KDA..."
 
@@ -28,6 +28,3 @@ python -m pytest triton-ext/extensions/utlx/test/tlx_ops/test_kda_gfx950.py -k d
 
 echo "Running Kimi KDA prefill run.py..."
 python triton-ext/extensions/utlx/examples/kda_prefill/run.py
-
-
-
