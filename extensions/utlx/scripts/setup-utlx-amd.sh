@@ -67,4 +67,5 @@ python -m pytest fbtriton/python/test/unit/language/test_torchtlx_*.py -q --impo
 echo ""
 echo ""
 echo "Running ALL TLX.ops Tests..."
-python -m pytest fbtriton/python/test/unit/tlx_ops -q --import-mode=importlib
+python -m pytest fbtriton/python/test/unit/tlx_ops -q --import-mode=importlib \
+    -o pythonpath=$D/fbtriton/python/test/unit/tlx_ops
