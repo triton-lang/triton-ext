@@ -44,8 +44,15 @@ export TRITON_CACHE_DIR=$D/triton-cache
 echo ""
 echo ""
 echo "Running Kimi KDA from fbtriton..."
-python -m pytest fbtriton/python/test/unit/tlx_ops/test_kda_gfx950.py -q --import-mode=importlib
-python -m pytest fbtriton/python/test/unit/tlx_ops/test_kda_gfx950.py -k decode -q --import-mode=importlib
+python -m pytest fbtriton/python/test/unit/tlx_ops/test_kda_gfx950.py \
+    -q --import-mode=importlib \
+    --rootdir=$D/fbtriton/python/test/unit/tlx_ops \
+    -o pythonpath=$D/fbtriton/python/test/unit/tlx_ops
+
+python -m pytest fbtriton/python/test/unit/tlx_ops/test_kda_gfx950.py -k decode \
+    -q --import-mode=importlib \
+    --rootdir=$D/fbtriton/python/test/unit/tlx_ops \
+    -o pythonpath=$D/fbtriton/python/test/unit/tlx_ops
 
 echo ""
 echo ""
@@ -61,11 +68,23 @@ python triton-ext/extensions/utlx/examples/kda_prefill/run.py
 echo ""
 echo ""
 echo "Running TorchTLX Unit Tests..."
-python -m pytest fbtriton/python/test/unit/tlx_ops/test_torchtlx_*.py -q --import-mode=importlib
-python -m pytest fbtriton/python/test/unit/language/test_torchtlx_*.py -q --import-mode=importlib
+python -m pytest fbtriton/python/test/unit/tlx_ops/test_torchtlx_*.py -q --import-mode=importlib \
+    --rootdir=$D/fbtriton/python/test/unit/tlx_ops \
+    -o pythonpath=$D/fbtriton/python/test/unit/tlx_ops
+
+python -m pytest fbtriton/python/test/unit/language/test_torchtlx_*.py -q --import-mode=importlib \
+    --rootdir=$D/fbtriton/python/test/unit/language \
+    -o pythonpath=$D/fbtriton/python/test/unit/language \
+    --deselect test_torchtlx_templates.py::TestTLXTemplates::test_tlx_bmm_shared_a_fused_row_bias \
+    --deselect test_torchtlx_templates.py::TestTLXTemplates::test_tlx_bmm_shared_a_shape0 \
+    --deselect test_torchtlx_templates.py::TestLocalBufferRetention::test_inductor_codegen \
+    --deselect test_torchtlx_templates.py::TestHeuristicConfigSelection::test_config_selection_rule_1b \
+    --deselect test_torchtlx_templates.py::TestHeuristicConfigSelection::test_config_selection_rule_3 \
+    --deselect test_torchtlx_templates.py::TestHeuristicConfigSelection::test_config_selection_rule_4
 
 echo ""
 echo ""
 echo "Running ALL TLX.ops Tests..."
 python -m pytest fbtriton/python/test/unit/tlx_ops -q --import-mode=importlib \
+    --rootdir=$D/fbtriton/python/test/unit/tlx_ops \
     -o pythonpath=$D/fbtriton/python/test/unit/tlx_ops

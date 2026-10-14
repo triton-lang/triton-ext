@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import inspect
+import re
 import torch
 import triton
 import triton.language as tl
@@ -682,6 +684,44 @@ def _candidate_configs(
     return configs
 
 
+def _bind_config_params(CustomOpConfig, cfg):
+    """Return *cfg* with its params bound into a parameterless decomposition."""
+    if not cfg.params:
+        return cfg
+    decomposition = functools.partial(cfg.decomposition, **cfg.params)
+    # Inductor names each choice after the decomposition; keep variants
+    # distinct the way it would have from the params.
+    suffix = "_".join(
+        f"{key}_{re.sub(r'[^a-zA-Z0-9_]', '_', str(value))}"
+        for key, value in sorted(cfg.params.items())
+    )
+    decomposition.__name__ = f"{cfg.decomposition.__name__}_{suffix}"
+    return CustomOpConfig(decomposition, config_patches=cfg.config_patches)
+
+
+class _NoFallbackChoice:
+    def maybe_append_choice(self, *args, **kwargs):
+        return None
+
+
+@contextlib.contextmanager
+def _without_eager_fallback():
+    """Keep the opaque eager-op choice out of custom-op autotuning.
+
+    Equivalent to ``include_fallback=False`` on torch releases that predate
+    it, which append the choice unconditionally. Without this, the opaque op
+    can win the benchmark even under tlx_mode="force".
+    """
+    from torch._inductor.kernel import custom_op
+
+    original = custom_op._create_fallback_choice
+    custom_op._create_fallback_choice = lambda op_overload: _NoFallbackChoice()
+    try:
+        yield
+    finally:
+        custom_op._create_fallback_choice = original
+
+
 def _register_autotuned_region(
     custom_op,
     fused_impl,
@@ -698,14 +738,13 @@ def _register_autotuned_region(
     )
     from torch._inductor.lowering import user_lowerings
 
-    # include_fallback is newer than some supported torch releases; without
-    # it the eager fallback stays among the choices.
-    no_fallback = (
-        {"include_fallback": False}
-        if "include_fallback"
+    # include_fallback is newer than some supported torch releases; on those
+    # the eager fallback is kept out by _without_eager_fallback instead.
+    has_include_fallback = (
+        "include_fallback"
         in inspect.signature(register_custom_op_autotuning).parameters
-        else {}
     )
+    no_fallback = {"include_fallback": False} if has_include_fallback else {}
     fused_configs = _candidate_configs(
         CustomOpConfig,
         fused_impl,
@@ -713,6 +752,13 @@ def _register_autotuned_region(
         focused_plans=focused_plans,
         is_rms_norm=is_rms_norm,
     )
+    if not has_include_fallback:
+        # Those releases also build the eager fallback by calling the op with
+        # the first config's params, which must then be op arguments. The plan
+        # params are not, so bind them into each decomposition instead.
+        fused_configs = [
+            _bind_config_params(CustomOpConfig, cfg) for cfg in fused_configs
+        ]
     register_custom_op_autotuning(
         custom_op,
         configs=[*fused_configs, CustomOpConfig(aten_impl)],
@@ -729,11 +775,15 @@ def _register_autotuned_region(
         **no_fallback,
     )
     force_lowering = user_lowerings[op_overload]
+    fallback_guard = (
+        contextlib.nullcontext if has_include_fallback else _without_eager_fallback
+    )
 
     @functools.wraps(allow_lowering)
     def lowering(*args, **kwargs):
-        if config.triton.tlx_mode == "force":
-            return force_lowering(*args, **kwargs)
-        return allow_lowering(*args, **kwargs)
+        with fallback_guard():
+            if config.triton.tlx_mode == "force":
+                return force_lowering(*args, **kwargs)
+            return allow_lowering(*args, **kwargs)
 
     user_lowerings[op_overload] = lowering

@@ -488,7 +488,17 @@ class LocalBufferRetentionKernel(TritonKernel):
             self.body.writeline("tl.debug_barrier()")
             self.local_buffer_retention_barriers.add(phase)
 
-    def _local_buffer_shape_and_slice(self, name: str) -> tuple[str, str]:
+    def _local_buffer_shape_and_slice(self, name: str) -> tuple[str, int, str]:
+        """Return the per-block allocation shape, block count and access expr.
+
+        The retained buffer is allocated as one R0_BLOCK-wide buffer per
+        reduction-loop step and the step's block is selected with
+        ``tlx.local_view``. A ``tlx.local_slice`` at the loop's runtime offset
+        would need a dynamic memdesc subslice, which stock Triton lacks;
+        ``local_view`` lowers to ``memdesc_index``, which takes a runtime
+        index. Both sizes are powers of two and the block never exceeds the
+        padded size, so the blocks tile the buffer exactly.
+        """
         spec = self._local_buffer_spec(name)
         if spec is None:
             raise AssertionError(f"no local-buffer retention spec for {name}")
@@ -499,27 +509,30 @@ class LocalBufferRetentionKernel(TritonKernel):
         if reduction_tree.tensor_dim is None:
             raise AssertionError("local-buffer retention requires a tensor dimension")
 
+        reduction_block = self.local_buffer_retention_plan.reduction_block
+        if spec.padded_element_count % reduction_block != 0:
+            raise AssertionError(
+                f"retained buffer {name} ({spec.padded_element_count} elements) "
+                f"is not a multiple of the reduction block ({reduction_block})"
+            )
+        num_blocks = spec.padded_element_count // reduction_block
         allocation_shape = ["1"] * self.triton_tensor_ndim()
-        allocation_shape[reduction_tree.tensor_dim] = str(spec.padded_element_count)
-        if (
-            self.local_buffer_retention_plan.reduction_block
-            == spec.padded_element_count
-        ):
+        allocation_shape[reduction_tree.tensor_dim] = str(reduction_block)
+        if num_blocks == 1:
             return (
                 f"({', '.join(allocation_shape)},)",
+                num_blocks,
                 self.local_buffer_retention_names[name],
             )
-        offsets = ["0"] * self.triton_tensor_ndim()
-        offsets[reduction_tree.tensor_dim] = self.index_to_str(
-            reduction_tree.block_offset()
+        block_index = (
+            f"{self.index_to_str(reduction_tree.block_offset())} "
+            f"// {reduction_tree.block_size_str()}"
         )
-        access_shape = ["1"] * self.triton_tensor_ndim()
-        access_shape[reduction_tree.tensor_dim] = reduction_tree.block_size_str()
         return (
             f"({', '.join(allocation_shape)},)",
-            f"tlx.local_slice({self.local_buffer_retention_names[name]}, "
-            f"[{', '.join(offsets)}], "
-            f"[{', '.join(access_shape)}])",
+            num_blocks,
+            f"tlx.local_view({self.local_buffer_retention_names[name]}_storage, "
+            f"{block_index})",
         )
 
     def _load_from_local_buffer(
@@ -533,7 +546,7 @@ class LocalBufferRetentionKernel(TritonKernel):
         self.args.input(name)
         self.must_keep_buffers.add(name)
         self.local_buffer_retention_loaded.add(name)
-        _, local_slice = self._local_buffer_shape_and_slice(name)
+        _, _, local_slice = self._local_buffer_shape_and_slice(name)
         line = f"tlx.local_load({local_slice}, relaxed=True)"
         dtype = spec.dtype
         if (
@@ -564,7 +577,7 @@ class LocalBufferRetentionKernel(TritonKernel):
         self.args.output(name)
         self.must_keep_buffers.add(name)
         self.local_buffer_retention_stored.add(name)
-        _, local_slice = self._local_buffer_shape_and_slice(name)
+        _, _, local_slice = self._local_buffer_shape_and_slice(name)
         self.stores.writeline(
             f"tlx.local_store({local_slice}, {value}.to({triton_type(spec.dtype)}))"
         )
@@ -590,13 +603,18 @@ class LocalBufferRetentionKernel(TritonKernel):
         super().codegen_static_numels(code)
         code.writeline("tl.static_assert(XBLOCK == 1)")
         for spec in self.local_buffer_retention_plan.buffers:
-            allocation_shape, _ = self._local_buffer_shape_and_slice(spec.name)
+            allocation_shape, num_blocks, _ = self._local_buffer_shape_and_slice(
+                spec.name
+            )
             local_name = self.local_buffer_retention_names[spec.name]
             code.writeline(
                 f"{local_name}_storage = tlx.local_alloc("
-                f"{allocation_shape}, {triton_type(spec.dtype)}, 1)"
+                f"{allocation_shape}, {triton_type(spec.dtype)}, {num_blocks})"
             )
-            code.writeline(f"{local_name} = tlx.local_view({local_name}_storage, 0)")
+            if num_blocks == 1:
+                code.writeline(
+                    f"{local_name} = tlx.local_view({local_name}_storage, 0)"
+                )
 
     def codegen_kernel(self, *args: Any, **kwargs: Any) -> str:
         # The plan is derived from SIMDKernelFeatures.node_schedule, but phases
