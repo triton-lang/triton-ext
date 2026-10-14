@@ -4,7 +4,8 @@
 /// from lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp and
 /// lib/Conversion/TritonToTritonGPU/TritonGPUConversion.cpp, with additional
 /// addDynamicallyLegalOp and GenericOpPattern entries for
-/// ttg.local_store, ttg.local_load, and ttg.async_copy_global_to_local.
+/// ttg.local_store, ttg.local_load, ttg.async_copy_global_to_local, and
+/// ttng.warp_group_dot_wait.
 ///
 /// Exports pass functions used by tritonGetPluginInfo() in
 /// uTLXPlugin.cpp.
@@ -651,7 +652,10 @@ void populateTritonPatterns(TritonGPUTypeConverter &typeConverter,
       // unencoded tensor types from plugin custom ops at TTIR level.
       GenericOpPattern<triton::gpu::AsyncCopyGlobalToLocalOp>,
       GenericOpPattern<triton::gpu::LocalStoreOp>,
-      GenericOpPattern<triton::gpu::LocalLoadOp>
+      GenericOpPattern<triton::gpu::LocalLoadOp>,
+      // tlx.async_dot_wait on a value with no encoding, e.g. an accumulator
+      // carried out of a loop through tlx.release_layout.
+      GenericOpPattern<triton::nvidia_gpu::WarpGroupDotWaitOp>
       // clang-format on
       >(typeConverter, context);
 }
@@ -867,7 +871,8 @@ public:
 
   StringRef getDescription() const override {
     return "Plugin version of ConvertTritonToTritonGPU with additional "
-           "legalization for ttg.local_store/local_load/async_copy ops";
+           "legalization for ttg.local_store/local_load/async_copy and "
+           "ttng.warp_group_dot_wait ops";
   }
 
   void runOnOperation() override {
@@ -882,11 +887,13 @@ public:
     // --- Conversion target (from TritonGPUConversion.cpp) ---
     TritonGPUConversionTarget convTarget(*context, typeConverter);
 
-    // TLX addition: override blanket TritonGPUDialect legality for ops that
-    // may appear with unencoded tensor types from plugin custom ops.
-    convTarget.addDynamicallyLegalOp<triton::gpu::AsyncCopyGlobalToLocalOp,
-                                     triton::gpu::LocalLoadOp,
-                                     triton::gpu::LocalStoreOp>(
+    // TLX addition: override blanket TritonGPUDialect (and, below,
+    // TritonNvidiaGPUDialect) legality for ops that may appear with unencoded
+    // tensor types from plugin custom ops. Op-level legality takes precedence
+    // over the dialect-level addLegalDialect.
+    convTarget.addDynamicallyLegalOp<
+        triton::gpu::AsyncCopyGlobalToLocalOp, triton::gpu::LocalLoadOp,
+        triton::gpu::LocalStoreOp, triton::nvidia_gpu::WarpGroupDotWaitOp>(
         [](Operation *op) -> bool {
           for (auto operandType : op->getOperandTypes()) {
             if (auto rtt = dyn_cast<RankedTensorType>(operandType)) {
