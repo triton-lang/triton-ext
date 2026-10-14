@@ -4,8 +4,8 @@
 /// from lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp and
 /// lib/Conversion/TritonToTritonGPU/TritonGPUConversion.cpp, with additional
 /// addDynamicallyLegalOp and GenericOpPattern entries for
-/// ttg.local_store, ttg.local_load, ttg.async_copy_global_to_local, and
-/// ttng.warp_group_dot_wait.
+/// ttg.local_store, ttg.local_load, ttg.async_copy_global_to_local, and (on
+/// NVIDIA targets) ttng.warp_group_dot_wait.
 ///
 /// Exports pass functions used by tritonGetPluginInfo() in
 /// uTLXPlugin.cpp.
@@ -652,10 +652,7 @@ void populateTritonPatterns(TritonGPUTypeConverter &typeConverter,
       // unencoded tensor types from plugin custom ops at TTIR level.
       GenericOpPattern<triton::gpu::AsyncCopyGlobalToLocalOp>,
       GenericOpPattern<triton::gpu::LocalStoreOp>,
-      GenericOpPattern<triton::gpu::LocalLoadOp>,
-      // tlx.async_dot_wait on a value with no encoding, e.g. an accumulator
-      // carried out of a loop through tlx.release_layout.
-      GenericOpPattern<triton::nvidia_gpu::WarpGroupDotWaitOp>
+      GenericOpPattern<triton::gpu::LocalLoadOp>
       // clang-format on
       >(typeConverter, context);
 }
@@ -871,8 +868,8 @@ public:
 
   StringRef getDescription() const override {
     return "Plugin version of ConvertTritonToTritonGPU with additional "
-           "legalization for ttg.local_store/local_load/async_copy and "
-           "ttng.warp_group_dot_wait ops";
+           "legalization for ttg.local_store/local_load/async_copy ops and, "
+           "on NVIDIA, ttng.warp_group_dot_wait";
   }
 
   void runOnOperation() override {
@@ -891,24 +888,34 @@ public:
     // TritonNvidiaGPUDialect) legality for ops that may appear with unencoded
     // tensor types from plugin custom ops. Op-level legality takes precedence
     // over the dialect-level addLegalDialect.
-    convTarget.addDynamicallyLegalOp<
-        triton::gpu::AsyncCopyGlobalToLocalOp, triton::gpu::LocalLoadOp,
-        triton::gpu::LocalStoreOp, triton::nvidia_gpu::WarpGroupDotWaitOp>(
-        [](Operation *op) -> bool {
-          for (auto operandType : op->getOperandTypes()) {
-            if (auto rtt = dyn_cast<RankedTensorType>(operandType)) {
-              if (!rtt.getEncoding())
-                return false;
-            }
-          }
-          for (auto resultType : op->getResultTypes()) {
-            if (auto rtt = dyn_cast<RankedTensorType>(resultType)) {
-              if (!rtt.getEncoding())
-                return false;
-            }
-          }
-          return true;
-        });
+    auto allTensorsEncoded = [](Operation *op) -> bool {
+      for (auto operandType : op->getOperandTypes()) {
+        if (auto rtt = dyn_cast<RankedTensorType>(operandType)) {
+          if (!rtt.getEncoding())
+            return false;
+        }
+      }
+      for (auto resultType : op->getResultTypes()) {
+        if (auto rtt = dyn_cast<RankedTensorType>(resultType)) {
+          if (!rtt.getEncoding())
+            return false;
+        }
+      }
+      return true;
+    };
+    convTarget.addDynamicallyLegalOp<triton::gpu::AsyncCopyGlobalToLocalOp,
+                                     triton::gpu::LocalLoadOp,
+                                     triton::gpu::LocalStoreOp>(
+        allTensorsEncoded);
+
+    // TLX addition, NVIDIA only: tlx.async_dot_wait (ttng.warp_group_dot_wait,
+    // Hopper wgmma) can wait on a value with no encoding, e.g. an accumulator
+    // carried out of a loop through tlx.release_layout. AMD has no wgmma and
+    // never emits the op.
+    const bool isCuda = target.find("cuda:") == 0;
+    if (isCuda)
+      convTarget.addDynamicallyLegalOp<triton::nvidia_gpu::WarpGroupDotWaitOp>(
+          allTensorsEncoded);
 
     // TLX addition: on AMD targets, rewrite ttng.init_barrier →
     // amdg.init_barrier before the conversion, since the AMD backend
@@ -952,6 +959,9 @@ public:
     populateSCFPatterns(typeConverter, patterns);
     populateCFPatterns(typeConverter, patterns);
     patterns.insert<GenericOpPattern<ub::PoisonOp>>(typeConverter, context);
+    if (isCuda)
+      patterns.insert<GenericOpPattern<triton::nvidia_gpu::WarpGroupDotWaitOp>>(
+          typeConverter, context);
     patterns.insert<TlxRequireLayoutPattern, TlxReleaseLayoutPattern>(
         typeConverter, context);
     // Tensor-typed layout ops must be converted; MemDesc-typed require_layout
