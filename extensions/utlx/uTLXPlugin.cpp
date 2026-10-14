@@ -498,6 +498,23 @@ static void createBarrierArrive(TritonOpBuilder &self,
                                      static_cast<int>(*arriveCountVal));
 }
 
+// --- utlx_warp_barrier_arrive: Per-thread arrive on a warp barrier ---
+// fbtriton builds ttng.arrive_barrier {perThread} here; upstream Triton has no
+// such attribute, so build tlx.warp_barrier_arrive instead.
+static void createWarpBarrierArrive(TritonOpBuilder &self,
+                                    std::vector<mlir::Value> &operands) {
+  if (operands.size() < 3)
+    return;
+
+  mlir::Value mbarrierLoc = operands[1];
+  auto arriveCountVal = extractConstantInt(operands[2]);
+  if (!arriveCountVal)
+    return;
+
+  self.create<tlx::WarpBarrierArriveOp>(mbarrierLoc,
+                                        static_cast<uint32_t>(*arriveCountVal));
+}
+
 // --- utlx_barrier_expect: Expect bytes on mbarrier ---
 static void createBarrierExpect(TritonOpBuilder &self,
                                 std::vector<mlir::Value> &operands) {
@@ -877,6 +894,15 @@ static void registerPruneUnusedBarriersPassFn() {
   utlx::registerPruneUnusedBarriersPass();
 }
 
+static void addLowerWarpBarrierArrivePass(mlir::PassManager *pm,
+                                          const std::vector<std::string> &) {
+  pm->addPass(utlx::createLowerWarpBarrierArrivePass());
+}
+
+static void registerLowerWarpBarrierArrivePassFn() {
+  utlx::registerLowerWarpBarrierArrivePass();
+}
+
 static void addPingPongPrepPass(mlir::PassManager *pm,
                                 const std::vector<std::string> &) {
   pm->addPass(utlx::createPingPongPrepPass());
@@ -975,6 +1001,8 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       // Ported NVIDIA passes
       {"utlx_prune_unused_barriers", TRITON_EXT_VERSION,
        addPruneUnusedBarriersPass, registerPruneUnusedBarriersPassFn},
+      {"utlx_lower_warp_barrier_arrive", TRITON_EXT_VERSION,
+       addLowerWarpBarrierArrivePass, registerLowerWarpBarrierArrivePassFn},
       {"utlx_ping_pong_prep", TRITON_EXT_VERSION, addPingPongPrepPass,
        registerPingPongPrepPassFn},
       {"utlx_ping_pong_sync", TRITON_EXT_VERSION, addPingPongSyncPass,
@@ -1013,6 +1041,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_alloc_barriers", createAllocBarriers},
       {"utlx_barrier_wait", createBarrierWait},
       {"utlx_barrier_arrive", createBarrierArrive},
+      {"utlx_warp_barrier_arrive", createWarpBarrierArrive},
       {"utlx_barrier_expect", createBarrierExpect},
       {"utlx_storage_alias_spec", createStorageAliasSpec},
       {"utlx_storage_alias_local_alloc", createStorageAliasLocalAlloc},

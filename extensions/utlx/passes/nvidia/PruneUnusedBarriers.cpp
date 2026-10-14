@@ -5,11 +5,13 @@
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "tlx/dialect/include/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 
 namespace ttg = mlir::triton::gpu;
 namespace ttng = mlir::triton::nvidia_gpu;
+namespace tlx = mlir::triton::tlx;
 
 namespace {
 
@@ -23,7 +25,8 @@ UseKind classifyUse(mlir::Operation *user) {
   if (mlir::isa<ttng::WaitBarrierOp>(user))
     return UseKind::Wait;
   if (mlir::isa<ttng::InitBarrierOp, ttng::InvalBarrierOp,
-                ttng::ArriveBarrierOp, ttng::AsyncCopyMbarrierArriveOp>(user))
+                ttng::ArriveBarrierOp, ttng::AsyncCopyMbarrierArriveOp,
+                tlx::WarpBarrierArriveOp>(user))
     return UseKind::Pruneable;
   return UseKind::Unknown;
 }
@@ -62,8 +65,8 @@ void pruneBarrier(ttg::LocalAllocOp alloc,
   for (mlir::OpOperand *use : terminalUses) {
     mlir::Operation *user = use->getOwner();
     if (mlir::isa<ttng::InitBarrierOp, ttng::InvalBarrierOp,
-                  ttng::ArriveBarrierOp, ttng::AsyncCopyMbarrierArriveOp>(
-            user)) {
+                  ttng::ArriveBarrierOp, ttng::AsyncCopyMbarrierArriveOp,
+                  tlx::WarpBarrierArriveOp>(user)) {
       user->erase();
       continue;
     }

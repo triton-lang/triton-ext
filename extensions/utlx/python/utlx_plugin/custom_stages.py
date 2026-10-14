@@ -76,6 +76,32 @@ def get_hash():
     return _cached_hash
 
 
+def lower_warp_barrier_arrives_after_to_llvmir():
+    """Run utlx_lower_warp_barrier_arrive right after NVIDIA's add_to_llvmir.
+
+    tlx.warp_barrier_arrive (fbtriton's perThread ttng.arrive_barrier) can
+    only be lowered once its barrier operand is a shared-memory pointer, i.e.
+    after TritonGPU-to-LLVM conversion, and make_llir runs that conversion and
+    everything after it in one pass manager. Wrap the pass adder so the
+    lowering lands directly behind the conversion. The wrapper stays installed
+    for the life of the process, so concurrent compiles never miss it; the
+    pass does nothing in modules without warp barrier arrives.
+    """
+    from triton._C.libtriton import nvidia
+
+    ttgpuir = nvidia.passes.ttgpuir
+    add_to_llvmir = ttgpuir.add_to_llvmir
+    if getattr(add_to_llvmir, "_utlx", False):
+        return
+
+    def add_to_llvmir_then_lower_warp_barrier_arrives(pm, *args, **kwargs):
+        add_to_llvmir(pm, *args, **kwargs)
+        passes.plugin.utlx_lower_warp_barrier_arrive(pm, [])
+
+    add_to_llvmir_then_lower_warp_barrier_arrives._utlx = True
+    ttgpuir.add_to_llvmir = add_to_llvmir_then_lower_warp_barrier_arrives
+
+
 def inspect_stages_hook(self=None,
                         stages=None,
                         options=None,
@@ -235,6 +261,8 @@ def inspect_stages_hook(self=None,
 
         stages["ttir"] = lambda src, metadata: make_ttir_wrapper(
             src, metadata, options, capability)
+
+        lower_warp_barrier_arrives_after_to_llvmir()
 
         # Wrap the llir stage to run storage alias lowering before
         # allocate-shared-memory-nv, which invokes the alias analysis

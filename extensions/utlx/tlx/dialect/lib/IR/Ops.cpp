@@ -195,6 +195,18 @@ LogicalResult SetBufferOverlapOp::verify() {
   return success();
 }
 
+//-- WarpBarrierArriveOp --
+
+LogicalResult WarpBarrierArriveOp::verify() {
+  auto allocTy = getAlloc().getType();
+  if (allocTy.getRank() != 1 || allocTy.getShape()[0] != 1 ||
+      !allocTy.getElementType().isInteger(64))
+    return emitOpError("expects a single 64-bit mbarrier, got ") << allocTy;
+  if (getCount() < 1)
+    return emitOpError("count must be greater than or equal to 1");
+  return success();
+}
+
 } // namespace tlx
 } // namespace triton
 } // namespace mlir

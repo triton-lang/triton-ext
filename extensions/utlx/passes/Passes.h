@@ -21,6 +21,9 @@ void registerPingPongPrepPass();
 std::unique_ptr<mlir::Pass> createPingPongSyncPass();
 void registerPingPongSyncPass();
 
+std::unique_ptr<mlir::Pass> createLowerWarpBarrierArrivePass();
+void registerLowerWarpBarrierArrivePass();
+
 // Layout passes
 std::unique_ptr<mlir::Pass> createDotOperandLocalLoadPass();
 void registerDotOperandLocalLoadPass();

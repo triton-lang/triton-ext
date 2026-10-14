@@ -297,6 +297,55 @@ def test_alloc_warp_barrier_compile_only_arrive_count():
     assert "192" in ir_str, f"Expected arrive_count 192 in TTGIR.\nIR:\n{ir_str}"
 
 
+@pytest.mark.skipif(not is_hopper_or_newer(),
+                    reason="Barrier ops require Hopper+")
+def test_warp_barrier_arrive_is_per_thread():
+    """Every thread arrives on a warp barrier, as with fbtriton's perThread.
+
+    A warp barrier expects num_warps * 32 * num_arrivals arrivals per phase.
+    barrier_arrive must lower to an unpredicated mbarrier.arrive that every
+    thread executes, not ttng.arrive_barrier's single arrive from thread 0,
+    which would leave the barrier forever short of arrivals.
+    """
+
+    @triton.jit
+    def kernel(Out):
+        bars = tlx.alloc_warp_barrier(
+            num_barriers=tl.constexpr(1),
+            num_warps=tl.constexpr(4),
+            num_arrivals=tl.constexpr(3),
+        )
+        bar = tlx.local_view(bars, 0)
+        tlx.barrier_arrive(bar)
+        tlx.barrier_arrive(bar, 2)
+        pid = tl.program_id(0)
+        tl.store(Out + pid, pid)
+
+    src = triton.compiler.ASTSource(
+        fn=kernel,
+        signature={"Out": "*i32"},
+        constexprs={},
+    )
+    ret = triton.compile(src,
+                         target=get_current_target(),
+                         options={"num_warps": 4})
+
+    ttgir = ret.asm["ttgir"]
+    assert "tlx.warp_barrier_arrive" in ttgir, ttgir
+    assert "ttng.arrive_barrier" not in ttgir, ttgir
+
+    ptx = ret.asm["ptx"]
+    arrives = [
+        line.strip() for line in ptx.splitlines()
+        if "mbarrier.arrive.shared::cta.b64" in line
+    ]
+    assert len(arrives) == 2, ptx
+    for arrive in arrives:
+        assert not arrive.startswith("@"), f"predicated arrive: {arrive}"
+    assert arrives[0].endswith("];"), arrives[0]
+    assert arrives[1].endswith("], 2;"), arrives[1]
+
+
 # ---------------------------------------------------------------------------
 # Barriers combined with multi-buffer smem pattern
 # ---------------------------------------------------------------------------

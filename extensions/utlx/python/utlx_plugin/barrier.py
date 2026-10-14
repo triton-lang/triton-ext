@@ -124,13 +124,24 @@ def barrier_arrive(
     assert arrive_count_val == 1 or not is_hip(
     ), "AMD backend currently only supports arrive_count == 1"
 
+    # Capture is_warp_barrier before remote_view, which doesn't preserve it.
+    is_warp_bar = getattr(bar, "is_warp_barrier", False)
+
     if remote_cta_rank is not None:
         from .mem_ops import remote_view
         bar = remote_view(bar, remote_cta_rank, _semantic=_semantic)
 
     arrive_count_ir = _semantic.builder.get_int32(int(arrive_count_val))
 
-    _semantic.builder.utlx_barrier_arrive([bar.handle, arrive_count_ir])
+    if is_warp_bar and not is_hip():
+        # A warp barrier expects an arrival from every thread (see
+        # alloc_warp_barrier), so every thread arrives, as fbtriton's
+        # perThread arrive does. utlx_barrier_arrive would sync and arrive
+        # once, from thread 0, and the barrier would never complete a phase.
+        _semantic.builder.utlx_warp_barrier_arrive(
+            [bar.handle, arrive_count_ir])
+    else:
+        _semantic.builder.utlx_barrier_arrive([bar.handle, arrive_count_ir])
 
 
 @tl.builtin
