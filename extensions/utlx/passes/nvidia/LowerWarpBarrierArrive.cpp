@@ -11,12 +11,18 @@
 ///   mbarrier.arrive.shared::cta.b64 _, [addr](, count);
 ///
 /// from every thread, with no leader predicate and no barrier before it.
+///
+/// tlx.named_barrier_arrive / tlx.named_barrier_wait stand in for fbtriton's
+/// ttng.arrive_barrier_named / ttng.wait_barrier_named the same way, and are
+/// lowered here to the NVVM intrinsics fbtriton's conversion uses; they are
+/// IntrConvergent, so LLVM does not duplicate them across control flow.
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "tlx/dialect/include/IR/Dialect.h"
+#include "triton/Conversion/TritonGPUToLLVM/Utility.h"
 
 namespace tlx = mlir::triton::tlx;
 
@@ -47,11 +53,14 @@ public:
     return "utlx-lower-warp-barrier-arrive";
   }
   llvm::StringRef getDescription() const override {
-    return "Lower tlx.warp_barrier_arrive to a per-thread mbarrier.arrive "
-           "after TritonGPU-to-LLVM conversion";
+    return "Lower tlx.warp_barrier_arrive to a per-thread mbarrier.arrive, "
+           "and tlx.named_barrier_* to bar.arrive / bar.sync, after "
+           "TritonGPU-to-LLVM conversion";
   }
 
   void runOnOperation() override {
+    lowerNamedBarriers();
+
     llvm::SmallVector<tlx::WarpBarrierArriveOp> arrives;
     getOperation().walk(
         [&](tlx::WarpBarrierArriveOp op) { arrives.push_back(op); });
@@ -81,6 +90,26 @@ public:
       op.erase();
       if (cast->use_empty())
         cast->erase();
+    }
+  }
+
+private:
+  void lowerNamedBarriers() {
+    llvm::SmallVector<mlir::Operation *> barriers;
+    getOperation().walk([&](mlir::Operation *op) {
+      if (mlir::isa<tlx::NamedBarrierArriveOp, tlx::NamedBarrierWaitOp>(op))
+        barriers.push_back(op);
+    });
+    for (mlir::Operation *op : barriers) {
+      mlir::OpBuilder builder(op);
+      llvm::StringRef intrinsic =
+          mlir::isa<tlx::NamedBarrierArriveOp>(op)
+              ? "llvm.nvvm.barrier.cta.arrive.aligned.count"
+              : "llvm.nvvm.barrier.cta.sync.aligned.count";
+      mlir::LLVM::createLLVMIntrinsicCallOp(builder, op->getLoc(), intrinsic,
+                                            mlir::TypeRange(),
+                                            op->getOperands());
+      op->erase();
     }
   }
 };

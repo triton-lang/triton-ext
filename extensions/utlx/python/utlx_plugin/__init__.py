@@ -76,6 +76,7 @@ __all__ = [
     "fence",
     "fence_async_shared",
     "make_tensor_descriptor",
+    "prefetch",
     "reinterpret_tensor_descriptor",
     "remote_shmem_store",
     "async_remote_shmem_store",
@@ -154,6 +155,7 @@ from .dynamic_launch import (
 )
 from .mem_ops import (
     allocate_tensor_descriptor,
+    prefetch,
     async_store,
     async_descriptor_load,
     async_descriptor_prefetch_tensor,

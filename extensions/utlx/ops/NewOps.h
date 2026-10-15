@@ -20,6 +20,7 @@ void createAsyncCLCTryCancel(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createCLCQueryCancel(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createVoteBallotSync(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createAsyncTMAPrefetch(TritonOpBuilder &, std::vector<mlir::Value> &);
+void createMatchTensorDescLayout(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createNamedBarrierArrive(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createNamedBarrierWait(TritonOpBuilder &, std::vector<mlir::Value> &);
 

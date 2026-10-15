@@ -273,12 +273,49 @@ class shared_linear_layout_encoding(_value_layout, shared_layout_encoding):
         assert self.alignment > 0 and \
             (self.alignment & (self.alignment - 1)) == 0
 
+    @classmethod
+    def from_nv_mma(cls, atom_layout, tile_shape, alignment=1024):
+        """An NVMMA atom tiled out to ``tile_shape``.
+
+        The bases are left to ``to_ir``, which derives them from the atom with
+        a builder, as the fork does.
+        """
+        result = cls.__new__(cls)
+        shared_layout_encoding.__init__(result)
+        result.offset_bases = []
+        result.block_bases = []
+        result.alignment = int(alignment)
+        result._nv_mma_atom = atom_layout
+        result.tile_shape = [int(d) for d in tile_shape]
+        assert len(result.tile_shape) == len(atom_layout.shape)
+        assert result.alignment > 0 and \
+            (result.alignment & (result.alignment - 1)) == 0
+        return result
+
     def make_permute(self, dims):
+        if getattr(self, "_nv_mma_atom", None) is not None:
+            return shared_linear_layout_encoding.from_nv_mma(
+                self._nv_mma_atom.make_permute(dims),
+                [self.tile_shape[d] for d in dims], self.alignment)
         # A physical image: keep the bit bases and let the consumer's
         # memdesc_trans describe the logical permutation (as the fork does).
         return self
 
     def to_ir(self, builder: ir.builder) -> ir.attribute:
+        atom = getattr(self, "_nv_mma_atom", None)
+        if atom is not None:
+            return builder.make_nv_mma_tiled_shared_linear_encoding_attr(
+                [int(x) for x in atom.shape],
+                [int(x) for x in atom.order],
+                atom.elemType.to_ir(builder),
+                atom.numCTAsPerCGA,
+                atom.numCTASplit,
+                atom.numCTAOrder,
+                atom.fp4Padded,
+                atom.swizzled,
+                self.tile_shape,
+                self.alignment,
+            )
         return builder.get_shared_linear_layout(self.offset_bases,
                                                 self.block_bases,
                                                 self.alignment)
@@ -367,11 +404,22 @@ class nv_mma_shared_layout_encoding(shared_layout_encoding):
             self.swizzled,
         )
 
+    def tile_to_shape(self, tile_shape, alignment=1024):
+        return shared_linear_layout_encoding.from_nv_mma(
+            self, tile_shape, alignment)
+
+    def make_shared_linear(self, alignment=1024, tile_shape=None):
+        return self.tile_to_shape(tile_shape or self.shape, alignment)
+
     def __str__(self) -> str:
         return (
             f"nv_mma_shared_layout_encoding<{self.shape}, {self.order}, {self.elemType}, "
             f"{self.numCTAsPerCGA}, {self.numCTASplit}, {self.numCTAOrder}, "
             f"{self.fp4Padded}, {self.swizzled}>")
+
+    # By value, not identity: a tiled shared_linear_layout_encoding holds this
+    # atom and keys its equality and mangling on the atom's repr.
+    __repr__ = __str__
 
     def __eq__(self, other) -> bool:
         return (type(self) is type(other) and self.shape == other.shape

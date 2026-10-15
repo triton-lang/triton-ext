@@ -379,6 +379,38 @@ class TestNvMmaSharedLayoutEncoding:
         permuted = layout.make_permute([1, 0])
         assert permuted.order == (0, 1)
 
+    def test_tile_to_shape(self):
+        atom = tlx.nv_mma_shared_layout_encoding.make_default([64, 32],
+                                                              tl.float16)
+        tiled = atom.tile_to_shape((64, 64))
+        assert isinstance(tiled, tlx.shared_linear_layout_encoding)
+        assert tiled.tile_shape == [64, 64]
+        assert tiled.alignment == 1024
+        assert tiled._nv_mma_atom is atom
+
+    def test_tile_to_shape_compares_by_value(self):
+        # Jit specializations key on constexpr layouts, so two tilings of
+        # equal atoms must be one layout, not two.
+        def tiled():
+            return tlx.nv_mma_shared_layout_encoding.make_default(
+                [64, 32], tl.float16).tile_to_shape((64, 64))
+
+        assert tiled() == tiled()
+        assert hash(tiled()) == hash(tiled())
+        assert tiled().mangle() == tiled().mangle()
+
+    def test_tile_to_shape_make_permute(self):
+        atom = tlx.nv_mma_shared_layout_encoding.make_default([64, 32],
+                                                              tl.float16)
+        permuted = atom.tile_to_shape((64, 128)).make_permute([1, 0])
+        assert permuted.tile_shape == [128, 64]
+        assert permuted._nv_mma_atom.order == (0, 1)
+
+    def test_make_shared_linear(self):
+        atom = tlx.nv_mma_shared_layout_encoding.make_default([64, 32],
+                                                              tl.float16)
+        assert atom.make_shared_linear().tile_shape == [64, 32]
+
 
 class TestTensorMemoryLayoutEncoding:
 

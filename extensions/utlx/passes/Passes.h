@@ -24,6 +24,15 @@ void registerPingPongSyncPass();
 std::unique_ptr<mlir::Pass> createLowerWarpBarrierArrivePass();
 void registerLowerWarpBarrierArrivePass();
 
+std::unique_ptr<mlir::Pass> createOptimizeDescriptorEncodingPass();
+void registerOptimizeDescriptorEncodingPass();
+
+// Give the kernel-argument descriptor `desc` the NVMMA layout of the shared
+// view a TMA op copies through, updating the function signature. Returns
+// whether the descriptor now matches.
+bool matchTensorDescToSharedLayout(mlir::Value desc,
+                                   mlir::Attribute sharedEncoding);
+
 // Layout passes
 std::unique_ptr<mlir::Pass> createDotOperandLocalLoadPass();
 void registerDotOperandLocalLoadPass();

@@ -126,6 +126,26 @@ def make_nv_mma_shared_encoding_attr(self, shape, order, elemType,
                                         len(shape))
 
 
+def make_nv_mma_tiled_shared_linear_encoding_attr(self, atomShape, order,
+                                                  elemType, numCTAsPerCGA,
+                                                  numCTASplit, numCTAOrder,
+                                                  fp4Padded, swizzled,
+                                                  tileShape, alignment):
+    """An NVMMA atom tiled out to ``tileShape``, as a #ttg.shared_linear.
+
+    The fork converts the atom with ``nvmmaSharedToLinearLayout(...,
+    TMAMode::Tiled)``. Upstream's ``to_linear_layout`` runs the same
+    conversion for an NVMMA layout and returns the bases, which are then
+    re-wrapped with the requested alignment instead of the atom's own.
+    """
+    atom = make_nv_mma_shared_encoding_attr(self, atomShape, order, elemType,
+                                            numCTAsPerCGA, numCTASplit,
+                                            numCTAOrder, fp4Padded, swizzled)
+    linear = self.to_linear_layout(atom, [int(d) for d in tileShape])
+    return self.get_shared_linear_layout(linear.offset_bases,
+                                         linear.block_bases, int(alignment))
+
+
 def make_tensor_memory_encoding_attr(self, blockM, blockN, colStride,
                                      CTASplitM, CTASplitN):
     cga_bases = _cga_bases([CTASplitM, CTASplitN])
@@ -162,6 +182,8 @@ def make_linear_encoding_attr(self, reg_bases, lane_bases, warp_bases, shape):
 FACTORIES = {
     "make_swizzled_shared_encoding_attr": make_swizzled_shared_encoding_attr,
     "make_nv_mma_shared_encoding_attr": make_nv_mma_shared_encoding_attr,
+    "make_nv_mma_tiled_shared_linear_encoding_attr":
+    make_nv_mma_tiled_shared_linear_encoding_attr,
     "make_tensor_memory_encoding_attr": make_tensor_memory_encoding_attr,
     "make_tensor_memory_scales_encoding_attr":
     make_tensor_memory_scales_encoding_attr,

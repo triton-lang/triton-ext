@@ -14,7 +14,7 @@ import torch
 
 import triton
 import triton.language as tl
-from conftest import tlx, DEVICE, get_current_target
+from conftest import tlx, DEVICE, get_current_target, is_hopper_or_newer
 
 # ---------------------------------------------------------------------------
 # local_alloc -> local_store -> local_load round-trip (1D)
@@ -842,6 +842,117 @@ def test_dot_k_loop_through_smem():
     )
     c_ref = torch.matmul(a, b)
     torch.testing.assert_close(c, c_ref, atol=1e-1, rtol=1e-2)
+
+
+# ---------------------------------------------------------------------------
+# nv_mma_shared_layout_encoding.tile_to_shape
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not is_hopper_or_newer(),
+                    reason="NVMMA layouts need sm90+")
+def test_tile_to_shape_round_trip():
+    """A buffer laid out as two 64B-swizzled NVMMA atoms side by side."""
+
+    @triton.jit
+    def kernel(in_ptr, out_ptr, M: tl.constexpr, N: tl.constexpr):
+        offs = tl.arange(0, M)[:, None] * N + tl.arange(0, N)[None, :]
+        x = tl.load(in_ptr + offs)
+        atom: tl.constexpr = tlx.nv_mma_shared_layout_encoding(
+            (M, N // 2), [1, 0], tl.float16, [1, 1], [1, 1], [1, 0], False,
+            True)
+        buf = tlx.local_alloc((M, N),
+                              tl.float16,
+                              1,
+                              layout=atom.tile_to_shape((M, N)))
+        view = tlx.local_view(buf, 0)
+        tlx.local_store(view, x)
+        tl.store(out_ptr + offs, tlx.local_load(view))
+
+    M, N = 64, 64
+    x = torch.randn((M, N), device=DEVICE, dtype=torch.float16)
+    out = torch.empty_like(x)
+    compiled = kernel[(1, )](x, out, M=M, N=N)
+    torch.testing.assert_close(out, x)
+
+    # Column bits within the 32-wide atom, then rows with the 64B swizzle
+    # XORing 16B chunks by (row >> 1) & 3, then the second atom.
+    bases = ("[[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [1, 0], [2, 8], "
+             "[4, 16], [8, 0], [16, 0], [32, 0], [0, 32]]")
+    assert f"#ttg.shared_linear<{{offset = {bases}}}, alignment = 1024>" in \
+        compiled.asm["ttgir"]
+
+
+@pytest.mark.skipif(not is_hopper_or_newer(), reason="TMA needs sm90+")
+def test_tma_load_into_narrower_swizzled_view():
+    """TMA into an explicit 64B-swizzled view of a 64-wide f16 tile.
+
+    The descriptor's default layout for a 64x64 f16 block is 128B swizzled.
+    The copy goes through an explicit NVMMA atom view instead, so the
+    descriptor has to take the view's layout: then the TensorMap gets a
+    32-column, 64B-swizzled box and the copy is issued once per atom.
+    """
+    from triton.tools.tensor_descriptor import TensorDescriptor
+
+    @triton.jit
+    def kernel(desc, out_ptr, M: tl.constexpr, N: tl.constexpr):
+        atom: tl.constexpr = tlx.nv_mma_shared_layout_encoding(
+            (M, N // 2), [1, 0], tl.float16, [1, 1], [1, 1], [1, 0], False,
+            True)
+        buf = tlx.local_alloc((M, N),
+                              tl.float16,
+                              1,
+                              layout=atom.tile_to_shape((M, N)))
+        view = tlx.local_reinterpret(buf[0],
+                                     tl.float16, [M, N],
+                                     layout=atom,
+                                     pin=False)
+        bar = tlx.alloc_barriers(num_barriers=1, arrive_count=1)
+        tlx.barrier_expect_bytes(bar[0], M * N * 2)
+        tlx.async_descriptor_load(desc, view, [0, 0], bar[0])
+        tlx.barrier_wait(bar[0], 0)
+        offs = tl.arange(0, M)[:, None] * N + tl.arange(0, N)[None, :]
+        tl.store(out_ptr + offs, tlx.local_load(buf[0]))
+
+    M, N = 64, 64
+    x = torch.randn((M, N), device=DEVICE, dtype=torch.float16)
+    out = torch.empty_like(x)
+    compiled = kernel[(1, )](TensorDescriptor.from_tensor(x, [M, N]),
+                             out,
+                             M=M,
+                             N=N)
+    torch.testing.assert_close(out, x)
+    # The TensorMap box is one 32-column atom, not the 64-column block.
+    assert compiled.metadata.tensordesc_meta[0]["block_size"] == [M, N // 2]
+
+
+# ---------------------------------------------------------------------------
+# prefetch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not is_hopper_or_newer(), reason="TMA needs sm90+")
+def test_prefetch_is_a_hint():
+    """prefetch emits nothing in uTLX; the kernel still runs as written."""
+    from triton.tools.tensor_descriptor import TensorDescriptor
+
+    @triton.jit
+    def kernel(desc, in_ptr, out_ptr, M: tl.constexpr, N: tl.constexpr):
+        offs = tl.arange(0, M)[:, None] * N + tl.arange(0, N)[None, :]
+        tlx.prefetch(desc, tensormap=True)
+        tlx.prefetch(in_ptr + offs, level="L1")
+        tl.store(out_ptr + offs, desc.load([0, 0]) + tl.load(in_ptr + offs))
+
+    M, N = 64, 64
+    x = torch.randn((M, N), device=DEVICE, dtype=torch.float16)
+    out = torch.empty_like(x)
+    compiled = kernel[(1, )](TensorDescriptor.from_tensor(x, [M, N]),
+                             x,
+                             out,
+                             M=M,
+                             N=N)
+    torch.testing.assert_close(out, x + x)
+    assert "prefetch" not in compiled.asm["ptx"]
 
 
 if __name__ == "__main__":

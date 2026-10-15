@@ -346,6 +346,40 @@ def test_warp_barrier_arrive_is_per_thread():
     assert arrives[1].endswith("], 2;"), arrives[1]
 
 
+@pytest.mark.skipif(not is_hopper_or_newer(),
+                    reason="Barrier ops require Hopper+")
+def test_named_barriers_reach_ptx():
+    """named_barrier_arrive / _wait lower to bar.arrive / bar.sync.
+
+    Upstream Triton has no named barrier op, and these used to be dropped
+    with only an "is not registered" diagnostic, which left FA3-style
+    warpgroup schedules unsynchronized.
+    """
+
+    @triton.jit
+    def kernel(Out):
+        tlx.named_barrier_arrive(9, 256)
+        tlx.named_barrier_wait(10, 256)
+        pid = tl.program_id(0)
+        tl.store(Out + pid, pid)
+
+    src = triton.compiler.ASTSource(
+        fn=kernel,
+        signature={"Out": "*i32"},
+        constexprs={},
+    )
+    ret = triton.compile(src,
+                         target=get_current_target(),
+                         options={"num_warps": 4})
+
+    ttgir = ret.asm["ttgir"]
+    assert "tlx.named_barrier_arrive" in ttgir, ttgir
+    assert "tlx.named_barrier_wait" in ttgir, ttgir
+    ptx = " ".join(ret.asm["ptx"].split())
+    assert "bar.arrive 9, 256;" in ptx, ptx
+    assert "bar.sync 10, 256;" in ptx, ptx
+
+
 # ---------------------------------------------------------------------------
 # Barriers combined with multi-buffer smem pattern
 # ---------------------------------------------------------------------------

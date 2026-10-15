@@ -951,6 +951,10 @@ def async_descriptor_load(
     assert len(offsets) == ndim
     result_handle = require_nv_mma_shared_layout(result, True,
                                                  _semantic.builder)
+    # An explicit NVMMA view (e.g. narrower-swizzled atoms) needs the
+    # descriptor to carry its layout for the copy to verify.
+    _semantic.builder.utlx_match_tensor_desc_layout(
+        [desc.handle, result_handle])
     offsets = _semantic._convert_to_ir_values(offsets, require_i64=False)
     if pred is None:
         pred_handle = _semantic.builder.get_int1(True)
@@ -990,6 +994,23 @@ def async_descriptor_prefetch_tensor(
 
 
 @tl.builtin
+def prefetch(pointer, level="L2", mask=None, tensormap=False, _semantic=None):
+    """Prefetch hint for a pointer tensor, or for a TMA descriptor object.
+
+    The fork lowers this to ``ttng.prefetch`` / ``ttng.prefetch_tensormap``,
+    neither of which stock Triton has. A prefetch only warms a cache, so here
+    it checks its arguments as the fork does and emits nothing: kernels that
+    use it compile and compute the same result, without the hint.
+    """
+    level = tl._unwrap_if_constexpr(level)
+    if tl._unwrap_if_constexpr(tensormap):
+        assert isinstance(pointer, tl.tensor_descriptor_base), \
+            "prefetch(tensormap=True) takes a tensor descriptor"
+        return
+    assert level in ("L1", "L2"), f"level must be 'L1' or 'L2', got '{level}'"
+
+
+@tl.builtin
 def async_descriptor_store(
     desc: tl.tensor_descriptor_base,
     source: tlx.buffered_tensor,
@@ -1012,6 +1033,8 @@ def async_descriptor_store(
     assert len(offsets) == ndim
     source_handle = require_nv_mma_shared_layout(source, True,
                                                  _semantic.builder)
+    _semantic.builder.utlx_match_tensor_desc_layout(
+        [desc.handle, source_handle])
     offsets = _semantic._convert_to_ir_values(offsets, require_i64=False)
 
     if store_reduce == "":

@@ -903,6 +903,16 @@ static void registerLowerWarpBarrierArrivePassFn() {
   utlx::registerLowerWarpBarrierArrivePass();
 }
 
+static void
+addOptimizeDescriptorEncodingPass(mlir::PassManager *pm,
+                                  const std::vector<std::string> &) {
+  pm->addPass(utlx::createOptimizeDescriptorEncodingPass());
+}
+
+static void registerOptimizeDescriptorEncodingPassFn() {
+  utlx::registerOptimizeDescriptorEncodingPass();
+}
+
 static void addPingPongPrepPass(mlir::PassManager *pm,
                                 const std::vector<std::string> &) {
   pm->addPass(utlx::createPingPongPrepPass());
@@ -1003,6 +1013,9 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
        addPruneUnusedBarriersPass, registerPruneUnusedBarriersPassFn},
       {"utlx_lower_warp_barrier_arrive", TRITON_EXT_VERSION,
        addLowerWarpBarrierArrivePass, registerLowerWarpBarrierArrivePassFn},
+      {"utlx_optimize_descriptor_encoding", TRITON_EXT_VERSION,
+       addOptimizeDescriptorEncodingPass,
+       registerOptimizeDescriptorEncodingPassFn},
       {"utlx_ping_pong_prep", TRITON_EXT_VERSION, addPingPongPrepPass,
        registerPingPongPrepPassFn},
       {"utlx_ping_pong_sync", TRITON_EXT_VERSION, addPingPongSyncPass,
@@ -1063,6 +1076,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_clc_query_cancel", utlx::createCLCQueryCancel},
       {"utlx_vote_ballot_sync", utlx::createVoteBallotSync},
       {"utlx_async_tma_prefetch", utlx::createAsyncTMAPrefetch},
+      {"utlx_match_tensor_desc_layout", utlx::createMatchTensorDescLayout},
       {"utlx_named_barrier_arrive", utlx::createNamedBarrierArrive},
       {"utlx_named_barrier_wait", utlx::createNamedBarrierWait},
       // New AMD ops (runtime op creation)

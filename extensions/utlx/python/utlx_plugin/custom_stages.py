@@ -102,6 +102,29 @@ def lower_warp_barrier_arrives_after_to_llvmir():
     ttgpuir.add_to_llvmir = add_to_llvmir_then_lower_warp_barrier_arrives
 
 
+def optimize_descriptor_encoding_for_tma_copies():
+    """Run utlx_optimize_descriptor_encoding in place of NVIDIA's pass.
+
+    Upstream assigns descriptor layouts from tt.descriptor_load/store only, so
+    a descriptor that tlx.async_descriptor_load/store copies through an
+    explicit NVMMA view would be reset to the default layout and the copy
+    would no longer verify. The uTLX pass runs upstream's assignment and then
+    keeps the layout those copies need. Like the wrapper above, it stays
+    installed for the life of the process.
+    """
+    from triton._C.libtriton import nvidia
+
+    ttnvgpuir = nvidia.passes.ttnvgpuir
+    if getattr(ttnvgpuir.add_optimize_descriptor_encoding, "_utlx", False):
+        return
+
+    def add_optimize_descriptor_encoding(pm, *args, **kwargs):
+        passes.plugin.utlx_optimize_descriptor_encoding(pm, [])
+
+    add_optimize_descriptor_encoding._utlx = True
+    ttnvgpuir.add_optimize_descriptor_encoding = add_optimize_descriptor_encoding
+
+
 def inspect_stages_hook(self=None,
                         stages=None,
                         options=None,
@@ -263,6 +286,7 @@ def inspect_stages_hook(self=None,
             src, metadata, options, capability)
 
         lower_warp_barrier_arrives_after_to_llvmir()
+        optimize_descriptor_encoding_for_tma_copies()
 
         # Wrap the llir stage to run storage alias lowering before
         # allocate-shared-memory-nv, which invokes the alias analysis

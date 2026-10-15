@@ -341,4 +341,42 @@ def TLX_WarpBarrierArriveOp : TLX_Op<"warp_barrier_arrive",
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Named Barrier Operations
+//===----------------------------------------------------------------------===//
+
+def TLX_NamedBarrierArriveOp : TLX_Op<"named_barrier_arrive",
+                                      [MemoryEffects<[MemWrite]>]> {
+  let summary = "Arrive on a hardware named barrier";
+
+  let description = [{
+    `bar.arrive $bar, $numThreads`: count the executing warp toward the
+    $numThreads threads named barrier $bar waits for, without waiting. The
+    stand-in for fbtriton's `ttng.arrive_barrier_named`, which upstream Triton
+    does not have.
+
+    The op survives TritonGPU-to-LLVM conversion untouched and is lowered by
+    utlx_lower_warp_barrier_arrive, which runs right after that conversion.
+  }];
+
+  let arguments = (ins I32:$bar, I32:$numThreads);
+
+  let assemblyFormat = "$bar `,` $numThreads attr-dict";
+}
+
+def TLX_NamedBarrierWaitOp : TLX_Op<"named_barrier_wait",
+                                    [MemoryEffects<[MemWrite]>]> {
+  let summary = "Wait on a hardware named barrier";
+
+  let description = [{
+    `bar.sync $bar, $numThreads`: arrive on named barrier $bar and wait until
+    $numThreads threads have arrived. The stand-in for fbtriton's
+    `ttng.wait_barrier_named`; lowered like tlx.named_barrier_arrive.
+  }];
+
+  let arguments = (ins I32:$bar, I32:$numThreads);
+
+  let assemblyFormat = "$bar `,` $numThreads attr-dict";
+}
+
 #endif

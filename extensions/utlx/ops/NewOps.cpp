@@ -12,6 +12,8 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OperationSupport.h"
+#include "mlir/IR/PatternMatch.h"
+#include "passes/Passes.h"
 #include "tlx/dialect/include/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
@@ -213,22 +215,34 @@ void utlx::createAsyncTMAPrefetch(TritonOpBuilder &self,
                   "ttng.async_tma_prefetch", {}, allOperands);
 }
 
+/// utlx_match_tensor_desc_layout(desc, sharedView)
+/// Give a kernel-argument descriptor the NVMMA layout of the shared view a
+/// TMA copy is about to go through, so the copy verifies against it; see
+/// utlx::matchTensorDescToSharedLayout.
+void utlx::createMatchTensorDescLayout(TritonOpBuilder &self,
+                                       std::vector<mlir::Value> &operands) {
+  if (operands.size() < 3)
+    return;
+  auto viewType = mlir::dyn_cast<ttg::MemDescType>(operands[2].getType());
+  if (!viewType)
+    return;
+  utlx::matchTensorDescToSharedLayout(operands[1], viewType.getEncoding());
+}
+
 /// utlx_named_barrier_arrive(bar, numThreads)
 void utlx::createNamedBarrierArrive(TritonOpBuilder &self,
                                     std::vector<mlir::Value> &operands) {
-  if (operands.size() < 2)
+  if (operands.size() < 3)
     return;
-  createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                  "ttng.named_barrier_arrive", {}, {operands[0], operands[1]});
+  self.create<tlx::NamedBarrierArriveOp>(operands[1], operands[2]);
 }
 
 /// utlx_named_barrier_wait(bar, numThreads)
 void utlx::createNamedBarrierWait(TritonOpBuilder &self,
                                   std::vector<mlir::Value> &operands) {
-  if (operands.size() < 2)
+  if (operands.size() < 3)
     return;
-  createRuntimeOp(self.getBuilder(), self.getLastLoc(),
-                  "ttng.named_barrier_wait", {}, {operands[0], operands[1]});
+  self.create<tlx::NamedBarrierWaitOp>(operands[1], operands[2]);
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +392,24 @@ void utlx::createRequireNvMmaSharedLayout(TritonOpBuilder &self,
 
   auto *context = self.getBuilder().getContext();
   auto cgaLayout = ttg::CGAEncodingAttr::get1CTALayout(context, rank);
+
+  // A view that already carries an NVMMA encoding, e.g. one given explicitly
+  // to tlx.local_reinterpret, describes how the bytes really sit in shared
+  // memory, and the MMA reads any swizzle width. Nothing runs after this on
+  // NVIDIA that could retag the view to the default encoding, so a
+  // require_layout to it would survive to LLVM. Keep the view as it is.
+  bool transposed = rank > 1 && order[0] == 0;
+  if (auto srcEnc =
+          mlir::dyn_cast<ttg::NVMMASharedEncodingAttr>(srcType.getEncoding());
+      srcEnc &&
+      srcEnc.getElementBitWidth() ==
+          srcType.getElementType().getIntOrFloatBitWidth() &&
+      srcEnc.getFp4Padded() == fp4Padded &&
+      srcEnc.getTransposed() == transposed &&
+      (srcEnc.getSwizzlingByteWidth() != 0) == swizzled) {
+    operands[0] = src;
+    return;
+  }
 
   mlir::Attribute encoding;
   if (swizzled) {
@@ -1098,8 +1130,16 @@ void utlx::createReconcileRegionTypes(TritonOpBuilder &self,
     fn = fn->getParentOfType<mlir::triton::FuncOp>();
   if (!fn)
     return;
-  mlir::FunctionType fnType =
-      mlir::cast<mlir::triton::FuncOp>(fn).getFunctionType();
+  auto funcOp = mlir::cast<mlir::triton::FuncOp>(fn);
+  // The frontend rebuilds the signature from its own argument types once the
+  // returns are known, dropping a descriptor layout that
+  // utlx_match_tensor_desc_layout gave an entry block argument. The block
+  // argument is what the body was built against; follow it.
+  mlir::TypeRange argTypes = funcOp.front().getArgumentTypes();
+  if (argTypes != funcOp.getFunctionType().getInputs())
+    funcOp.setFunctionType(mlir::FunctionType::get(
+        funcOp.getContext(), argTypes, funcOp.getResultTypes()));
+  mlir::FunctionType fnType = funcOp.getFunctionType();
   fn->walk([&](mlir::Operation *op) {
     mlir::Operation *parent = op->getParentOp();
     if (auto yield = mlir::dyn_cast<mlir::scf::YieldOp>(op)) {
