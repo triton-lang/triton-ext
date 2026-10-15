@@ -261,6 +261,10 @@ class padded_shared_layout_encoding(_value_layout, shared_layout_encoding):
 class shared_linear_layout_encoding(_value_layout, shared_layout_encoding):
     """``#ttg.shared_linear``: an explicit offset-bit to tensor-dim map."""
 
+    # Set by from_nv_mma only. Declared, not assigned, so plain instances keep
+    # the fields _value_layout keys equality and mangling on.
+    tile_shape: List[int]
+
     def __init__(self, offset_bases, block_bases=None, alignment=16):
         super().__init__()
         self.offset_bases = [[int(x) for x in b] for b in offset_bases]
