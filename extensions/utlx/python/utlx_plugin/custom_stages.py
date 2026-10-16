@@ -165,6 +165,9 @@ def inspect_stages_hook(self=None,
             pm.enable_debug()
             emuTF32 = False
             passes.ttgpuir.add_coalesce(pm)
+            # uTLX: gfx942/gfx950 vector loads need no base alignment; let
+            # Coalesce's load layouts use the full proven contiguity.
+            passes.plugin.utlx_widen_unaligned_loads(pm, [])
             passes.plugin.utlx_keep_load_layout(pm, [])
             passes.ttgpuir.add_f32_dot_tc(pm, emuTF32)
             passes.ttgpuir.add_remove_layout_conversions(pm)
@@ -233,6 +236,8 @@ def inspect_stages_hook(self=None,
                     knobs.amd.use_buffer_atomics,
                     knobs.amd.buffer_ops_analyze_small_tensor_range,
                 )
+                # uTLX: likewise for the vector width buffer_loads record.
+                passes.plugin.utlx_widen_unaligned_buffer_loads(pm, [])
                 amd.passes.ttgpuir.add_optimize_buffer_op_ptr(pm)
 
             amd.passes.ttgpuir.add_fold_true_cmpi(pm)

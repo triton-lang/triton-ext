@@ -97,7 +97,8 @@ add_library(${TRITON_EXT_NAME} SHARED
     passes/nvidia/LowerWarpBarrierArrive.cpp
     passes/nvidia/OptimizeDescriptorEncoding.cpp
     # Ported passes - AMD
-    passes/amd/FallbackAsyncCopy.cpp)
+    passes/amd/FallbackAsyncCopy.cpp
+    passes/amd/UnalignedVectorLoad.cpp)
 add_dependencies(${TRITON_EXT_NAME} uTLXTableGen)
 
 target_compile_definitions(${TRITON_EXT_NAME} PRIVATE

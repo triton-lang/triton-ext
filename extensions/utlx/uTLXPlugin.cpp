@@ -964,6 +964,24 @@ static void registerFallbackAsyncCopyPassFn() {
   utlx::registerFallbackAsyncCopyPass();
 }
 
+static void addWidenUnalignedLoadsPass(mlir::PassManager *pm,
+                                       const std::vector<std::string> &) {
+  pm->addPass(utlx::createWidenUnalignedLoadsPass());
+}
+
+static void registerWidenUnalignedLoadsPassFn() {
+  utlx::registerWidenUnalignedLoadsPass();
+}
+
+static void addWidenUnalignedBufferLoadsPass(mlir::PassManager *pm,
+                                             const std::vector<std::string> &) {
+  pm->addPass(utlx::createWidenUnalignedBufferLoadsPass());
+}
+
+static void registerWidenUnalignedBufferLoadsPassFn() {
+  utlx::registerWidenUnalignedBufferLoadsPass();
+}
+
 // --- Ported AMD passes ---
 // NOTE: AMD barrier passes are disabled until triton-tlx-core-changes patch
 // is applied. Uncomment when patched triton is available:
@@ -1029,6 +1047,11 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
        addRematDotOperandSlicesPass, registerRematDotOperandSlicesPassFn},
       {"utlx_fallback_async_copy", TRITON_EXT_VERSION, addFallbackAsyncCopyPass,
        registerFallbackAsyncCopyPassFn},
+      {"utlx_widen_unaligned_loads", TRITON_EXT_VERSION,
+       addWidenUnalignedLoadsPass, registerWidenUnalignedLoadsPassFn},
+      {"utlx_widen_unaligned_buffer_loads", TRITON_EXT_VERSION,
+       addWidenUnalignedBufferLoadsPass,
+       registerWidenUnalignedBufferLoadsPassFn},
       // Ported AMD passes (disabled until patched triton is available)
       // {"utlx_amd_lower_barrier_ops", TRITON_EXT_VERSION,
       //  addAMDLowerBarrierOpsPass, registerAMDLowerBarrierOpsPassFn},

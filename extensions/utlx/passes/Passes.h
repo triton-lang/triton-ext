@@ -45,6 +45,12 @@ void registerRematDotOperandSlicesPass();
 std::unique_ptr<mlir::Pass> createFallbackAsyncCopyPass();
 void registerFallbackAsyncCopyPass();
 
+std::unique_ptr<mlir::Pass> createWidenUnalignedLoadsPass();
+void registerWidenUnalignedLoadsPass();
+
+std::unique_ptr<mlir::Pass> createWidenUnalignedBufferLoadsPass();
+void registerWidenUnalignedBufferLoadsPass();
+
 std::unique_ptr<mlir::Pass> createAMDLowerBarrierOpsPass();
 void registerAMDLowerBarrierOpsPass();
 
