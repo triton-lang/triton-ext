@@ -10,6 +10,8 @@
 
 #include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace agpu {
 
@@ -34,20 +36,58 @@ public:
   // A fresh declaration the first time, a variable reference after that.
   msl::Expr *coord(msl::Context &c, const LayoutBasis &lb, int reg) {
     const std::string key = coordKey(lb, reg);
-    const auto it = names_.find(key);
-    if (it != names_.end())
-      return c.var(it->second);
+    for (auto e = epochs_.rbegin(); e != epochs_.rend(); ++e)
+      if (const auto it = e->names.find(key); it != e->names.end())
+        return c.var(it->second);
+    if (epochs_.empty())
+      if (const auto it = names_.find(key); it != names_.end())
+        return c.var(it->second);
 
     msl::Expr *built = coordExpr(c, lb, reg, lane_, warp_, block_);
 
     if (built && built->kind == msl::ExprKind::Literal)
       return built;
 
+    origins_.emplace(key, std::make_pair(lb, reg));
     const msl::Str name = prefix_ + std::to_string(next_++);
-    decls.push_back(
-        c.declStmt(msl::Type::scalar(msl::Scalar::I32), name, built));
-    names_.emplace(key, name);
+    msl::Stmt *decl =
+        c.declStmt(msl::Type::scalar(msl::Scalar::I32), name, built);
+    if (!epochs_.empty()) {
+      epochs_.back().into->push_back(decl);
+      epochs_.back().names.emplace(key, name);
+    } else {
+      decls.push_back(decl);
+      names_.emplace(key, name);
+    }
     return c.var(name);
+  }
+
+  // Metal keeps a kernel-top coordinate live until its last use, across every
+  // loop before it. `lane`/`warp` take values LLVM cannot prove equal to their
+  // old ones, so the coordinates respelled from them are not merged back.
+  void rebase(msl::Context &c, msl::Block &into, msl::Expr *lane,
+              msl::Expr *warp) {
+    into.push_back(c.assign(c.var(lane_), lane));
+    into.push_back(c.assign(c.var(warp_), warp));
+    Epoch e;
+    e.into = &into;
+    for (const auto &[key, origin] : origins_) {
+      msl::Expr *built =
+          coordExpr(c, origin.first, origin.second, lane_, warp_, block_);
+      if (!built || built->kind == msl::ExprKind::Literal)
+        continue;
+      const msl::Str name = prefix_ + std::to_string(next_++);
+      into.push_back(
+          c.declStmt(msl::Type::scalar(msl::Scalar::I32), name, built));
+      e.names.emplace(key, name);
+    }
+    epochs_.push_back(std::move(e));
+  }
+
+  std::size_t depth() const { return epochs_.size(); }
+  void popTo(std::size_t d) {
+    if (d < epochs_.size())
+      epochs_.resize(d);
   }
 
   msl::Block decls;
@@ -55,8 +95,15 @@ public:
   std::size_t distinct() const { return names_.size(); }
 
 private:
+  struct Epoch {
+    msl::Block *into = nullptr;
+    std::map<std::string, msl::Str> names;
+  };
+
   msl::Str lane_, warp_, block_, prefix_;
   std::map<std::string, msl::Str> names_;
+  std::map<std::string, std::pair<LayoutBasis, int>> origins_;
+  std::vector<Epoch> epochs_;
   int next_ = 0;
 };
 

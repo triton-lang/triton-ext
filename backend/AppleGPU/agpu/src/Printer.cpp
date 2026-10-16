@@ -99,6 +99,43 @@ const char *spell(BinOp op) {
   return "+";
 }
 
+const char *spell(UnOp op) {
+  switch (op) {
+  case UnOp::Neg:
+    return "-";
+  case UnOp::Not:
+    return "~";
+  case UnOp::LNot:
+    return "!";
+  case UnOp::PreInc:
+    return "++";
+  }
+  return "-";
+}
+
+// Whether an expression renders starting with `-`.
+static bool leadsWithMinus(const Expr *e) {
+  if (!e)
+    return false;
+  if (e->kind == ExprKind::Literal) {
+    auto *l = static_cast<const Literal *>(e);
+    switch (l->form) {
+    case Literal::Form::Int:
+      return l->intValue < 0;
+    case Literal::Form::Float:
+      return l->floatValue < 0;
+    case Literal::Form::Bool:
+      return false;
+    case Literal::Form::Null:
+      return false;
+    }
+    return false;
+  }
+  if (e->kind == ExprKind::Unary)
+    return static_cast<const Unary *>(e)->op == UnOp::Neg;
+  return false;
+}
+
 // C precedence. Higher binds tighter.
 int precedence(BinOp op) {
   switch (op) {
@@ -134,6 +171,15 @@ int precedence(BinOp op) {
   return 0;
 }
 
+bool needsShiftParens(BinOp parent, const Expr *child) {
+  if (parent != BinOp::Shl && parent != BinOp::Shr)
+    return false;
+  if (!child || child->kind != ExprKind::Binary)
+    return false;
+  const BinOp op = static_cast<const Binary *>(child)->op;
+  return op == BinOp::Add || op == BinOp::Sub;
+}
+
 // Built with `pointerTo` because Metal rejects `device atomic_int` as an
 // automatic variable.
 Type atomicPtr(Scalar s, AddrSpace as) {
@@ -146,6 +192,8 @@ void Printer::printType(const Type &t) {
   // A non-pointer type may still carry an address space: `threadgroup float
   // pool[1024]`.
   if (t.form() != Type::Form::Pointer) {
+    if (t.hasQual(Type::Const))
+      os_ << "const ";
     const char *as = spell(t.addrSpace());
     if (*as)
       os_ << as << " ";
@@ -160,12 +208,21 @@ void Printer::printType(const Type &t) {
     os_ << spell(t.scalarKind()) << t.lanes();
     return;
   case Type::Form::Named:
+  case Type::Form::Matrix:
     os_ << t.namedText();
     return;
   case Type::Form::Pointer: {
+    // Order fixed by the grammar: `volatile device coherent(device) const
+    // float *`.
+    if (t.hasQual(Type::Volatile))
+      os_ << "volatile ";
     const char *as = spell(t.addrSpace());
     if (*as)
       os_ << as << " ";
+    if (t.hasQual(Type::Coherent))
+      os_ << "coherent(" << as << ") ";
+    if (t.hasQual(Type::Const))
+      os_ << "const ";
     printType(t.pointee());
     os_ << " *";
     return;
@@ -243,6 +300,30 @@ void Printer::printLiteral(const Literal *l) {
 
 void Printer::printExpr(const Expr *e) { printExprAt(e, 0); }
 
+// A prefix operator binds looser than the postfix `[]` and `.` applied to it.
+static bool isPrefixForm(const Expr *e) {
+  switch (e->kind) {
+  case ExprKind::Unary:
+  case ExprKind::Deref:
+  case ExprKind::AddrOf:
+    return true;
+  case ExprKind::Cast:
+    return static_cast<const Cast *>(e)->style == Cast::Style::Value;
+  default:
+    return false;
+  }
+}
+
+void Printer::printPostfixBase(const Expr *e) {
+  if (!e || !isPrefixForm(e)) {
+    printExprAt(e, 12);
+    return;
+  }
+  os_ << "(";
+  printExprAt(e, 0);
+  os_ << ")";
+}
+
 // `outerPrec` is the precedence of the surrounding context. Parens appear when
 // the tree would otherwise re-associate.
 void Printer::printExprAt(const Expr *e, int outerPrec) {
@@ -257,16 +338,44 @@ void Printer::printExprAt(const Expr *e, int outerPrec) {
   case ExprKind::Literal:
     printLiteral(static_cast<const Literal *>(e));
     return;
+  case ExprKind::Unary: {
+    auto *u = static_cast<const Unary *>(e);
+    // `--x` would lex as a predecrement.
+    os_ << spell(u->op);
+    if (u->op == UnOp::Neg && leadsWithMinus(u->operand)) {
+      os_ << '(';
+      printExprAt(u->operand, 0);
+      os_ << ')';
+      return;
+    }
+    printExprAt(u->operand, 12);
+    return;
+  }
   case ExprKind::Binary: {
     auto *b = static_cast<const Binary *>(e);
     const int p = precedence(b->op);
     const bool paren = p < outerPrec;
     if (paren)
       os_ << "(";
-    printExprAt(b->lhs, p);
+    const int additive = precedence(BinOp::Add) + 1;
+    printExprAt(b->lhs, needsShiftParens(b->op, b->lhs) ? additive : p);
     os_ << " " << spell(b->op) << " ";
     // +1 or `a - (b - c)` prints as `a - b - c`.
-    printExprAt(b->rhs, p + 1);
+    printExprAt(b->rhs, needsShiftParens(b->op, b->rhs) ? additive : p + 1);
+    if (paren)
+      os_ << ")";
+    return;
+  }
+  case ExprKind::Ternary: {
+    auto *t = static_cast<const Ternary *>(e);
+    const bool paren = outerPrec > 0;
+    if (paren)
+      os_ << "(";
+    printExprAt(t->cond, 2);
+    os_ << " ? ";
+    printExprAt(t->whenTrue, 0);
+    os_ << " : ";
+    printExprAt(t->whenFalse, 0);
     if (paren)
       os_ << ")";
     return;
@@ -304,9 +413,29 @@ void Printer::printExprAt(const Expr *e, int outerPrec) {
     }
     return;
   }
+  case ExprKind::Call: {
+    auto *c = static_cast<const Call *>(e);
+    os_ << c->callee;
+    if (!c->templateArgs.empty())
+      printWrapped(
+          "<",
+          [&] {
+            printList(c->templateArgs,
+                      [&](const Str &a, std::size_t) { os_ << a; });
+          },
+          ">");
+    printWrapped(
+        "(",
+        [&] {
+          printList(c->args,
+                    [&](const Expr *a, std::size_t) { printExprAt(a, 0); });
+        },
+        ")");
+    return;
+  }
   case ExprKind::Subscript: {
     auto *s = static_cast<const Subscript *>(e);
-    printExprAt(s->base, 12);
+    printPostfixBase(s->base);
     os_ << "[";
     printExprAt(s->index, 0);
     os_ << "]";
@@ -314,7 +443,7 @@ void Printer::printExprAt(const Expr *e, int outerPrec) {
   }
   case ExprKind::Member: {
     auto *m = static_cast<const Member *>(e);
-    printExprAt(m->base, 12);
+    printPostfixBase(m->base);
     os_ << "." << m->field;
     return;
   }
@@ -322,6 +451,12 @@ void Printer::printExprAt(const Expr *e, int outerPrec) {
     auto *d = static_cast<const Deref *>(e);
     os_ << "*";
     printExprAt(d->operand, 12);
+    return;
+  }
+  case ExprKind::AddrOf: {
+    auto *a = static_cast<const AddrOf *>(e);
+    os_ << "&";
+    printExprAt(a->operand, 12);
     return;
   }
   }
@@ -336,9 +471,62 @@ void Printer::indent() {
     os_ << "  ";
 }
 
+namespace {
+struct BarrierForm {
+  const char *fn;
+  const char *flags;
+};
+
+BarrierForm barrierForm(Barrier::Scope s) {
+  namespace b = builtin::barrier;
+  namespace mf = builtin::memflags;
+  using S = Barrier::Scope;
+  switch (s) {
+  case S::Simdgroup:
+    return {b::Simdgroup, mf::Threadgroup};
+  case S::Device:
+    return {b::Threadgroup, mf::DeviceAndThreadgroup};
+  case S::Threadgroup:
+    return {b::Threadgroup, mf::Threadgroup};
+  }
+  return {b::Threadgroup, mf::Threadgroup};
+}
+} // namespace
+
+void Printer::flushBarrier() {
+  if (!barrierPending_)
+    return;
+  barrierPending_ = false;
+  const BarrierForm f = barrierForm(pendingScope_);
+  indent();
+  os_ << f.fn << "(" << f.flags << ");\n";
+}
+
 void Printer::printBlock(const Block &b) {
-  for (const Stmt *s : b)
+  for (const Stmt *s : b) {
+    if (s && s->kind == StmtKind::Barrier) {
+      // Adjacent barriers collapse to the widest scope requested. A hard
+      // barrier neither absorbs a pending barrier nor is absorbed by one.
+      auto *bar = static_cast<const Barrier *>(s);
+      if (bar->hard) {
+        flushBarrier();
+        indent();
+        const BarrierForm f = barrierForm(bar->scope);
+        os_ << f.fn << "(" << f.flags << ");\n";
+        continue;
+      }
+      if (barrierPending_) {
+        pendingScope_ = Barrier::widest(pendingScope_, bar->scope);
+      } else {
+        barrierPending_ = true;
+        pendingScope_ = bar->scope;
+      }
+      continue;
+    }
+    flushBarrier();
     printStmt(s);
+  }
+  flushBarrier();
 }
 
 void Printer::printInline(const Stmt *s) {
@@ -371,6 +559,9 @@ void Printer::printHeaderStmt(const Stmt *s) {
     printExpr(a->value);
     return;
   }
+  case StmtKind::ExprStmt:
+    printExpr(static_cast<const ExprStmt *>(s)->expr);
+    return;
   default:
     assert(false && "statement kind cannot be a loop header");
     return;
@@ -380,7 +571,8 @@ void Printer::printHeaderStmt(const Stmt *s) {
 bool isHeaderStmt(const Stmt *s) {
   if (!s)
     return true; // an absent clause is legal: `for (;;)`
-  return s->kind == StmtKind::Decl || s->kind == StmtKind::Assign;
+  return s->kind == StmtKind::Decl || s->kind == StmtKind::Assign ||
+         s->kind == StmtKind::ExprStmt;
 }
 
 void Printer::printBraced(const Block &body) {
@@ -388,6 +580,27 @@ void Printer::printBraced(const Block &body) {
   {
     const Indented in(*this);
     printBlock(body);
+  }
+  indent();
+  os_ << "}";
+}
+
+void Printer::printBracedWithBreak(const Block &body) {
+  os_ << "{\n";
+  {
+    const Indented in(*this);
+    printBlock(body);
+    // Flush first, or a pending barrier lands after the break.
+    flushBarrier();
+    // `break` after a statement that already leaves is unreachable.
+    const bool alreadyLeaves =
+        !body.empty() && (body.back()->kind == StmtKind::Continue ||
+                          body.back()->kind == StmtKind::Break ||
+                          body.back()->kind == StmtKind::Return);
+    if (!alreadyLeaves) {
+      indent();
+      os_ << "break;\n";
+    }
   }
   indent();
   os_ << "}";
@@ -401,6 +614,9 @@ static void printAttribute(std::ostream &os, const Attribute &a) {
   case K::Buffer:
     os << "[[buffer(" << a.value() << ")]]";
     return;
+  case K::MaxTotalThreadsPerThreadgroup:
+    os << "[[max_total_threads_per_threadgroup(" << a.value() << ")]]";
+    return;
   case K::ThreadgroupPositionInGrid:
     os << "[[threadgroup_position_in_grid]]";
     return;
@@ -409,6 +625,15 @@ static void printAttribute(std::ostream &os, const Attribute &a) {
     return;
   case K::ThreadgroupsPerGrid:
     os << "[[threadgroups_per_grid]]";
+    return;
+  case K::ThreadIndexInThreadgroup:
+    os << "[[thread_index_in_threadgroup]]";
+    return;
+  case K::ThreadIndexInSimdgroup:
+    os << "[[thread_index_in_simdgroup]]";
+    return;
+  case K::SimdgroupIndexInThreadgroup:
+    os << "[[simdgroup_index_in_threadgroup]]";
     return;
   }
 }
@@ -432,11 +657,62 @@ void Printer::printStmt(const Stmt *s) {
   switch (s->kind) {
   case StmtKind::Decl:
   case StmtKind::Assign:
+  case StmtKind::ExprStmt:
     indent();
     printHeaderStmt(s);
     os_ << ";\n";
     return;
 
+  case StmtKind::ArrayDecl: {
+    auto *d = static_cast<const ArrayDecl *>(s);
+    indent();
+    printType(d->elem);
+    os_ << " " << d->name << "[" << d->count << "]";
+    if (!d->init.empty()) {
+      printWrapped(
+          " = {",
+          [&] {
+            printList(d->init,
+                      [&](const Expr *e, std::size_t) { printExpr(e); });
+          },
+          "}");
+    }
+    os_ << ";\n";
+    return;
+  }
+  case StmtKind::Return: {
+    auto *r = static_cast<const Return *>(s);
+    indent();
+    os_ << "return";
+    if (!r->structFields.empty()) {
+      os_ << " {";
+      for (std::size_t i = 0; i < r->structFields.size(); ++i) {
+        if (i)
+          os_ << ", ";
+        printExpr(r->structFields[i]);
+      }
+      os_ << "}";
+    } else if (r->value) {
+      os_ << " ";
+      printExpr(r->value);
+    }
+    os_ << ";\n";
+    return;
+  }
+  case StmtKind::Break:
+    indent();
+    os_ << "break;\n";
+    return;
+  case StmtKind::Continue:
+    indent();
+    os_ << "continue;\n";
+    return;
+  case StmtKind::Barrier:
+    // Only reached when a barrier is printed outside printBlock.
+    barrierPending_ = true;
+    pendingScope_ = static_cast<const Barrier *>(s)->scope;
+    flushBarrier();
+    return;
   case StmtKind::If: {
     auto *n = static_cast<const If *>(s);
     indent();
@@ -444,7 +720,10 @@ void Printer::printStmt(const Stmt *s) {
     printExpr(n->cond);
     os_ << ")";
     const bool inlineable = n->thenBody.size() == 1 && !n->hasElse() &&
-                            n->thenBody[0]->kind == StmtKind::Assign;
+                            (n->thenBody[0]->kind == StmtKind::Assign ||
+                             n->thenBody[0]->kind == StmtKind::ExprStmt ||
+                             n->thenBody[0]->kind == StmtKind::Break ||
+                             n->thenBody[0]->kind == StmtKind::Continue);
     if (inlineable) {
       os_ << " ";
       printInline(n->thenBody[0]);
@@ -462,6 +741,76 @@ void Printer::printStmt(const Stmt *s) {
       printBraced(n->elseBody);
     }
     os_ << "\n";
+    return;
+  }
+  case StmtKind::For: {
+    auto *f = static_cast<const For *>(s);
+    if (f->unrollCount > 1) {
+      indent();
+      os_ << "#pragma clang loop unroll_count(" << f->unrollCount << ")\n";
+    }
+    indent();
+    printWrapped(
+        "for (",
+        [&] {
+          printHeaderStmt(f->init);
+          os_ << "; ";
+          // An absent condition is legal: the exit test may live in
+          // the body.
+          if (f->cond)
+            printExpr(f->cond);
+          os_ << "; ";
+          printHeaderStmt(f->step);
+        },
+        ") ");
+    printBraced(f->body);
+    os_ << "\n";
+    return;
+  }
+  case StmtKind::While: {
+    auto *w = static_cast<const While *>(s);
+    indent();
+    os_ << "while (";
+    printExpr(w->cond);
+    os_ << ") ";
+    printBraced(w->body);
+    os_ << "\n";
+    return;
+  }
+  case StmtKind::Scope: {
+    auto *sc = static_cast<const Scope *>(s);
+    indent();
+    printBraced(sc->body);
+    os_ << "\n";
+    return;
+  }
+  case StmtKind::StateMachine: {
+    auto *m = static_cast<const StateMachine *>(s);
+    indent();
+    printType(m->stateType);
+    os_ << " " << m->stateVar << " = " << m->entry << ";\n";
+
+    indent();
+    os_ << "while (" << m->stateVar << " != " << m->exitState << ") {\n";
+    {
+      const Indented in(*this);
+      indent();
+      os_ << "switch (" << m->stateVar << ") {\n";
+      for (const auto &c : m->cases) {
+        indent();
+        os_ << "case " << c.value << ": ";
+        printBracedWithBreak(c.body);
+        os_ << "\n";
+      }
+      // A state with no case would spin forever.
+      indent();
+      os_ << "default: " << m->stateVar << " = " << m->exitState
+          << "; break;\n";
+      indent();
+      os_ << "}\n";
+    }
+    indent();
+    os_ << "}\n";
     return;
   }
   case StmtKind::Function: {
@@ -502,6 +851,22 @@ void Printer::printStmt(const Stmt *s) {
     os_ << " ";
     printBraced(f->body);
     os_ << "\n";
+    return;
+  }
+  case StmtKind::StructDecl: {
+    auto *d = static_cast<const StructDecl *>(s);
+    indent();
+    os_ << "struct " << d->name << " {\n";
+    {
+      const Indented in(*this);
+      for (const auto &f : d->fields) {
+        indent();
+        printType(f.first);
+        os_ << " " << f.second << ";\n";
+      }
+    }
+    indent();
+    os_ << "};\n";
     return;
   }
   }

@@ -11,6 +11,12 @@ namespace agpu {
 enum class FloatKind {
   Ieee,  // f32, f16; the width says which
   Brain, // bf16
+  E4M3,  // fp8 with 4 exponent bits, bias 7
+  E5M2,  // fp8 with 5, bias 15
+  // FNUZ pair: same exponent/mantissa widths, bias one larger, no infinity or
+  // NaN, so the top encoding is a finite maximum.
+  E4B8,  // fp8 with 4 exponent bits, bias 8
+  E5B16, // fp8 with 5, bias 16
 };
 
 // The element type of a value, as the IR gives it.
@@ -26,6 +32,9 @@ struct ElemType {
   // select between two `!tt.ptr<i32>` would truncate a 64-bit address to 32.
   msl::Scalar pointee = msl::Scalar::I32;
   msl::AddrSpace addrSpace = msl::AddrSpace::Device;
+  // MSL forbids dropping the qualifier on assignment, so a copy of a coherent
+  // buffer's address must declare it too.
+  bool coherent = false;
 
   bool isPointer() const { return kind == Kind::Pointer; }
 
@@ -34,7 +43,8 @@ struct ElemType {
         floatKind != o.floatKind)
       return false;
     // The pointee is part of the type only when there is one.
-    return !isPointer() || (pointee == o.pointee && addrSpace == o.addrSpace);
+    return !isPointer() || (pointee == o.pointee && addrSpace == o.addrSpace &&
+                            coherent == o.coherent);
   }
 };
 
@@ -44,10 +54,23 @@ inline int64_t byteWidthOf(const ElemType &e) {
 }
 
 inline ElemType i32() { return {ElemType::Kind::Int, 32, false}; }
+inline ElemType i64() { return {ElemType::Kind::Int, 64, false}; }
 inline ElemType f32() { return {ElemType::Kind::Float, 32, false}; }
 inline ElemType f16() { return {ElemType::Kind::Float, 16, false}; }
 inline ElemType bf16() {
   return {ElemType::Kind::Float, 16, false, FloatKind::Brain};
+}
+inline ElemType e4m3() {
+  return {ElemType::Kind::Float, 8, false, FloatKind::E4M3};
+}
+inline ElemType e5m2() {
+  return {ElemType::Kind::Float, 8, false, FloatKind::E5M2};
+}
+inline ElemType e4b8() {
+  return {ElemType::Kind::Float, 8, false, FloatKind::E4B8};
+}
+inline ElemType e5b16() {
+  return {ElemType::Kind::Float, 8, false, FloatKind::E5B16};
 }
 inline ElemType i1() { return {ElemType::Kind::Bool, 1, false}; }
 
@@ -59,6 +82,14 @@ inline bool narrowsSilently(ElemType e) {
 }
 
 // The type this actually becomes, which for f64 is not the type asked for.
+inline ElemType narrowedTo(ElemType e) {
+  if (!narrowsSilently(e))
+    return e;
+  ElemType out = e;
+  out.bits = 32;
+  return out;
+}
+
 inline ElemType f64() { return {ElemType::Kind::Float, 64, false}; }
 
 // The MSL spelling of an element type.
@@ -76,7 +107,8 @@ inline msl::Type mslTypeOf(ElemType e) {
     // 64 lands on F32: Metal has no double.
     return msl::Type::scalar(e.bits == 16 ? S::F16 : S::F32);
   case ElemType::Kind::Pointer:
-    return msl::Type::scalar(e.pointee).pointerTo(e.addrSpace);
+    return msl::Type::scalar(e.pointee).pointerTo(
+        e.addrSpace, e.coherent ? msl::Type::Coherent : msl::Type::QualNone);
   case ElemType::Kind::Int:
     break;
   }
