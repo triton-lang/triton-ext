@@ -37,6 +37,10 @@
 #                PATH, ~/miniconda3/lib, ~/miniconda/lib, ~/anaconda3/lib and
 #                /packages/*/conda/lib, and uses the first that works. Only
 #                libstdc++ itself goes on LD_LIBRARY_PATH, not its neighbours.
+#                If none works, the script builds against the almalinux-x64
+#                LLVM instead, which runs on an older libstdc++.
+#   TRITON_LLVM_SYSTEM_SUFFIX  which prebuilt LLVM Triton's setup downloads,
+#                e.g. almalinux-x64 (default: Triton's choice for the host)
 
 set -euo pipefail
 
@@ -90,7 +94,11 @@ PY=$VENV/bin/python
 HEADERS=$TRITON/python/triton/include
 # The LLVM build the Triton release pins, as Triton's setup names it.
 LLVM_NAME=$(sed -nE 's/.*"llvm_hash": *"([0-9a-f]{8}).*/llvm-\1/p' "$TRITON/cmake/llvm-info.json")
-find_llvm() { ls -d "$TRITON_HOME/.triton/llvm/$LLVM_NAME"-* 2>/dev/null | head -1; }
+# Prints nothing, and succeeds, before Triton's setup has downloaded it.
+find_llvm() {
+    ls -d "$TRITON_HOME/.triton/llvm/$LLVM_NAME-${TRITON_LLVM_SYSTEM_SUFFIX:-}"* \
+        2>/dev/null | head -1 || true
+}
 # Both builds run LLVM's mlir-tblgen, which may need a newer libstdc++ than
 # the system's. Find one that works and expose just that library: the dir it
 # lives in (a conda lib/, say) holds plenty that must not shadow system libs.
@@ -120,12 +128,32 @@ pick_libstdcxx() {
     rm -rf "$shim"
     return 1
 }
+# Make Triton's setup use the LLVM found to work, rather than download the one
+# it would pick for this host. Its directory is <LLVM_NAME>-<suffix>-<build>.
+pin_llvm() {
+    local suffix=${LLVM_INSTALL_DIR##*/}
+    suffix=${suffix#"$LLVM_NAME"-}
+    export TRITON_LLVM_SYSTEM_SUFFIX=${suffix%-*}
+}
 check_llvm_tools() {
     LLVM_INSTALL_DIR=$(find_llvm)
     # Not downloaded yet: Triton's setup fetches it, and we check afterwards.
     [ -n "$LLVM_INSTALL_DIR" ] || return 0
-    tblgen_runs "$LLVM_LD_PATH" && return 0
-    pick_libstdcxx && return 0
+    if tblgen_runs "$LLVM_LD_PATH" || pick_libstdcxx; then
+        pin_llvm
+        return 0
+    fi
+    # The manylinux (almalinux) build of the same LLVM, which PyPI's Triton
+    # wheels use too, needs no newer libstdc++. Triton's setup downloads it.
+    if [ -z "${TRITON_LLVM_SYSTEM_SUFFIX:-}" ] && [ "$(uname -m)" = x86_64 ]; then
+        echo "$LLVM_INSTALL_DIR/bin/mlir-tblgen does not run; using the almalinux-x64 LLVM"
+        export TRITON_LLVM_SYSTEM_SUFFIX=almalinux-x64
+        # A build configured against the unusable LLVM cannot have finished,
+        # but its CMake cache would keep pointing at that LLVM's tools.
+        rm -rf "$TRITON"/build
+        check_llvm_tools
+        return
+    fi
     LD_LIBRARY_PATH=$LLVM_LD_PATH "$LLVM_INSTALL_DIR/bin/mlir-tblgen" --version || true
     die "$LLVM_INSTALL_DIR/bin/mlir-tblgen does not run and no newer libstdc++ was found; set LIBSTDCXX_DIR to a dir with a libstdc++.so.6 that has GLIBCXX_3.4.30"
 }
