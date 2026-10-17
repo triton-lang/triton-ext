@@ -38,6 +38,18 @@
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "llvm/Support/MathExtras.h"
 
+#ifdef UTLX_TRITON_ROCM
+// triton-rocm (Triton release/3.8) predates getOrderFromContiguity. Its
+// Coalesce orders by argSort instead, which breaks contiguity ties toward the
+// lower dimension, so use that to match the layouts it picks.
+namespace mlir {
+static SmallVector<unsigned, 4>
+getOrderFromContiguity(const SmallVector<int64_t> &arr) {
+  return argSort(arr);
+}
+} // namespace mlir
+#endif
+
 namespace tt = mlir::triton;
 namespace ttg = mlir::triton::gpu;
 

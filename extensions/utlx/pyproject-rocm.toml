@@ -1,0 +1,46 @@
+# triton-utlx-rocm: the uTLX plugin built against triton-rocm. Identical to
+# pyproject.toml except for the name and the Triton dependency;
+# publish-utlx-rocm.yml copies it over pyproject.toml before building.
+
+[build-system]
+requires = ["scikit-build-core>=0.10", "cmake>=3.20", "ninja"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "triton-utlx-rocm"
+# Tracks the Triton release this plugin targets; `.postN` for a uTLX-only fix
+# against an unchanged Triton. 3.8.0 itself is taken (and yanked) on PyPI.
+version = "3.8.0.post1"
+description = "uTLX: Triton Language Extensions distributed as a Plugin"
+# The PyPI project page. README.md is the developer guide; this one is for
+# wheel users and names the Triton release line, which publish-utlx.yml checks.
+readme = {file = "PYPI_README.md", content-type = "text/markdown"}
+license = {text = "MIT"}
+requires-python = ">=3.9"
+# libutlx.so is built against one Triton release line and its version check
+# enforces that. Without the bound, pip will happily pair this wheel with a
+# Triton from another line, which corrupts the heap rather than failing cleanly.
+dependencies = ["triton-rocm~=3.8.0"]
+
+# Loaded by pytest wherever uTLX is installed, so fbtriton's TLX op tests run
+# against the op library and test helpers of their own checkout (see
+# python/_utlx_pytest.py).
+[project.entry-points.pytest11]
+utlx = "_utlx_pytest"
+
+[tool.triton-ext]
+status = "experimental"
+enabled = false
+
+[tool.scikit-build]
+cmake.version = ">=3.20"
+cmake.build-type = "Release"
+# Keep caches out of the wheel.
+wheel.exclude = ["**/__pycache__/**", "**/*.pyc"]
+
+# Bundle the three pure-Python packages. CMake `install()`s libutlx.so into
+# utlx_plugin/, plus the startup .pth pair at the wheel root (see CMakeLists.txt).
+[tool.scikit-build.wheel.packages]
+utlx_plugin = "python/utlx_plugin"
+utlx = "python/utlx"
+tlx = "tlx/language/tlx"

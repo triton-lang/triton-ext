@@ -177,6 +177,18 @@ if(EXISTS "${_utlx_ttng_ops_td}")
     endif()
 endif()
 
+# The triton-utlx-rocm package builds against triton-rocm rather than Triton
+# main; UTLX_TRITON_ROCM guards the source changes that needs. Direct CMake
+# builds can pass -DUTLX_TRITON_ROCM=ON.
+option(UTLX_TRITON_ROCM "Build against triton-rocm (triton-utlx-rocm)" OFF)
+if(SKBUILD_PROJECT_NAME STREQUAL "triton_utlx_rocm")
+    set(UTLX_TRITON_ROCM ON)
+endif()
+if(UTLX_TRITON_ROCM)
+    message(STATUS "uTLX: building against triton-rocm — enabling UTLX_TRITON_ROCM")
+    target_compile_definitions(${TRITON_EXT_NAME} PRIVATE UTLX_TRITON_ROCM)
+endif()
+
 # Shared compile flags + link-only-against-libtriton (single source of truth).
 target_link_libraries(${TRITON_EXT_NAME} PRIVATE triton_ext::plugin)
 # uTLX additionally disables C++ exceptions.
