@@ -12,8 +12,9 @@ from triton.experimental.gluon import language as gl
 
 from conftest import DEVICE, is_hip_cdna4
 
-pytestmark = pytest.mark.skipif(not is_hip_cdna4(),
-                                reason="the Gluon AMD buffer ops used here need gfx950")
+pytestmark = pytest.mark.skipif(
+    not is_hip_cdna4(),
+    reason="the Gluon AMD buffer ops used here need gfx950")
 
 
 @gluon.jit
