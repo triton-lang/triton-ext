@@ -16,6 +16,8 @@ namespace mlir::triton::applegpu::bridge {
 // the test and the registration read one name.
 inline constexpr std::string_view kLoad = "tt.load";
 inline constexpr std::string_view kGetProgramId = "tt.get_program_id";
+inline constexpr std::string_view kExpandDims = "tt.expand_dims";
+inline constexpr std::string_view kBroadcast = "tt.broadcast";
 
 // ── asking a table ────────────────────────────────────────────────────────
 
