@@ -3,6 +3,8 @@
 #ifndef AGPU_CORE_CONTAINERS_H
 #define AGPU_CORE_CONTAINERS_H
 
+#include "agpu/core/SmallVector.h"
+
 #include <map>
 #include <string>
 #include <string_view>
@@ -11,7 +13,8 @@
 
 namespace agpu::core {
 
-template <class T, unsigned N = 8> using SmallVec = std::vector<T>;
+// `N` elements live inline: an AST vector is short and there are many.
+template <class T, unsigned N = 8> using SmallVec = SmallVector<T, N>;
 
 // Membership only: nothing iterates a `PtrSet`, so it need not be ordered.
 
@@ -24,6 +27,8 @@ template <class T> using PtrSet = std::unordered_set<T>;
 } // namespace agpu::core
 
 namespace agpu::msl {
+
+using core::SmallVector;
 
 template <class T, unsigned N = 8> using SmallVec = core::SmallVec<T, N>;
 

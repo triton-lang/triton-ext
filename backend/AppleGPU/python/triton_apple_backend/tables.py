@@ -1,9 +1,8 @@
 """Kernel-argument type tables.
 
-A scalar type must appear in both, so a type in one and not the other is a
-launch-time failure. Only SCALAR_PACK_INFO describes the packed buffer;
-TY_TO_CPP answers Triton's `map_python_to_cpp_type`, whose widths are its own
-(`i1` is an `int32_t` there, one byte here).
+A scalar type must appear in both: ty_to_cpp spells the launcher's parameter
+and _SCALAR_PACK_INFO says how to pack it, so a type in one and not the other
+is a launch-time failure.
 """
 
 TY_TO_CPP = {
@@ -40,7 +39,7 @@ SCALAR_PACK_INFO = {
     # size/alignment.
     "bf16": ("e", 2, 2),
     "fp32": ("f", 4, 4),
-    # MSL has no double: the emitter reads fp64 args as a 4-byte float but
-    # still advances the layout cursor by 8.
-    "fp64": ("f", 8, 8),
+    # MSL has no double, so the emitter reads the two words back and narrows
+    # them itself. The value is written whole.
+    "fp64": ("d", 8, 8),
 }
