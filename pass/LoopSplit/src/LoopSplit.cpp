@@ -32,16 +32,30 @@ struct CmpType {
 
 /// @brief Map to quickly determine if a supported predicate is present.
 ///        If present, quickly query characteristics.
+/// Only signed predicates: the split point is clamped to the (signed) loop
+/// bounds, which is not valid for an unsigned comparison.
 static DenseMap<arith::CmpIPredicate, CmpType> CmpTypeMap = {
     {arith::CmpIPredicate::sge, {true, true, "sge"}},
     {arith::CmpIPredicate::sgt, {true, false, "sgt"}},
     {arith::CmpIPredicate::sle, {false, true, "sle"}},
     {arith::CmpIPredicate::slt, {false, false, "slt"}},
-    {arith::CmpIPredicate::uge, {true, true, "uge"}},
-    {arith::CmpIPredicate::ugt, {true, false, "ugt"}},
-    {arith::CmpIPredicate::ule, {false, true, "ule"}},
-    {arith::CmpIPredicate::ult, {false, false, "ult"}},
 };
+
+/// @brief Predicate with its operands swapped, e.g. `a < b` <=> `b > a`.
+static arith::CmpIPredicate swapPredicate(arith::CmpIPredicate predicate) {
+  switch (predicate) {
+  case arith::CmpIPredicate::sge:
+    return arith::CmpIPredicate::sle;
+  case arith::CmpIPredicate::sgt:
+    return arith::CmpIPredicate::slt;
+  case arith::CmpIPredicate::sle:
+    return arith::CmpIPredicate::sge;
+  case arith::CmpIPredicate::slt:
+    return arith::CmpIPredicate::sgt;
+  default:
+    return predicate;
+  }
+}
 
 /// @brief  Capture the cmpi op and canonicalize (induction var on LHS).
 class CanonCmp {
@@ -49,7 +63,7 @@ public:
   CanonCmp(arith::CmpIOp cmp, OpOperand &iter) : predicate(cmp.getPredicate()) {
     if (isValid()) {
       if (iter.getOperandNumber() == 1)
-        predicate = arith::invertPredicate(predicate);
+        predicate = swapPredicate(predicate);
       comparand = cmp.getOperand(iter.getOperandNumber() ^ 1);
     }
   }
@@ -153,24 +167,32 @@ LogicalResult LoopBisect::bisect() {
     auto loc = cmp->getLoc();
     OpBuilder b(forOp);
 
+    // midp is the first induction value at which the comparison flips:
+    // `iv < m` and `iv >= m` flip at m, `iv <= m` and `iv > m` at m + 1.
+    // When m >= hi there is no flip inside the loop, so use hi; this also
+    // avoids overflowing m + 1.
     Value midp = ccmp.getComparand();
-    if (ccmp.isEqual()) {
-      // midp += cmp.isGreater() ? -step : step
-      auto incr = arith::ConstantIntOp::create(
-          b, loc, ccmp.isGreater() ? -stepVal : stepVal, 32);
-      midp = arith::AddIOp::create(b, loc, midp, incr);
+    if (ccmp.isEqual() != ccmp.isGreater()) {
+      Value one = arith::ConstantIntOp::create(b, loc, midp.getType(), 1);
+      Value next = arith::AddIOp::create(b, loc, midp, one);
+      Value pastEnd =
+          arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sge, midp, hi);
+      midp = arith::SelectOp::create(b, loc, pastEnd, hi, next);
     }
+    // Keep midp within [lo, hi] so that neither loop runs iterations the
+    // original loop did not.
+    midp = arith::MaxSIOp::create(b, loc, midp, lo);
+    midp = arith::MinSIOp::create(b, loc, midp, hi);
 
-    /// Handle midp not a multiple of step
+    /// Handle midp not a multiple of step: round it up to the next iteration,
+    /// midp = lo + ceil((midp - lo) / step) * step, which may pass hi.
     if (stepVal != 1) {
-      // mid_diff = midp - lo
-      // mid_diff += step - mid_diff % step
-      // midp = lo + mid_diff
-      Value mid_diff = arith::SubIOp::create(b, loc, midp, lo);
-      Value rem = arith::RemUIOp::create(b, loc, mid_diff, forOp.getStep());
-      Value upd = arith::SubIOp::create(b, loc, forOp.getStep(), rem);
-      mid_diff = arith::AddIOp::create(b, loc, mid_diff, upd);
-      midp = arith::AddIOp::create(b, loc, lo, mid_diff);
+      Value step = forOp.getStep();
+      Value diff = arith::SubIOp::create(b, loc, midp, lo);
+      Value iters = arith::CeilDivSIOp::create(b, loc, diff, step);
+      diff = arith::MulIOp::create(b, loc, iters, step);
+      midp = arith::AddIOp::create(b, loc, lo, diff);
+      midp = arith::MinSIOp::create(b, loc, midp, hi);
     }
 
     /// TODO(sjw): update upstream peelForLoop
