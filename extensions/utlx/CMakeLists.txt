@@ -177,6 +177,19 @@ if(EXISTS "${_utlx_ttng_ops_td}")
     endif()
 endif()
 
+# Likewise, Triton main removed CatOp (triton-lang/triton#11293); release/3.8,
+# upstream's and ROCm's, still emits tt.cat for tl.cat(..., can_reorder=True).
+set(_utlx_tt_ops_td
+    "${TRITON_WHEEL_INCLUDE_DIR}/triton/Dialect/Triton/IR/TritonOps.td")
+if(EXISTS "${_utlx_tt_ops_td}")
+    file(READ "${_utlx_tt_ops_td}" _utlx_tt_ops_td_content)
+    string(FIND "${_utlx_tt_ops_td_content}" "def TT_CatOp" _utlx_cat_op_pos)
+    if(NOT _utlx_cat_op_pos EQUAL -1)
+        message(STATUS "uTLX: TT_CatOp found — enabling UTLX_TRITON_HAS_CAT_OP")
+        target_compile_definitions(${TRITON_EXT_NAME} PRIVATE UTLX_TRITON_HAS_CAT_OP)
+    endif()
+endif()
+
 # The triton-utlx-rocm package builds against triton-rocm rather than Triton
 # main; UTLX_TRITON_ROCM guards the source changes that needs. Direct CMake
 # builds can pass -DUTLX_TRITON_ROCM=ON.

@@ -22,6 +22,7 @@
 #include "tlx/dialect/include/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
+#include "triton/Dialect/Triton/Transforms/FunctionTypeConversion.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/Transforms/TritonGPUConversion.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
@@ -344,9 +345,53 @@ struct TritonDotPattern : public OpConversionPattern<triton::DotOp> {
   }
 };
 
-// TritonCatPattern removed: triton::CatOp no longer exists in Triton
-// (the pinned commit in ci/triton-hash.txt has no TT_CatOp), so the
-// pattern could not compile. Nothing to convert -- drop it.
+// Triton main removed triton::CatOp (triton-lang/triton#11293); release/3.8
+// still emits it for tl.cat. CMake defines UTLX_TRITON_HAS_CAT_OP when it does.
+#ifdef UTLX_TRITON_HAS_CAT_OP
+struct TritonCatPattern : public OpConversionPattern<triton::CatOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::CatOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // The cat op satisfy two conditions:
+    // 1. output.numel = lhs.numel + rhs.numel
+    // 2. output.total_elems_per_thread =
+    // next_power_of_2(lhs.total_elems_per_thread + rhs.total_elems_per_thread)
+    // For now, this behaves like generic, but this
+    // will evolve when we add support for `can_reorder=False`.
+    auto retType = cast<RankedTensorType>(
+        this->getTypeConverter()->convertType(op.getType()));
+    auto retEncoding =
+        cast<triton::gpu::BlockedEncodingAttr>(retType.getEncoding());
+    auto lhsType = adaptor.getLhs().getType();
+    auto rhsType = adaptor.getRhs().getType();
+    auto lhsTotalElemsPerThread = triton::gpu::getTotalElemsPerThread(lhsType);
+    auto rhsTotalElemsPerThread = triton::gpu::getTotalElemsPerThread(rhsType);
+    auto retTotalElemsPerThread = triton::gpu::getTotalElemsPerThread(retType);
+    auto retOrder = retEncoding.getOrder();
+    auto retThreadsPerWarp = retEncoding.getThreadsPerWarp();
+    auto retWarpsPerCTA = retEncoding.getWarpsPerCTA();
+    // Get new retSizePerThread if ret elems per thread is not enough.
+    // We have to round it up to the next power of 2 due to triton's tensor size
+    // constraint.
+    auto newRetTotalElemsPerThread =
+        nextPowOf2(lhsTotalElemsPerThread + rhsTotalElemsPerThread);
+    auto newRetSizePerThread = llvm::to_vector(retEncoding.getSizePerThread());
+    newRetSizePerThread[retOrder[0]] *=
+        newRetTotalElemsPerThread / retTotalElemsPerThread;
+    triton::gpu::BlockedEncodingAttr newRetEncoding =
+        triton::gpu::BlockedEncodingAttr::get(
+            getContext(), newRetSizePerThread, retThreadsPerWarp,
+            retWarpsPerCTA, retOrder, retEncoding.getCGALayout());
+    auto newRetType = retType.cloneWithEncoding(newRetEncoding);
+    addNamedAttrs(rewriter.replaceOpWithNewOp<triton::CatOp>(
+                      op, newRetType, adaptor.getOperands()),
+                  adaptor.getAttributes());
+    return success();
+  }
+};
+#endif
 
 struct TritonJoinOpPattern : public OpConversionPattern<triton::JoinOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -525,29 +570,6 @@ struct TritonMapElementwisePattern
   }
 };
 
-class TritonFuncOpPattern : public OpConversionPattern<triton::FuncOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(triton::FuncOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto converter = getTypeConverter();
-    TypeConverter::SignatureConversion result(op.getNumArguments());
-    auto newOp = rewriter.replaceOpWithNewOp<triton::FuncOp>(
-        op, op.getName(), op.getFunctionType());
-    addNamedAttrs(newOp, adaptor.getAttributes());
-    rewriter.inlineRegionBefore(op.getBody(), newOp.getBody(),
-                                newOp.getBody().end());
-    // Convert just the entry block. The remaining unstructured control flow is
-    // converted by br patterns.
-    if (!newOp.getBody().empty())
-      rewriter.applySignatureConversion(&newOp.getBody().front(), result,
-                                        converter);
-    return success();
-  }
-};
-
 class TritonCallOpPattern : public OpConversionPattern<triton::CallOp> {
 public:
   using OpConversionPattern::OpConversionPattern;
@@ -645,9 +667,6 @@ void populateTritonPatterns(TritonGPUTypeConverter &typeConverter,
       GenericOpPattern<triton::DescriptorReduceOp>,
       // this assumes the right layout will be set later for dot scaled.
       GenericOpPattern<triton::DotScaledOp>,
-      GenericOpPattern<triton::CallOp>,
-      GenericOpPattern<ReturnOp>,
-      TritonFuncOpPattern,
       // TLX plugin additions: legalize ttg ops that may appear with
       // unencoded tensor types from plugin custom ops at TTIR level.
       GenericOpPattern<triton::gpu::AsyncCopyGlobalToLocalOp>,
@@ -655,6 +674,9 @@ void populateTritonPatterns(TritonGPUTypeConverter &typeConverter,
       GenericOpPattern<triton::gpu::LocalLoadOp>
       // clang-format on
       >(typeConverter, context);
+#ifdef UTLX_TRITON_HAS_CAT_OP
+  patterns.insert<TritonCatPattern>(typeConverter, context);
+#endif
 }
 
 //
@@ -953,6 +975,8 @@ public:
     RewritePatternSet patterns(context);
     populateArithPatternsAndLegality(typeConverter, patterns, convTarget);
     populateMathPatternsAndLegality(typeConverter, patterns, convTarget);
+    FuncArgRenamer renamer;
+    populateFunctionTypeConversions(typeConverter, renamer, patterns);
     populateTritonPatterns(typeConverter, patterns, numCTAs);
     // TODO: can we use
     //    mlir::scf::populateSCFStructurealTypeConversionsAndLegality(...) here?
