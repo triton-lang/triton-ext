@@ -190,6 +190,21 @@ if(EXISTS "${_utlx_tt_ops_td}")
     endif()
 endif()
 
+# Triton 3.9 replaced the cache/evict enums of LoadOp and
+# AsyncCopyGlobalToLocalOp with one cachePolicy attr. Triton main reports 3.9
+# too, so unlike the changes above this one can be gated on TRITON_VERSION.
+# UTLX_TRITON_GE_3_9 is set for Triton 3.9 and newer.
+set(_utlx_triton_version_h "${TRITON_WHEEL_INCLUDE_DIR}/triton/Version.h")
+file(STRINGS "${_utlx_triton_version_h}" _utlx_triton_version_line
+     REGEX "#define TRITON_VERSION ")
+if(NOT _utlx_triton_version_line MATCHES "\"([0-9]+\\.[0-9]+)")
+    message(FATAL_ERROR "uTLX: no TRITON_VERSION in ${_utlx_triton_version_h}")
+endif()
+if(CMAKE_MATCH_1 VERSION_GREATER_EQUAL 3.9)
+    message(STATUS "uTLX: Triton ${CMAKE_MATCH_1} — enabling UTLX_TRITON_GE_3_9")
+    target_compile_definitions(${TRITON_EXT_NAME} PRIVATE UTLX_TRITON_GE_3_9)
+endif()
+
 # The triton-utlx-rocm package builds against triton-rocm rather than Triton
 # main; UTLX_TRITON_ROCM guards the source changes that needs. Direct CMake
 # builds can pass -DUTLX_TRITON_ROCM=ON.

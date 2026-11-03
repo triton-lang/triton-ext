@@ -38,10 +38,11 @@
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "llvm/Support/MathExtras.h"
 
-#ifdef UTLX_TRITON_ROCM
-// triton-rocm (Triton release/3.8) predates getOrderFromContiguity. Its
+#if defined(UTLX_TRITON_ROCM) && !defined(UTLX_TRITON_GE_3_9)
+// triton-rocm 3.8 (Triton release/3.8) predates getOrderFromContiguity. Its
 // Coalesce orders by argSort instead, which breaks contiguity ties toward the
-// lower dimension, so use that to match the layouts it picks.
+// lower dimension, so use that to match the layouts it picks. triton-rocm 3.9
+// has getOrderFromContiguity and its Coalesce uses it.
 namespace mlir {
 static SmallVector<unsigned, 4>
 getOrderFromContiguity(const SmallVector<int64_t> &arr) {
