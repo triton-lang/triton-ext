@@ -96,9 +96,18 @@ void lowerThroughRegisters(ttg::AsyncCopyGlobalToLocalOp copy) {
     other = mlir::arith::ConstantOp::create(b, loc, valueTy,
                                             b.getZeroAttr(valueTy));
   }
+  // Triton 3.9 replaced LoadOp's and AsyncCopyGlobalToLocalOp's cache/evict
+  // enums with one cachePolicy attr, while release/3.8 still has the enums
+  // (UTLX_TRITON_GE_3_9 is set by CMake for Triton 3.9 and newer).
+#ifdef UTLX_TRITON_GE_3_9
+  auto load =
+      tt::LoadOp::create(b, loc, copy.getSrc(), mask, other,
+                         copy.getCachePolicyAttr(), copy.getIsVolatile());
+#else
   auto load =
       tt::LoadOp::create(b, loc, copy.getSrc(), mask, other, copy.getCache(),
                          copy.getEvict(), copy.getIsVolatile());
+#endif
   ttg::LocalStoreOp::create(b, loc, load.getResult(), copy.getResult());
 
   // Detach the token. Commit groups and waits take variadic tokens, so the

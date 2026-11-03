@@ -1,4 +1,4 @@
-# uTLX — Triton Language Extensions (Plugin), Triton 3.8 build
+# uTLX — Triton Language Extensions (Plugin), Triton 3.9 build
 
 `triton-utlx` ships a Triton plugin (`libutlx.so`) plus the `utlx` Python DSL
 exposing the TLX dialect (async loads, warp-group MMA, shared/tensor-memory

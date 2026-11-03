@@ -176,6 +176,18 @@ def _triton_version():
     return getattr(triton, "__version__", "unknown")
 
 
+def triton_at_least(major, minor):
+    """Whether the running Triton is release ``major.minor`` or newer.
+
+    Local version suffixes (``+git...``, ``.rocm...``) are ignored, so the
+    ROCm builds count as the release they are cut from.
+    """
+    import re
+
+    match = re.match(r"(\d+)\.(\d+)", _triton_version())
+    return bool(match) and tuple(map(int, match.groups())) >= (major, minor)
+
+
 def dot_precheck(self,
                  lhs,
                  rhs,

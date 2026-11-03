@@ -15,7 +15,7 @@ name: Publish triton-utlx-rocm
 # The packaged name triton-utlx-rocm makes uTLX's CMake define
 # UTLX_TRITON_ROCM, which selects the triton-rocm variants of its sources.
 #
-# triton-rocm 3.8 is not on PyPI; it is published on PyTorch's ROCm index. The
+# triton-rocm is not on PyPI; it is published on PyTorch's ROCm index. The
 # smoke test installs the wheel against triton-rocm from there, as users will,
 # and checks that every symbol the plugin needs resolves in that libtriton.
 #
@@ -34,14 +34,14 @@ on:
     inputs:
       version:
         description: >-
-          Version to publish, e.g. 3.8.0.post3. Must be the pinned triton-rocm
+          Version to publish, e.g. 3.9.0.post1. Must be the pinned triton-rocm
           release or a .postN of it; PyPI never accepts a version twice.
         type: string
         required: true
       triton_ref:
         description: Branch, tag or commit of ROCm/triton to build against.
         type: string
-        default: release/internal/3.8.x
+        default: release/internal/3.9.x
       publish_to:
         description: Package index to publish to (`none` only builds and tests).
         type: choice
@@ -129,19 +129,23 @@ jobs:
 
       - name: Build Triton with extension headers
         # Setup downloads the LLVM build Triton pins (the almalinux one, given
-        # this image's glibc) into $TRITON_HOME/.triton/llvm. Setup does not
-        # install the headers, so install CMake's `headers` component and move
-        # it into the package dir, where triton-ext's CMake looks for them. The
-        # component copies python/ to include/python, so installing straight
-        # into python/triton would recurse into its own output.
+        # this image's glibc) into $TRITON_HOME/.triton/llvm. From 3.9, with
+        # TRITON_EXT_ENABLED, setup installs the headers into the package dir,
+        # where triton-ext's CMake looks for them (its wheel_headers
+        # component). Earlier setups do not, so install CMake's `headers`
+        # component and move it there instead. That component copies python/
+        # to include/python, so installing straight into python/triton would
+        # recurse into its own output.
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r triton/python/requirements.txt
           cd triton
           TRITON_WHEEL_NAME=triton-rocm TRITON_EXT_ENABLED=1 MAX_JOBS=$(nproc) \
             python -m pip install -e . --no-build-isolation -v
-          cmake --install build/cmake.* --component headers --prefix /tmp/triton-headers > /dev/null
-          mv /tmp/triton-headers/include python/triton/include
+          if [ ! -d python/triton/include/triton ]; then
+            cmake --install build/cmake.* --component headers --prefix /tmp/triton-headers > /dev/null
+            mv /tmp/triton-headers/include python/triton/include
+          fi
           test -d python/triton/include/triton
 
       - name: Build the wheel
@@ -216,9 +220,18 @@ jobs:
               out = subprocess.check_output(["nm", "-D", flag, path], text=True)
               return {line.split()[-1] for line in out.splitlines() if line.strip()}
 
-          # Unversioned undefined symbols are the ones libtriton must provide.
-          needed = {s for s in syms(plugin, "--undefined-only") if "@" not in s}
-          missing = needed - syms(libtriton, "--defined-only")
+          # libtriton must provide every undefined symbol except those versioned
+          # for libc and libstdc++. They are unversioned against an older
+          # libtriton and @TRITON against one that versions its exports, as
+          # ROCm/triton 3.9's does; compare names without the version.
+          def name(sym):
+              return sym.partition("@")[0]
+
+          def from_system(sym):
+              return sym.partition("@")[2].lstrip("@").startswith(("GLIBC", "CXXABI", "GCC"))
+
+          needed = {name(s) for s in syms(plugin, "--undefined-only") if not from_system(s)}
+          missing = needed - {name(s) for s in syms(libtriton, "--defined-only")}
           missing -= {"__gmon_start__", "_ITM_registerTMCloneTable", "_ITM_deregisterTMCloneTable"}
           assert not missing, f"{len(missing)} symbols missing from libtriton: {sorted(missing)[:10]}"
           ctypes.CDLL(plugin)

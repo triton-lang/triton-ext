@@ -13,6 +13,7 @@ import triton.language as tlang
 import triton.language.core as tl
 from triton.runtime.jit import jit
 
+from ._compat import triton_at_least
 from .types import _value_layout, layout_encoding
 
 
@@ -363,6 +364,21 @@ class swizzled_layout:
 # explicitly buys nothing over letting the backend do it -- and this way they
 # work unchanged on non-AMD targets.
 
+_TRITON_3_9 = triton_at_least(3, 9)
+
+
+def _semantic_load(load, ptr, mask, other, cache):
+    """Call a ``TritonSemantic.load`` under either Triton's signature.
+
+    Triton 3.9 folds the cache modifier and eviction policy into one
+    cache-policy argument and drops boundary_check/padding_option, which only
+    block pointers used.
+    """
+    if _TRITON_3_9:
+        return load(ptr, mask, other,
+                    tl._normalize_cache_policy(None, cache, None), False)
+    return load(ptr, mask, other, (), "", cache, "", False)
+
 
 @tl.builtin
 def _load_keeping_layout(ptr, mask, other, cache, _semantic=None):
@@ -382,7 +398,7 @@ def _load_keeping_layout(ptr, mask, other, cache, _semantic=None):
         mask, other = _uw(mask), _uw(other)
         mask = None if mask is None else _semantic.to_tensor(mask)
         other = None if other is None else _semantic.to_tensor(other)
-        return _semantic.load(ptr, mask, other, (), "", cache, "", False)
+        return _semantic_load(_semantic.load, ptr, mask, other, cache)
 
     def like_ptr(v):
         v = _uw(v)
@@ -393,9 +409,9 @@ def _load_keeping_layout(ptr, mask, other, cache, _semantic=None):
             v = _semantic.splat(v, list(ptr.type.shape))
         return v if _has_layout(v) else _require(_semantic, v, ptr)
 
-    out = super(UTLXSemantic, _semantic).load(ptr, like_ptr(mask),
-                                              like_ptr(other), (), "", cache,
-                                              "", False)
+    out = _semantic_load(
+        super(UTLXSemantic, _semantic).load, ptr, like_ptr(mask),
+        like_ptr(other), cache)
     # Coalesce would re-lay the tensor-of-pointer load out; the
     # utlx_keep_load_layout pass restores this layout afterwards.
     out.handle.set_attr("utlx.keep_layout", _semantic.builder.get_unit_attr())
