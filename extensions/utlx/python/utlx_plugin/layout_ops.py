@@ -364,7 +364,6 @@ class swizzled_layout:
 # explicitly buys nothing over letting the backend do it -- and this way they
 # work unchanged on non-AMD targets.
 
-
 _TRITON_3_9 = triton_at_least(3, 9)
 
 
@@ -410,8 +409,9 @@ def _load_keeping_layout(ptr, mask, other, cache, _semantic=None):
             v = _semantic.splat(v, list(ptr.type.shape))
         return v if _has_layout(v) else _require(_semantic, v, ptr)
 
-    out = _semantic_load(super(UTLXSemantic, _semantic).load, ptr,
-                         like_ptr(mask), like_ptr(other), cache)
+    out = _semantic_load(
+        super(UTLXSemantic, _semantic).load, ptr, like_ptr(mask),
+        like_ptr(other), cache)
     # Coalesce would re-lay the tensor-of-pointer load out; the
     # utlx_keep_load_layout pass restores this layout afterwards.
     out.handle.set_attr("utlx.keep_layout", _semantic.builder.get_unit_attr())
