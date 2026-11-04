@@ -11,15 +11,15 @@ and publishes it with PyPI Trusted Publishing (no API token involved).
 ```bash
 # 1. Dry run: build and test only, publish nothing
 gh workflow run publish-utlx.yml -R triton-lang/triton-ext \
-  -f version=3.8.0.post12 -f publish_to=none
+  -f version=3.9.0.post1 -f publish_to=none
 
 # 2. Optional: rehearse the upload on TestPyPI
 gh workflow run publish-utlx.yml -R triton-lang/triton-ext \
-  -f version=3.8.0.post12 -f publish_to=testpypi
+  -f version=3.9.0.post1 -f publish_to=testpypi
 
 # 3. Publish for real
 gh workflow run publish-utlx.yml -R triton-lang/triton-ext \
-  -f version=3.8.0.post12 -f publish_to=pypi
+  -f version=3.9.0.post1 -f publish_to=pypi
 ```
 
 Pick the next unused version first (see
@@ -45,14 +45,14 @@ twice.
 
 | Input        | Values                               | Meaning                                        |
 | ------------ | ------------------------------------ | ---------------------------------------------- |
-| `version`    | e.g. `3.8.0.post12`                  | Version written into the wheel. Required.      |
+| `version`    | e.g. `3.9.0.post1`                   | Version written into the wheel. Required.      |
 | `publish_to` | `none` (default), `testpypi`, `pypi` | Where to upload. `none` builds and tests only. |
 
 ## Choosing a version
 
 The version must be the Triton release `extensions/utlx/pyproject.toml` pins
-(`dependencies = ["triton~=3.8.0"]`), optionally with a `.postN` suffix:
-`3.8.0`, `3.8.0.post1`, `3.8.0.post2`, ... The workflow rejects anything else,
+(`dependencies = ["triton~=3.9.0"]`), optionally with a `.postN` suffix:
+`3.9.0`, `3.9.0.post1`, `3.9.0.post2`, ... The workflow rejects anything else,
 because the wheel's `triton~=` pin is only truthful if its version tracks the
 Triton release it was built against.
 
@@ -60,8 +60,8 @@ Find the latest published version and take the next `.postN`:
 
 ```bash
 pip index versions triton-utlx
-# triton-utlx (3.8.0.post11)
-# Available versions: 3.8.0.post11, 3.8.0.post10, ...
+# triton-utlx (3.9.0)
+# Available versions: 3.9.0, 3.8.0.post16, 3.8.0.post15, ...
 ```
 
 You do **not** need to edit `version = ...` in `pyproject.toml`; the workflow
@@ -77,7 +77,7 @@ branch (`main`) unless you pass `--ref`:
 
 ```bash
 gh workflow run publish-utlx.yml -R triton-lang/triton-ext --ref my-branch \
-  -f version=3.8.0.post12 -f publish_to=none
+  -f version=3.9.0.post1 -f publish_to=none
 ```
 
 Use `--ref` for dry runs of unmerged work. Publish to PyPI from `main`, so every
@@ -132,7 +132,7 @@ pip install --force-reinstall --no-deps dist/triton_utlx-*.whl
 
 ```bash
 python -m venv /tmp/utlx-check && source /tmp/utlx-check/bin/activate
-pip install triton-utlx==3.8.0.post12
+pip install triton-utlx==3.9.0.post1
 python -c "import importlib.metadata as md, triton, utlx_plugin; \
 print(triton.__version__, md.version('triton-utlx'))"
 ```
@@ -142,7 +142,7 @@ on TestPyPI:
 
 ```bash
 pip install -i https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ triton-utlx==3.8.0.post12
+  --extra-index-url https://pypi.org/simple/ triton-utlx==3.9.0.post1
 ```
 
 The project page is <https://pypi.org/p/triton-utlx>
@@ -162,8 +162,10 @@ before `pip` sees a new version.
 
 ## Moving to a new Triton release
 
-When the plugin moves to a new Triton (say 3.9.0):
+When the plugin moves to a new Triton (say 3.10.0):
 
-1. Update `dependencies = ["triton~=3.9.0"]` in `pyproject.toml`.
-1. Update the first line of `PYPI_README.md` to say `Triton 3.9 build`.
-1. Merge, then publish `3.9.0` (or `3.9.0.post1`) with the commands above.
+1. Update `dependencies = ["triton~=3.10.0"]` in `pyproject.toml`.
+1. Update `version = "3.10.0"` in `pyproject.toml` too. The workflow overwrites
+   it, but [`build-wheel-local.sh`](BUILDING.md) requires it to match the pin.
+1. Update the first line of `PYPI_README.md` to say `Triton 3.10 build`.
+1. Merge, then publish `3.10.0` (or `3.10.0.post1`) with the commands above.

@@ -2,12 +2,16 @@
 # Build the triton-utlx wheel from this checkout locally, the way
 # .github/workflows/publish-utlx.yml builds it in CI.
 #
-# libutlx.so compiles against Triton's C++ headers, which PyPI Triton wheels do
-# not ship. So, like the workflow, this builds the Triton release that
-# extensions/utlx/pyproject.toml pins (`triton~=X.Y.Z`) from source with
-# TRITON_EXT_ENABLED=1, installs its headers into that source tree and builds
-# the plugin against it, with clang (see the workflow for why clang matters).
-# The resulting wheel runs against the stock PyPI Triton of that release.
+# libutlx.so compiles against Triton's C++ headers, which PyPI Triton wheels
+# ship only from 3.9 on. With --install VENV and such a wheel in VENV, the
+# plugin is built against VENV's Triton, so it compiles and links against the
+# very libtriton.so it loads there; VENV's Triton must then be from the release
+# line extensions/utlx/pyproject.toml pins (`triton~=X.Y.Z`). Otherwise, or
+# with LIBTRITON=local (see below), this builds that Triton release from source
+# like the workflow does, with TRITON_EXT_ENABLED=1, installs its headers into
+# that source tree and builds the plugin against it. Either way the plugin is
+# built with clang (see the workflow for why clang matters). The resulting
+# wheel runs against the stock PyPI Triton of that release.
 #
 # The Triton build (the slow part) is done once and reused: later runs only
 # rebuild the plugin. Pass --rebuild-triton to force it.
@@ -16,10 +20,17 @@
 # wheel keeps its native linux tag and is meant for local use only.
 #
 # Usage: ./build-wheel-local.sh [--rebuild-triton] [--install VENV]
-#   --install VENV   pip install the wheel into VENV (--force-reinstall
-#                    --no-deps, so VENV keeps its own Triton and torch)
+#   --install VENV   build against VENV's Triton if its wheel ships headers
+#                    (see LIBTRITON), then pip install the wheel into VENV
+#                    (--force-reinstall --no-deps, so VENV keeps its own
+#                    Triton and torch)
 #
 # Env overrides:
+#   LIBTRITON    which Triton (headers and libtriton.so) to build against:
+#                pip    VENV's pip-installed Triton (needs --install VENV
+#                       and a wheel that ships headers, i.e. Triton 3.9+)
+#                local  Triton built from source in $WORK
+#                auto   pip if VENV's wheel ships headers, else local (default)
 #   WORK         build dir: Triton checkout, build venv
 #                (default: ~/.cache/utlx-build)
 #   DIST         wheel output dir         (default: $WORK/dist)
@@ -40,7 +51,8 @@
 #                If none works, the script builds against the almalinux-x64
 #                LLVM instead, which runs on an older libstdc++.
 #   TRITON_LLVM_SYSTEM_SUFFIX  which prebuilt LLVM Triton's setup downloads,
-#                e.g. almalinux-x64 (default: Triton's choice for the host)
+#                e.g. almalinux-x64 (default: Triton's choice for the host;
+#                almalinux, as PyPI's wheels use, when building against VENV)
 
 set -euo pipefail
 
@@ -61,8 +73,14 @@ WORK=${WORK:-$HOME/.cache/utlx-build}
 DIST=${DIST:-$WORK/dist}
 PYTHON=${PYTHON:-python3.11}
 PYPROJECT=$UTLX/pyproject.toml
+LIBTRITON=${LIBTRITON:-auto}
 
 die() { echo "error: $*" >&2; exit 1; }
+case "$LIBTRITON" in
+    auto | local) ;;
+    pip) [ -n "$INSTALL_VENV" ] || die "LIBTRITON=pip needs --install VENV" ;;
+    *) die "LIBTRITON must be auto, pip or local, not $LIBTRITON" ;;
+esac
 for tool in git clang clang++ "$PYTHON"; do
     command -v "$tool" > /dev/null || die "$tool not found"
 done
@@ -75,6 +93,30 @@ case "$VERSION" in
     *) die "version $VERSION must be $TRITON_VERSION or $TRITON_VERSION.postN" ;;
 esac
 echo "Building triton-utlx $VERSION against Triton v$TRITON_VERSION in $WORK"
+
+# A plugin built for one Triton release line crashes another's libtriton, so
+# check VENV's Triton before building anything for it.
+WHEEL_TRITON=
+if [ -n "$INSTALL_VENV" ]; then
+    VENV_TRITON_INFO=$(cd /tmp && "$INSTALL_VENV/bin/python" -c '
+import importlib.metadata as m, importlib.util, os
+print(m.version("triton"), os.path.dirname(importlib.util.find_spec("triton").origin))') \
+        || die "no triton installed in $INSTALL_VENV"
+    read -r VENV_TRITON_VERSION VENV_TRITON <<< "$VENV_TRITON_INFO"
+    case "$VENV_TRITON_VERSION" in
+        "${TRITON_VERSION%.*}".*) ;;
+        *) die "$INSTALL_VENV has triton $VENV_TRITON_VERSION, not the Triton ${TRITON_VERSION%.*} line this builds for" ;;
+    esac
+    if [ "$LIBTRITON" = local ]; then
+        :
+    elif [ -d "$VENV_TRITON/include/triton" ] && [ -e "$VENV_TRITON/_C/libtriton.so" ]; then
+        WHEEL_TRITON=$VENV_TRITON
+    elif [ "$LIBTRITON" = pip ]; then
+        die "triton $VENV_TRITON_VERSION in $INSTALL_VENV ships no C++ headers, which LIBTRITON=pip needs"
+    else
+        echo "triton $VENV_TRITON_VERSION in $INSTALL_VENV ships no C++ headers; building Triton v$TRITON_VERSION from source"
+    fi
+fi
 
 mkdir -p "$WORK"
 TRITON=$WORK/triton-$TRITON_VERSION
@@ -157,9 +199,41 @@ check_llvm_tools() {
     LD_LIBRARY_PATH=$LLVM_LD_PATH "$LLVM_INSTALL_DIR/bin/mlir-tblgen" --version || true
     die "$LLVM_INSTALL_DIR/bin/mlir-tblgen does not run and no newer libstdc++ was found; set LIBSTDCXX_DIR to a dir with a libstdc++.so.6 that has GLIBCXX_3.4.30"
 }
+# Building against VENV's Triton runs no Triton setup to download LLVM, so
+# fetch the build the release pins the way that setup would.
+download_llvm() {
+    local suffix=$TRITON_LLVM_SYSTEM_SUFFIX info build sha name
+    local dest=$TRITON_HOME/.triton/llvm
+    info=$("$PYTHON" -c 'import json, sys
+i = json.load(open(sys.argv[1]))
+print(i["build_number"], i["sha256sum"][sys.argv[2]])' "$TRITON/cmake/llvm-info.json" "$suffix") \
+        || die "no $suffix LLVM build in $TRITON/cmake/llvm-info.json"
+    read -r build sha <<< "$info"
+    name=$LLVM_NAME-$suffix-$build
+    echo "=== Downloading $name"
+    mkdir -p "$dest"
+    curl -fL --retry 3 -o "$dest/$name.tar.gz" \
+        "https://oaitriton.blob.core.windows.net/public/llvm-builds/$name.tar.gz"
+    echo "$sha  $dest/$name.tar.gz" | sha256sum -c --quiet \
+        || die "$name.tar.gz does not match its sha256 in llvm-info.json"
+    tar -xzf "$dest/$name.tar.gz" -C "$dest"
+    rm "$dest/$name.tar.gz"
+}
+if [ -n "$WHEEL_TRITON" ]; then
+    # The manylinux (almalinux) LLVM, which PyPI's Triton wheels are built with.
+    case $(uname -m) in
+        x86_64) LLVM_ARCH=x64 ;;
+        aarch64) LLVM_ARCH=arm64 ;;
+        *) die "no prebuilt LLVM for $(uname -m)" ;;
+    esac
+    export TRITON_LLVM_SYSTEM_SUFFIX=${TRITON_LLVM_SYSTEM_SUFFIX:-almalinux-$LLVM_ARCH}
+    [ -n "$(find_llvm)" ] || download_llvm
+fi
 check_llvm_tools
 
-if [ "$REBUILD_TRITON" = 1 ] || [ ! -d "$HEADERS/triton" ]; then
+if [ -n "$WHEEL_TRITON" ]; then
+    echo "=== Using triton $VENV_TRITON_VERSION from $WHEEL_TRITON"
+elif [ "$REBUILD_TRITON" = 1 ] || [ ! -d "$HEADERS/triton" ]; then
     echo "=== Building Triton v$TRITON_VERSION with extension headers"
     rm -rf "$HEADERS"
     "$PY" -m pip install -r "$TRITON/python/requirements.txt"
@@ -169,13 +243,17 @@ if [ "$REBUILD_TRITON" = 1 ] || [ ! -d "$HEADERS/triton" ]; then
         CC=clang CXX=clang++ LD_LIBRARY_PATH=$LLVM_LD_PATH \
         TRITON_APPEND_CMAKE_ARGS="-DTRITON_BUILD_UT=OFF ${TRITON_APPEND_CMAKE_ARGS:-}" \
         "$PY" -m pip install -e . --no-build-isolation -v)
-    # The headers component copies python/ to include/python, so installing
-    # straight into python/triton would recurse into its own output.
-    STAGE=$(mktemp -d)
-    cmake --install "$(ls -d "$TRITON"/build/cmake.* | head -1)" \
-        --component headers --prefix "$STAGE" > /dev/null
-    mv "$STAGE/include" "$HEADERS"
-    rm -rf "$STAGE"
+    # Triton 3.9+ installs its headers there itself (the wheel_headers
+    # component, run by setup.py); earlier releases need the headers component.
+    if [ ! -d "$HEADERS/triton" ]; then
+        # The headers component copies python/ to include/python, so installing
+        # straight into python/triton would recurse into its own output.
+        STAGE=$(mktemp -d)
+        cmake --install "$(ls -d "$TRITON"/build/cmake.* | head -1)" \
+            --component headers --prefix "$STAGE" > /dev/null
+        mv "$STAGE/include" "$HEADERS"
+        rm -rf "$STAGE"
+    fi
     [ -d "$HEADERS/triton" ] || die "Triton headers missing from $HEADERS"
 else
     echo "=== Reusing Triton build in $TRITON (--rebuild-triton to redo)"
@@ -196,7 +274,7 @@ mkdir -p "$DIST"
 rm -f "$DIST"/triton_utlx-"$VERSION"-*.whl
 CC=clang CXX=clang++ LD_LIBRARY_PATH=$LLVM_LD_PATH \
 LLVM_INSTALL_DIR=$LLVM_INSTALL_DIR \
-TRITON_WHEEL_DIR=$TRITON/python/triton \
+TRITON_WHEEL_DIR=${WHEEL_TRITON:-$TRITON/python/triton} \
     "$PY" -m pip wheel "$UTLX" --no-build-isolation --no-deps -v -w "$DIST"
 WHEEL=$(ls "$DIST"/triton_utlx-"$VERSION"-*.whl)
 echo "built $WHEEL"
@@ -204,6 +282,10 @@ echo "built $WHEEL"
 if [ -n "$INSTALL_VENV" ]; then
     echo "=== Installing into $INSTALL_VENV"
     "$INSTALL_VENV/bin/python" -m pip install --force-reinstall --no-deps "$WHEEL"
-    (cd /tmp && "$INSTALL_VENV/bin/python" -c \
-        'import importlib.metadata as m, utlx_plugin; print("triton-utlx", m.version("triton-utlx"), "| triton", m.version("triton"))')
+    # libutlx.so needs libtriton.so by soname, with no RPATH, so it binds to
+    # the one the process already loaded: show which that is.
+    (cd /tmp && "$INSTALL_VENV/bin/python" -c '
+import importlib.metadata as m, utlx_plugin
+print("triton-utlx", m.version("triton-utlx"), "| triton", m.version("triton"))
+print("libtriton:", *{l.split()[-1] for l in open("/proc/self/maps") if l.rstrip().endswith("/libtriton.so")})')
 fi
