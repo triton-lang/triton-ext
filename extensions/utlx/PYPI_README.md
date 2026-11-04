@@ -5,7 +5,7 @@ exposing the TLX dialect (async loads, warp-group MMA, shared/tensor-memory
 buffers, etc.), built from
 [triton-lang/triton-ext](https://github.com/triton-lang/triton-ext)
 ([`extensions/utlx`](https://github.com/triton-lang/triton-ext/tree/main/extensions/utlx))
-for Triton 3.8.
+for Triton 3.9.
 
 ## Install
 
@@ -13,7 +13,7 @@ The stock `triton` wheel that PyTorch depends on works; no Triton build of your
 own is needed. Plugin support is compiled into Triton releases from 3.7 onward.
 
 ```bash
-pip install torch            # torch 2.14 pulls triton ~=3.8.0
+pip install torch            # torch 2.15 pulls triton ~=3.9.0
 pip install triton-utlx
 ```
 
@@ -29,26 +29,20 @@ import utlx_plugin as tlx
 `libutlx.so` is self-contained: it depends only on `libtriton.so`, and MLIR
 symbols resolve from libtriton at load.
 
-The 3.8.0 release and Triton `main` differ on the plugin ABI, so
-`utlx_plugin._compat` bridges them at import, feature-detected in both
-directions:
+Triton 3.9 registers plugins explicitly: `import utlx_plugin` calls Triton's
+`extend_with`, which binds the plugin's ops as `create_<op>` and its passes as
+`add_<pass>`. Import order does not matter, and `TRITON_PLUGIN_PATHS` is not
+needed.
 
-- **Plugin discovery.** 3.8.0 loads the libraries named in `TRITON_PLUGIN_PATHS`
-  while libtriton is imported; `main` registers them explicitly with
-  `extend_with`. Because 3.8.0 needs the variable set before `import triton`,
-  this wheel installs a `utlx_plugin.pth` that sets it at interpreter startup,
-  so import order does not matter. Set `UTLX_NO_AUTOREGISTER=1` to disable that
-  and manage `TRITON_PLUGIN_PATHS` yourself.
-- **Op and pass names.** 3.8.0 binds plugin ops as `utlx_<op>` and passes as
-  `utlx_<pass>`; `main` prefixes them `create_` and `add_`.
-- **Semantic helpers.** uTLX calls `TritonSemantic.dot_precheck` and
-  `TritonSemantic._prepare_legacy_load`, which exist only in Meta's TLX fork of
-  Triton, and `tl._unwrap_if_constexpr`, which upstream keeps in
-  `triton.language.core`.
+uTLX also calls `TritonSemantic.dot_precheck` and
+`TritonSemantic._prepare_legacy_load`, which exist only in Meta's TLX fork of
+Triton, and `tl._unwrap_if_constexpr`, which upstream keeps in
+`triton.language.core`. `utlx_plugin._compat` supplies them at import.
 
-Pair the plugin with the Triton release line it was built for. A 3.7.x
-`triton-utlx` against Triton 3.8 is an ABI mismatch; forcing it past Triton's
-version check corrupts the heap.
+Pair the plugin with the Triton release line it was built for: this wheel
+requires `triton~=3.9.0`. A `triton-utlx` built for another release line, forced
+onto Triton 3.9 (e.g. with `pip install --no-deps`), is an ABI mismatch that
+crashes or corrupts the heap rather than failing cleanly.
 
 ## License
 
