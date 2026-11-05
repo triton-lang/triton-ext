@@ -9,6 +9,10 @@ Covers:
   - compile-only IR verification
 """
 
+import os
+import subprocess
+import sys
+
 import pytest
 import torch
 
@@ -881,6 +885,46 @@ def test_tile_to_shape_round_trip():
              "[4, 16], [8, 0], [16, 0], [32, 0], [0, 32]]")
     assert f"#ttg.shared_linear<{{offset = {bases}}}, alignment = 1024>" in \
         compiled.asm["ttgir"]
+
+
+_TILE_TO_SHAPE_SCRIPT = """
+import triton
+import triton.language as tl
+import utlx_plugin  # noqa: F401
+import triton.language.extra.tlx as tlx
+
+
+@triton.jit
+def kernel(M: tl.constexpr, N: tl.constexpr):
+    atom: tl.constexpr = tlx.nv_mma_shared_layout_encoding(
+        (M, N // 2), [1, 0], tl.float16, [1, 1], [1, 1], [1, 0], False, True)
+    tlx.local_alloc((M, N), tl.float16, 1, layout=atom.tile_to_shape((M, N)))
+
+
+kernel.warmup(M=64, N=64, grid=(1, ))
+"""
+
+
+@pytest.mark.skipif(not is_hopper_or_newer(),
+                    reason="NVMMA layouts need sm90+")
+def test_tile_to_shape_leaks_nothing_at_exit(tmp_path):
+    """Tiling an NVMMA atom must not reach Gluon's layoutToGluon.
+
+    That caches the Gluon layout classes in a C++ static that is never freed,
+    which keeps ir.builder alive past shutdown: nanobind then reports it, its
+    methods and their ir.attribute defaults as leaked when the process exits.
+    """
+    # @triton.jit reads the kernel's source, so it has to live in a file.
+    script = tmp_path / "tile_to_shape.py"
+    script.write_text(_TILE_TO_SHAPE_SCRIPT)
+    env = dict(os.environ, TRITON_ALWAYS_COMPILE="1")
+    result = subprocess.run([sys.executable, str(script)],
+                            capture_output=True,
+                            text=True,
+                            env=env,
+                            check=False)
+    assert result.returncode == 0, result.stderr
+    assert "nanobind: leaked" not in result.stderr, result.stderr
 
 
 @pytest.mark.skipif(not is_hopper_or_newer(), reason="TMA needs sm90+")

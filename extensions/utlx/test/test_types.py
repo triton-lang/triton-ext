@@ -412,6 +412,52 @@ class TestNvMmaSharedLayoutEncoding:
         assert atom.make_shared_linear().tile_shape == [64, 32]
 
 
+class TestNvmmaTiledOffsetBases:
+    """layout_compat's port of nvmmaSharedToLinearLayout(..., TMAMode::Tiled).
+
+    Expected bases are what stock Triton's GluonOpBuilder.to_linear_layout
+    returns for the same atom and tile shape.
+    """
+
+    @pytest.mark.parametrize(
+        "shape,bitwidth,swizzle,transposed,fp4,bases",
+        [
+            # Two 64B-swizzled f16 atoms side by side.
+            ([64, 64], 16, 64, False, False,
+             [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [1, 0], [2, 8], [4, 16],
+              [8, 0], [16, 0], [32, 0], [0, 32]]),
+            # The same, column-major.
+            ([64, 64], 16, 64, True, False,
+             [[1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [0, 1], [8, 2], [16, 4],
+              [0, 8], [0, 16], [0, 32], [32, 0]]),
+            # Unswizzled: plain row-major.
+            ([64, 64], 16, 0, False, False,
+             [[0, 1], [0, 2], [0, 4], [0, 8], [0, 16], [0, 32], [1, 0], [2, 0],
+              [4, 0], [8, 0], [16, 0], [32, 0]]),
+            # fp4 padded: every other group of 8 offsets is padding.
+            ([64, 64], 8, 128, False, True,
+             [[0, 1], [0, 2], [0, 4], [0, 0], [0, 8], [0, 16], [0, 32], [1, 8],
+              [2, 16], [4, 32], [8, 0], [16, 0], [32, 0]]),
+            # Rank 3, transposed: the offsets past dim0's extent broadcast.
+            ([8, 8, 16], 8, 0, True, False,
+             [[0, 1, 0], [0, 2, 0], [0, 4, 0], [1, 0, 0], [2, 0, 0], [4, 0, 0],
+              [0, 0, 0], [0, 0, 1], [0, 0, 2], [0, 0, 4], [0, 0, 8]]),
+        ])
+    def test_matches_upstream(self, shape, bitwidth, swizzle, transposed, fp4,
+                              bases):
+        from utlx_plugin import layout_compat
+        assert layout_compat._nvmma_tiled_offset_bases(shape, bitwidth,
+                                                       swizzle, transposed,
+                                                       fp4) == bases
+
+    def test_rejects_tile_narrower_than_swizzle(self):
+        from utlx_plugin import layout_compat
+        # A 128B f16 swizzle spans 64 columns.
+        with pytest.raises(ValueError, match="too small"):
+            layout_compat._nvmma_tiled_offset_bases([64, 32], 16, 128, False,
+                                                    False)
+
+
 class TestTensorMemoryLayoutEncoding:
 
     def test_make_default(self):
