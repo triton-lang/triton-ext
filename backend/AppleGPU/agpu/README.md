@@ -14,6 +14,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+Or, for a single file with no CMake:
+
+```bash
+c++ -std=c++17 -Iinclude -Itest test/test_tileview.cpp -o /tmp/t && /tmp/t
+```
+
 ## Using it
 
 One header, one object:
@@ -23,27 +29,46 @@ One header, one object:
 
 agpu::Emitter e;
 
-e.addKernel(facts, [&](agpu::msl::Context &c) {
+e.addKernel(facts, [&](agpu::msl::Context &c, bool rollK) {
   agpu::msl::Block body;
-  // ... build the body
+  // ... build the body; emitters record what they need in `e.helpers`
   return body;
 });
 
-e.print(std::cout);
+e.print(std::cout);   // includes, helpers, structs, prototypes, bodies, kernels
 ```
+
+`Emitter` holds the two module-wide facts: the helper set and the pool
+requirement. A helper named by the third kernel still reaches the prelude
+printed before the first and the pool is the max over every function, since one
+buffer serves them all.
+
+A dot goes through its plan:
+
+```cpp
+agpu::msl::Block body;
+e.dot(body, dotFacts, inputs);      // planDot chooses; emitDot spells it
+```
+
+`e.planFor(facts)` answers what a shape will cost (which strategy, how much
+pool) without emitting anything.
 
 ## Layers
 
 ```text
-core/   arithmetic and names
+core/   arithmetic. TileView, CoordGuard, Units, Swizzle, Names.
 plan/   decides, in integers. Never builds an AST.
 emit/   consumes a plan, builds AST. Never re-decides.
-msl/    the syntax tree, the printer
-bind/   the dispatch table and the symbol table
+msl/    the syntax tree, its generated walk, the printer, the analyses.
 ```
 
 Within `emit/`: an `EmitX.h` holds the `emitX()` for one op family.
-`primitives/` holds the small types those emitters take and hold.
+`primitives/` holds the small types those emitters take and hold, each answering
+one question about the hardware or a coordinate: `FragLane`, `Stride`,
+`OperandSource`, `CoordHoist`.
+
+`test_layering.cpp` reads the headers as text and fails if a planner includes
+`msl/Context.h`.
 
 ## Tests
 
@@ -51,22 +76,37 @@ Within `emit/`: an `EmitX.h` holds the `emitX()` for one op family.
 cmake -S . -B build && cmake --build build && ctest --test-dir build
 ```
 
-`kernelabi` covers `planKernelAbi`: where each argument binds, and the offsets
-`driver.py` packs scalars to. A drift there is a wrong kernel argument, so both
-sides are checked against the same rules.
+Every `test/test_*.cpp` becomes a ctest target. `kernelabi` covers
+`planKernelAbi`: where each argument binds, and the offsets `driver.py` packs
+scalars to. A drift there is a wrong kernel argument, so both sides are checked
+against the same rules.
 
 ## Design rules
 
-1. **One owner per fact.** `kWarpSize` is declared once. A second implementation
-   is the defect this exists to remove.
+1. **One owner per fact.** `TileView::offsetOf` is the one place a coordinate is
+   multiplied by a stride, and `originAt` and `cosizeElems` go through it;
+   `kWarpSize` is declared once; a helper's name and its body key on one enum.
 1. **Query, don't check.** A caller asks the plan what to do. It does not test a
    flag and decide again.
+1. **Sizing and emission share the object.** Whoever reserves space calls
+   `cosizeElems()` on the same view the emitter addresses through.
 1. **Decline, don't fail.** A shape this emitter cannot express returns a
    `Decision` carrying a reason, so the output stays free of stray markers like
    `/*bad loop header*/`.
-1. **Refuse only what the toolchain cannot diagnose.** Register pressure,
-   alignment and buffer counts are Metal's job.
-1. **Headers define, `src/` holds the recursive walks.** Everything is
-   header-only except a definition that recurses over the tree, which every
-   translation unit would otherwise re-instantiate. That is why the printer is
-   the only thing in `src/`.
+1. **Refuse only what the toolchain cannot diagnose.** An over-limit threadgroup
+   declaration crashes MTLCompilerService, so the pool gate catches it. Register
+   pressure, alignment and buffer counts are Metal's job.
+1. **Verify numerically where structure is not enough.** A scan's emitted text
+   can have the right shape and combine the wrong elements, so the suite
+   simulates the ladder against the definition of a prefix sum.
+1. **Headers define, `src/` holds the printer.** Everything is header-only
+   except the printer, whose walk over the tree every translation unit would
+   otherwise re-instantiate. That is why `Printer.cpp` is the one thing in
+   `src/`.
+1. **A layer's files divide into deciders and vocabulary.** In `plan/`, a file
+   that chooses among strategies ends in `Plan` or `Schedule` (`DotPlan`,
+   `ScanPlan`, `PanelSchedule`); a vocabulary file holds the types and tables a
+   decision is written in (`ElemType`, `MathFn`) and may carry the small `plan*`
+   that its own table settles (`WarpSlots`, `AccessWidth`, `TypeConvert`).
+   `emit/*` build AST and are named for the op family; `emit/primitives/` holds
+   the small types an emitter holds, kept apart from the functions that emit.
