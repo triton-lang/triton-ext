@@ -1104,6 +1104,18 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_named_barrier_wait", utlx::createNamedBarrierWait},
       // New AMD ops (runtime op creation)
       {"utlx_read_barrier_phase", utlx::createReadBarrierPhase},
+      // AMD TDM ops (runtime op creation)
+      {"utlx_async_tdm_copy_global_to_local",
+       utlx::createAsyncTDMCopyGlobalToLocal},
+      {"utlx_async_tdm_fused_copy_global_to_local",
+       utlx::createAsyncTDMFusedCopyGlobalToLocal},
+      {"utlx_async_tdm_copy_local_to_global",
+       utlx::createAsyncTDMCopyLocalToGlobal},
+      {"utlx_async_tdm_gather", utlx::createAsyncTDMGather},
+      {"utlx_async_tdm_scatter", utlx::createAsyncTDMScatter},
+      {"utlx_tdm_prefetch", utlx::createTDMPrefetch},
+      {"utlx_async_tdm_wait", utlx::createAsyncTDMWait},
+      {"utlx_update_tensor_descriptor", utlx::createUpdateTensorDescriptor},
       // Modified ops with extended signatures (runtime op creation)
       {"utlx_fp_to_fp_with_rbits", utlx::createFpToFpWithRbits},
       {"utlx_make_tensor_desc_with_desc_ptr",

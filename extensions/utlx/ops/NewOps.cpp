@@ -13,6 +13,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Parser/Parser.h"
 #include "passes/Passes.h"
 #include "tlx/dialect/include/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -1120,6 +1121,409 @@ static void reconcileOperands(mlir::Operation *terminator,
     if (mlir::Value cast = castEncoding(b, operand.get(), type))
       operand.set(cast);
   }
+}
+
+// ---------------------------------------------------------------------------
+// AMD TDM ops (CDNA5 Tensor Data Mover)
+// ---------------------------------------------------------------------------
+//
+// Portable wrappers for the amdg.* data-movement ops that upstream Triton's
+// Gluon frontend exposes as triton.experimental.gluon.language.amd.cdna5.tdm
+// (python/src/gluon_ir.cc in triton-lang/triton). They follow the same
+// convention as the other runtime ops in this file (see createRuntimeOp and,
+// as the closest template, createAsyncTMAPrefetch / createReadBarrierPhase):
+// the MLIR op is created by registered name, so this file needs no AMD
+// dialect headers and the plugin still builds and loads on a Triton without
+// the ops; a missing op emits the usual "is not registered" error and leaves
+// the result slot null for _compat.checked_handle to report from Python.
+//
+// Plugin ops only take mlir::Values, so the ops' attributes travel as
+// trailing i32 constants (the createFence encoding):
+//   cache:  -1 omit (fused/load/store only; the op default is NONE)
+//           0 none, 1 .ca, 2 .cg, 3 .wb, 4 .cs, 5 .wt, 6 .cv
+//   scope:  -1 omit, 0 cta, 1 gpu, 2 sys
+//   policy: -1 omit, 0 regular, 1 none, 2 high, 3 last_use
+//           (the temporal hint of #amdg.cache_policy_gfx12<...>; that attr
+//           belongs to the AMD dialect, so it is parsed from its assembly
+//           form and silently omitted if the dialect is not loaded)
+// An optional mbarrier operand is present only when the caller passes one;
+// the wrappers tell from the operand count, as createAsyncLoad does for its
+// optional mask/other.
+
+static void addTDMCacheAttr(mlir::OpBuilder &builder, int64_t code,
+                            llvm::SmallVector<mlir::NamedAttribute> &attrs) {
+  if (code < 0)
+    return;
+  using mlir::triton::CacheModifier;
+  CacheModifier modifier = CacheModifier::NONE;
+  switch (code) {
+  case 0:
+    modifier = CacheModifier::NONE;
+    break;
+  case 1:
+    modifier = CacheModifier::CA;
+    break;
+  case 2:
+    modifier = CacheModifier::CG;
+    break;
+  case 3:
+    modifier = CacheModifier::WB;
+    break;
+  case 4:
+    modifier = CacheModifier::CS;
+    break;
+  case 5:
+    modifier = CacheModifier::WT;
+    break;
+  case 6:
+    modifier = CacheModifier::CV;
+    break;
+  default:
+    return;
+  }
+  attrs.push_back(builder.getNamedAttr(
+      "cache",
+      mlir::triton::CacheModifierAttr::get(builder.getContext(), modifier)));
+}
+
+static void addTDMScopeAttr(mlir::OpBuilder &builder, int64_t code,
+                            llvm::SmallVector<mlir::NamedAttribute> &attrs) {
+  if (code < 0)
+    return;
+  using mlir::triton::MemSyncScope;
+  MemSyncScope scope = MemSyncScope::GPU;
+  switch (code) {
+  case 0:
+    scope = MemSyncScope::CTA;
+    break;
+  case 1:
+    scope = MemSyncScope::GPU;
+    break;
+  case 2:
+    scope = MemSyncScope::SYSTEM;
+    break;
+  default:
+    return;
+  }
+  attrs.push_back(builder.getNamedAttr(
+      "scope",
+      mlir::triton::MemSyncScopeAttr::get(builder.getContext(), scope)));
+}
+
+static void
+addTDMCachePolicyAttr(mlir::OpBuilder &builder, int64_t code,
+                      llvm::SmallVector<mlir::NamedAttribute> &attrs) {
+  if (code < 0)
+    return;
+  llvm::StringRef temporal;
+  switch (code) {
+  case 0:
+    temporal = "regular";
+    break;
+  case 1:
+    temporal = "none";
+    break;
+  case 2:
+    temporal = "high";
+    break;
+  case 3:
+    temporal = "last_use";
+    break;
+  default:
+    return;
+  }
+  auto policy = mlir::parseAttribute(
+      ("#amdg.cache_policy_gfx12<temporal = " + temporal + ">").str(),
+      builder.getContext());
+  if (policy)
+    attrs.push_back(builder.getNamedAttr("cachePolicy", policy));
+}
+
+static mlir::Type tdmTokenType(mlir::OpBuilder &builder) {
+  return builder.getType<ttg::AsyncTokenType>();
+}
+
+/// utlx_async_tdm_copy_global_to_local(result_slot, desc, dest, [barrier,]
+///                                     cache, scope, policy, warp_used_hint)
+/// warp_used_hint is -1 when all warps participate. Returns an async token.
+void utlx::createAsyncTDMCopyGlobalToLocal(TritonOpBuilder &self,
+                                           std::vector<mlir::Value> &operands) {
+  if (operands.size() != 7 && operands.size() != 8)
+    return;
+  bool hasBarrier = operands.size() == 8;
+  size_t tail = hasBarrier ? 4 : 3;
+  auto cache = extractConstInt(operands[tail]);
+  auto scope = extractConstInt(operands[tail + 1]);
+  auto policy = extractConstInt(operands[tail + 2]);
+  auto hint = extractConstInt(operands[tail + 3]);
+  if (!cache || !scope || !policy || !hint)
+    return;
+
+  auto &builder = self.getBuilder();
+  llvm::SmallVector<mlir::Value> args = {operands[1], operands[2]};
+  if (hasBarrier)
+    args.push_back(operands[3]);
+  llvm::SmallVector<mlir::NamedAttribute> attrs;
+  addTDMCacheAttr(builder, *cache, attrs);
+  addTDMScopeAttr(builder, *scope, attrs);
+  addTDMCachePolicyAttr(builder, *policy, attrs);
+  if (*hint >= 0)
+    attrs.push_back(builder.getNamedAttr(
+        "warp_used_hint",
+        builder.getI32IntegerAttr(static_cast<int32_t>(*hint))));
+
+  auto *op = createRuntimeOp(builder, self.getLastLoc(),
+                             "amdg.async_tdm_copy_global_to_local",
+                             {tdmTokenType(builder)}, args, attrs);
+  if (op && op->getNumResults() > 0)
+    operands[0] = op->getResult(0);
+}
+
+/// utlx_async_tdm_fused_copy_global_to_local(result_slot, num_members,
+///     desc..., dest..., warp_used_hint..., cache, scope, policy)
+/// One fused load for 2-4 members; returns an async token.
+void utlx::createAsyncTDMFusedCopyGlobalToLocal(
+    TritonOpBuilder &self, std::vector<mlir::Value> &operands) {
+  if (operands.size() < 2)
+    return;
+  auto numVal = extractConstInt(operands[1]);
+  if (!numVal || *numVal < 2 || *numVal > 4)
+    return;
+  size_t num = static_cast<size_t>(*numVal);
+  if (operands.size() != 2 + 3 * num + 3)
+    return;
+  size_t tail = 2 + 3 * num;
+  auto cache = extractConstInt(operands[tail]);
+  auto scope = extractConstInt(operands[tail + 1]);
+  auto policy = extractConstInt(operands[tail + 2]);
+  if (!cache || !scope || !policy)
+    return;
+
+  auto &builder = self.getBuilder();
+  llvm::SmallVector<mlir::Value> args;
+  llvm::SmallVector<int32_t> hints;
+  for (size_t i = 0; i < num; ++i)
+    args.push_back(operands[2 + i]);
+  for (size_t i = 0; i < num; ++i)
+    args.push_back(operands[2 + num + i]);
+  for (size_t i = 0; i < num; ++i) {
+    auto hint = extractConstInt(operands[2 + 2 * num + i]);
+    if (!hint || *hint < 0)
+      return;
+    hints.push_back(static_cast<int32_t>(*hint));
+  }
+
+  llvm::SmallVector<mlir::NamedAttribute> attrs;
+  attrs.push_back(builder.getNamedAttr("warp_used_hints",
+                                       builder.getDenseI32ArrayAttr(hints)));
+  // SameVariadicOperandSize reads the group sizes from this attribute; the
+  // generic creation path does not populate it (see createAsyncLoad).
+  attrs.push_back(builder.getNamedAttr(
+      "operandSegmentSizes",
+      builder.getDenseI32ArrayAttr(
+          {static_cast<int32_t>(num), static_cast<int32_t>(num)})));
+  addTDMCacheAttr(builder, *cache, attrs);
+  addTDMScopeAttr(builder, *scope, attrs);
+  addTDMCachePolicyAttr(builder, *policy, attrs);
+
+  auto *op = createRuntimeOp(builder, self.getLastLoc(),
+                             "amdg.async_tdm_fused_copy_global_to_local",
+                             {tdmTokenType(builder)}, args, attrs);
+  if (op && op->getNumResults() > 0)
+    operands[0] = op->getResult(0);
+}
+
+/// utlx_async_tdm_copy_local_to_global(result_slot, desc, src, [barrier,]
+///                                     cache, scope, policy)
+/// Returns an async token.
+void utlx::createAsyncTDMCopyLocalToGlobal(TritonOpBuilder &self,
+                                           std::vector<mlir::Value> &operands) {
+  if (operands.size() != 6 && operands.size() != 7)
+    return;
+  bool hasBarrier = operands.size() == 7;
+  size_t tail = hasBarrier ? 4 : 3;
+  auto cache = extractConstInt(operands[tail]);
+  auto scope = extractConstInt(operands[tail + 1]);
+  auto policy = extractConstInt(operands[tail + 2]);
+  if (!cache || !scope || !policy)
+    return;
+
+  auto &builder = self.getBuilder();
+  llvm::SmallVector<mlir::Value> args = {operands[1], operands[2]};
+  if (hasBarrier)
+    args.push_back(operands[3]);
+  llvm::SmallVector<mlir::NamedAttribute> attrs;
+  addTDMCacheAttr(builder, *cache, attrs);
+  addTDMScopeAttr(builder, *scope, attrs);
+  addTDMCachePolicyAttr(builder, *policy, attrs);
+
+  auto *op = createRuntimeOp(builder, self.getLastLoc(),
+                             "amdg.async_tdm_copy_local_to_global",
+                             {tdmTokenType(builder)}, args, attrs);
+  if (op && op->getNumResults() > 0)
+    operands[0] = op->getResult(0);
+}
+
+/// utlx_async_tdm_gather(result_slot, desc, row_indices, dst, [barrier,]
+///                       scope, policy)
+/// Returns an async token.
+void utlx::createAsyncTDMGather(TritonOpBuilder &self,
+                                std::vector<mlir::Value> &operands) {
+  if (operands.size() != 6 && operands.size() != 7)
+    return;
+  bool hasBarrier = operands.size() == 7;
+  size_t tail = hasBarrier ? 5 : 4;
+  auto scope = extractConstInt(operands[tail]);
+  auto policy = extractConstInt(operands[tail + 1]);
+  if (!scope || !policy)
+    return;
+
+  auto &builder = self.getBuilder();
+  llvm::SmallVector<mlir::Value> args = {operands[1], operands[2], operands[3]};
+  if (hasBarrier)
+    args.push_back(operands[4]);
+  llvm::SmallVector<mlir::NamedAttribute> attrs;
+  addTDMScopeAttr(builder, *scope, attrs);
+  addTDMCachePolicyAttr(builder, *policy, attrs);
+
+  auto *op =
+      createRuntimeOp(builder, self.getLastLoc(), "amdg.async_tdm_gather",
+                      {tdmTokenType(builder)}, args, attrs);
+  if (op && op->getNumResults() > 0)
+    operands[0] = op->getResult(0);
+}
+
+/// utlx_async_tdm_scatter(result_slot, desc, row_indices, src, [barrier,]
+///                        scope, policy)
+/// Returns an async token.
+void utlx::createAsyncTDMScatter(TritonOpBuilder &self,
+                                 std::vector<mlir::Value> &operands) {
+  if (operands.size() != 6 && operands.size() != 7)
+    return;
+  bool hasBarrier = operands.size() == 7;
+  size_t tail = hasBarrier ? 5 : 4;
+  auto scope = extractConstInt(operands[tail]);
+  auto policy = extractConstInt(operands[tail + 1]);
+  if (!scope || !policy)
+    return;
+
+  auto &builder = self.getBuilder();
+  llvm::SmallVector<mlir::Value> args = {operands[1], operands[2], operands[3]};
+  if (hasBarrier)
+    args.push_back(operands[4]);
+  llvm::SmallVector<mlir::NamedAttribute> attrs;
+  addTDMScopeAttr(builder, *scope, attrs);
+  addTDMCachePolicyAttr(builder, *policy, attrs);
+
+  auto *op =
+      createRuntimeOp(builder, self.getLastLoc(), "amdg.async_tdm_scatter",
+                      {tdmTokenType(builder)}, args, attrs);
+  if (op && op->getNumResults() > 0)
+    operands[0] = op->getResult(0);
+}
+
+/// utlx_tdm_prefetch(result_slot, desc, offset..., pred, speculative)
+/// Prefetch the descriptor's tile from global memory into L2. Void.
+void utlx::createTDMPrefetch(TritonOpBuilder &self,
+                             std::vector<mlir::Value> &operands) {
+  if (operands.size() < 4)
+    return;
+  auto speculative = extractConstInt(operands.back());
+  if (!speculative)
+    return;
+
+  auto &builder = self.getBuilder();
+  llvm::SmallVector<mlir::Value> args = {operands[1]};
+  for (size_t i = 2; i < operands.size() - 1; ++i)
+    args.push_back(operands[i]);
+  llvm::SmallVector<mlir::NamedAttribute> attrs;
+  attrs.push_back(builder.getNamedAttr("speculative",
+                                       builder.getBoolAttr(*speculative != 0)));
+
+  createRuntimeOp(builder, self.getLastLoc(), "amdg.tdm_prefetch", {}, args,
+                  attrs);
+}
+
+/// utlx_async_tdm_wait(result_slot, num_outstanding, token...)
+/// Returns the wait's async token.
+void utlx::createAsyncTDMWait(TritonOpBuilder &self,
+                              std::vector<mlir::Value> &operands) {
+  if (operands.size() < 2)
+    return;
+  auto numVal = extractConstInt(operands[1]);
+  if (!numVal || *numVal < 0)
+    return;
+
+  auto &builder = self.getBuilder();
+  llvm::SmallVector<mlir::Value> args(operands.begin() + 2, operands.end());
+  llvm::SmallVector<mlir::NamedAttribute> attrs;
+  attrs.push_back(builder.getNamedAttr(
+      "num", builder.getI32IntegerAttr(static_cast<int32_t>(*numVal))));
+
+  auto *op = createRuntimeOp(builder, self.getLastLoc(), "amdg.async_tdm_wait",
+                             {tdmTokenType(builder)}, args, attrs);
+  if (op && op->getNumResults() > 0)
+    operands[0] = op->getResult(0);
+}
+
+/// utlx_update_tensor_descriptor(result_slot, desc, num_add_offsets,
+///     add_offset..., num_set_bounds, set_bound..., has_pred, [pred,]
+///     clamp_bounds)
+/// Returns the updated descriptor (same type as desc).
+void utlx::createUpdateTensorDescriptor(TritonOpBuilder &self,
+                                        std::vector<mlir::Value> &operands) {
+  if (operands.size() < 6)
+    return;
+  auto numAddVal = extractConstInt(operands[2]);
+  if (!numAddVal || *numAddVal < 0)
+    return;
+  size_t numAdd = static_cast<size_t>(*numAddVal);
+  if (operands.size() < 3 + numAdd + 3)
+    return;
+  auto numSetVal = extractConstInt(operands[3 + numAdd]);
+  if (!numSetVal || *numSetVal < 0)
+    return;
+  size_t numSet = static_cast<size_t>(*numSetVal);
+  size_t hasPredIdx = 3 + numAdd + 1 + numSet;
+  if (operands.size() < hasPredIdx + 2)
+    return;
+  auto hasPredVal = extractConstInt(operands[hasPredIdx]);
+  if (!hasPredVal)
+    return;
+  bool hasPred = *hasPredVal != 0;
+  size_t clampIdx = hasPredIdx + 1 + (hasPred ? 1 : 0);
+  if (operands.size() != clampIdx + 1)
+    return;
+  auto clampVal = extractConstInt(operands[clampIdx]);
+  if (!clampVal)
+    return;
+
+  auto &builder = self.getBuilder();
+  llvm::SmallVector<mlir::Value> args = {operands[1]};
+  for (size_t i = 0; i < numAdd; ++i)
+    args.push_back(operands[3 + i]);
+  for (size_t i = 0; i < numSet; ++i)
+    args.push_back(operands[3 + numAdd + 1 + i]);
+  if (hasPred)
+    args.push_back(operands[hasPredIdx + 1]);
+
+  llvm::SmallVector<mlir::NamedAttribute> attrs;
+  // AttrSizedOperandSegments: (desc, add_offsets, set_bounds, pred). The
+  // generic creation path does not populate it (see createAsyncLoad).
+  attrs.push_back(builder.getNamedAttr(
+      "operandSegmentSizes",
+      builder.getDenseI32ArrayAttr({1, static_cast<int32_t>(numAdd),
+                                    static_cast<int32_t>(numSet),
+                                    hasPred ? 1 : 0})));
+  if (*clampVal != 0)
+    attrs.push_back(
+        builder.getNamedAttr("clamp_bounds", builder.getUnitAttr()));
+
+  auto *op = createRuntimeOp(builder, self.getLastLoc(),
+                             "amdg.update_tensor_descriptor",
+                             {operands[1].getType()}, args, attrs);
+  if (op && op->getNumResults() > 0)
+    operands[0] = op->getResult(0);
 }
 
 void utlx::createReconcileRegionTypes(TritonOpBuilder &self,
