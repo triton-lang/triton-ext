@@ -1074,6 +1074,374 @@ def async_descriptor_store_wait(
     _semantic.builder.create_async_tma_store_wait(pendings, read_only)
 
 
+# ---------------------------------------------------------------------------
+# AMD TDM ops (CDNA5 Tensor Data Mover)
+# ---------------------------------------------------------------------------
+# TLX spellings of upstream Triton's Gluon cdna5.tdm builtins
+# (triton.experimental.gluon.language.amd.cdna5.tdm in triton-lang/triton).
+# Each lowers through a portable plugin op (utlx_async_tdm_*, see
+# ops/NewOps.cpp) that creates the amdg.* MLIR op by registered name, so the
+# same kernel source builds on a Triton whose AMD dialect is absent -- the
+# op then reports itself unavailable via checked_handle instead of failing
+# to build. Descriptors come from make_tensor_descriptor above; destinations
+# and sources are tlx.buffered_tensor shared-memory buffers, as with
+# async_descriptor_load/store.
+
+_TDM_CACHE_CODES = {
+    "": -1,
+    "none": 0,
+    ".ca": 1,
+    "ca": 1,
+    ".cg": 2,
+    "cg": 2,
+    ".wb": 3,
+    "wb": 3,
+    ".cs": 4,
+    "cs": 4,
+    ".wt": 5,
+    "wt": 5,
+    ".cv": 6,
+    "cv": 6,
+}
+_TDM_SCOPE_CODES = {"cta": 0, "gpu": 1, "sys": 2}
+_TDM_POLICY_CODES = {
+    "regular": 0,
+    "none": 1,
+    "high": 2,
+    "last_use": 3,
+}
+
+
+def _tdm_code(table, value, what):
+    value = tl._unwrap_if_constexpr(value)
+    if value is None:
+        return -1
+    if value not in table:
+        raise ValueError(
+            f"tdm {what} must be one of {sorted(table)}, got '{value}'")
+    return table[value]
+
+
+def _tdm_attr_handles(_semantic, cache_modifier, scope, cache_policy,
+                      with_cache):
+    """Encode TDM op attributes as trailing i32 constants for the plugin."""
+    builder = _semantic.builder
+    handles = []
+    if with_cache:
+        handles.append(
+            builder.get_int32(
+                _tdm_code(_TDM_CACHE_CODES, cache_modifier, "cache_modifier")))
+    handles.append(
+        builder.get_int32(_tdm_code(_TDM_SCOPE_CODES, scope, "scope")))
+    handles.append(
+        builder.get_int32(
+            _tdm_code(_TDM_POLICY_CODES, cache_policy, "cache_policy")))
+    return handles
+
+
+def _tdm_pred_handle(pred, _semantic):
+    """Coerce a TDM descriptor predicate to the i32 the op carries."""
+    pred = tl._unwrap_if_constexpr(pred)
+    if isinstance(pred, bool):
+        pred = int(pred)
+    pred = _semantic.to_tensor(pred)
+    if pred.type.is_int1():
+        pred = _semantic.cast(pred, tl.int32)
+    assert pred.type.is_int32(), (
+        f"Expected pred to be an int32 or int1 value, but got {pred.type}")
+    return pred.handle
+
+
+@tl.builtin
+def tdm_update_tensor_descriptor(
+    desc: tl.tensor_descriptor_base,
+    add_offsets=None,
+    set_bounds=None,
+    pred=None,
+    clamp_bounds=False,
+    _semantic=None,
+) -> tl.tensor_descriptor_base:
+    """Return a copy of a TDM descriptor with selected fields rewritten.
+
+    Mirrors upstream ``tdm.update_tensor_descriptor``: ``add_offsets`` moves
+    the tile position only (bounds are untouched), ``set_bounds`` rewrites
+    the bounds outright, ``pred`` replaces the predicate, and
+    ``clamp_bounds=True`` additionally shrinks the bounds by ``add_offsets``
+    so the descriptor carries the out-of-bounds extent of the moved tile.
+    """
+    if add_offsets is None and set_bounds is None and pred is None:
+        raise ValueError(
+            "tdm_update_tensor_descriptor requires at least one of "
+            "add_offsets, set_bounds, pred")
+    clamp_bounds = tl._unwrap_if_constexpr(clamp_bounds)
+    if clamp_bounds:
+        if add_offsets is None:
+            raise ValueError(
+                "tdm_update_tensor_descriptor: clamp_bounds requires "
+                "add_offsets")
+        if set_bounds is not None:
+            raise ValueError(
+                "tdm_update_tensor_descriptor: clamp_bounds and set_bounds "
+                "are mutually exclusive")
+    rank = len(desc.block_shape)
+
+    builder = _semantic.builder
+    args = [desc.handle]
+    add_handles = []
+    if add_offsets is not None:
+        if len(add_offsets) != rank:
+            raise ValueError(
+                f"add_offsets must have length {rank} (descriptor rank), "
+                f"got {len(add_offsets)}")
+        add_handles = _semantic._convert_to_ir_values(add_offsets,
+                                                      require_i64=False)
+    set_handles = []
+    if set_bounds is not None:
+        if len(set_bounds) != rank:
+            raise ValueError(
+                f"set_bounds must have length {rank} (descriptor rank), "
+                f"got {len(set_bounds)}")
+        set_handles = _semantic._convert_to_ir_values(set_bounds,
+                                                      require_i64=False)
+    args.append(builder.get_int32(len(add_handles)))
+    args.extend(add_handles)
+    args.append(builder.get_int32(len(set_handles)))
+    args.extend(set_handles)
+    if pred is not None:
+        args.append(builder.get_int32(1))
+        args.append(_tdm_pred_handle(pred, _semantic))
+    else:
+        args.append(builder.get_int32(0))
+    args.append(builder.get_int32(1 if clamp_bounds else 0))
+
+    handle = checked_handle(builder.utlx_update_tensor_descriptor(args),
+                            "tdm_update_tensor_descriptor")
+    return tl.tensor_descriptor(handle, list(desc.shape), list(desc.strides),
+                                desc.type)
+
+
+@tl.builtin
+def tdm_async_load(
+    desc: tl.tensor_descriptor_base,
+    dest: tlx.buffered_tensor,
+    offsets=None,
+    pred=None,
+    mbarrier: Optional[tlx.mbarrier] = None,
+    warp_used_hint=None,
+    cache_modifier: str = "",
+    scope=None,
+    cache_policy=None,
+    _semantic=None,
+) -> tlx.async_token:
+    """Asynchronously copy a descriptor tile from global to shared memory.
+
+    TLX spelling of upstream ``tdm.async_load``. As upstream, the descriptor
+    is expected to be positioned already (see tdm_update_tensor_descriptor);
+    passing ``offsets`` (and optionally ``pred``) positions it immediately
+    before the copy as a convenience.
+    """
+    if offsets:
+        eff_pred = True if pred is None else pred
+        desc = tdm_update_tensor_descriptor(desc,
+                                            add_offsets=offsets,
+                                            pred=eff_pred,
+                                            clamp_bounds=True,
+                                            _semantic=_semantic)
+    elif pred is not None:
+        desc = tdm_update_tensor_descriptor(desc,
+                                            pred=pred,
+                                            _semantic=_semantic)
+
+    builder = _semantic.builder
+    args = [desc.handle, dest.handle]
+    if mbarrier is not None:
+        args.append(mbarrier.handle)
+    args.extend(
+        _tdm_attr_handles(_semantic,
+                          cache_modifier,
+                          scope,
+                          cache_policy,
+                          with_cache=True))
+    hint = tl._unwrap_if_constexpr(warp_used_hint)
+    args.append(builder.get_int32(-1 if hint is None else int(hint)))
+    token = builder.utlx_async_tdm_copy_global_to_local(args)
+    return tlx.async_token(checked_handle(token, "tdm_async_load"))
+
+
+@tl.builtin
+def tdm_async_load_fused(
+    members,
+    cache_modifier: str = "",
+    scope=None,
+    cache_policy=None,
+    _semantic=None,
+) -> tlx.async_token:
+    """Issue one fused TDM load for 2-4 (desc, dest, warp_used_hint) members.
+
+    TLX spelling of upstream ``tdm.async_load_fused``. Descriptors must
+    already encode their tile offsets, predicates and bounds.
+    """
+    members = tl._unwrap_if_constexpr(members)
+    if not 2 <= len(members) <= 4:
+        raise ValueError(
+            f"tdm_async_load_fused requires 2 to 4 members, got {len(members)}"
+        )
+    builder = _semantic.builder
+    args = [builder.get_int32(len(members))]
+    for desc, dest, hint in members:
+        args.append(desc.handle)
+    for desc, dest, hint in members:
+        args.append(dest.handle)
+    for desc, dest, hint in members:
+        hint = tl._unwrap_if_constexpr(hint)
+        if hint is None:
+            raise ValueError(
+                "tdm_async_load_fused members require a warp_used_hint")
+        args.append(builder.get_int32(int(hint)))
+    args.extend(
+        _tdm_attr_handles(_semantic,
+                          cache_modifier,
+                          scope,
+                          cache_policy,
+                          with_cache=True))
+    token = builder.utlx_async_tdm_fused_copy_global_to_local(args)
+    return tlx.async_token(checked_handle(token, "tdm_async_load_fused"))
+
+
+@tl.builtin
+def tdm_async_store(
+    desc: tl.tensor_descriptor_base,
+    src: tlx.buffered_tensor,
+    offsets=None,
+    mbarrier: Optional[tlx.mbarrier] = None,
+    cache_modifier: str = "",
+    scope=None,
+    cache_policy=None,
+    _semantic=None,
+) -> tlx.async_token:
+    """Asynchronously copy a shared-memory buffer to a descriptor tile.
+
+    TLX spelling of upstream ``tdm.async_store``; see tdm_async_load for how
+    ``offsets`` positions the descriptor first. Stores take no ``pred``.
+    """
+    if offsets:
+        desc = tdm_update_tensor_descriptor(desc,
+                                            add_offsets=offsets,
+                                            clamp_bounds=True,
+                                            _semantic=_semantic)
+    builder = _semantic.builder
+    args = [desc.handle, src.handle]
+    if mbarrier is not None:
+        args.append(mbarrier.handle)
+    args.extend(
+        _tdm_attr_handles(_semantic,
+                          cache_modifier,
+                          scope,
+                          cache_policy,
+                          with_cache=True))
+    token = builder.utlx_async_tdm_copy_local_to_global(args)
+    return tlx.async_token(checked_handle(token, "tdm_async_store"))
+
+
+@tl.builtin
+def tdm_async_gather(
+    desc: tl.tensor_descriptor_base,
+    src_row_indices: tl.tensor,
+    dst: tlx.buffered_tensor,
+    mbarrier: Optional[tlx.mbarrier] = None,
+    scope=None,
+    cache_policy=None,
+    _semantic=None,
+) -> tlx.async_token:
+    """Gather non-contiguous global rows into shared memory via TDM.
+
+    TLX spelling of upstream ``tdm.async_gather`` (2D descriptors only; the
+    column offset and predicate ride on the descriptor).
+    """
+    assert len(desc.block_shape) == 2, (
+        f"TDM gather only supports 2D tensors, got {len(desc.block_shape)}D")
+    builder = _semantic.builder
+    args = [desc.handle, src_row_indices.handle, dst.handle]
+    if mbarrier is not None:
+        args.append(mbarrier.handle)
+    args.extend(
+        _tdm_attr_handles(_semantic, "", scope, cache_policy,
+                          with_cache=False))
+    token = builder.utlx_async_tdm_gather(args)
+    return tlx.async_token(checked_handle(token, "tdm_async_gather"))
+
+
+@tl.builtin
+def tdm_async_scatter(
+    desc: tl.tensor_descriptor_base,
+    dst_row_indices: tl.tensor,
+    src: tlx.buffered_tensor,
+    mbarrier: Optional[tlx.mbarrier] = None,
+    scope=None,
+    cache_policy=None,
+    _semantic=None,
+) -> tlx.async_token:
+    """Scatter shared memory to non-contiguous global rows via TDM.
+
+    TLX spelling of upstream ``tdm.async_scatter`` (2D descriptors only; the
+    column offset rides on the descriptor).
+    """
+    assert len(desc.block_shape) == 2, (
+        f"TDM scatter only supports 2D tensors, got {len(desc.block_shape)}D")
+    builder = _semantic.builder
+    args = [desc.handle, dst_row_indices.handle, src.handle]
+    if mbarrier is not None:
+        args.append(mbarrier.handle)
+    args.extend(
+        _tdm_attr_handles(_semantic, "", scope, cache_policy,
+                          with_cache=False))
+    token = builder.utlx_async_tdm_scatter(args)
+    return tlx.async_token(checked_handle(token, "tdm_async_scatter"))
+
+
+@tl.builtin
+def tdm_prefetch(
+    desc: tl.tensor_descriptor_base,
+    offsets: list,
+    pred=True,
+    speculative=False,
+    _semantic=None,
+) -> None:
+    """Prefetch a descriptor tile from global memory into L2.
+
+    TLX spelling of upstream ``tdm.prefetch``.
+    """
+    builder = _semantic.builder
+    offset_handles = _semantic._convert_to_ir_values(offsets,
+                                                     require_i64=False)
+    pred_handle = _semantic.to_tensor(pred).handle
+    speculative = tl._unwrap_if_constexpr(speculative)
+    builder.utlx_tdm_prefetch(
+        [desc.handle] + offset_handles +
+        [pred_handle, builder.get_int32(1 if speculative else 0)])
+
+
+@tl.builtin
+def tdm_async_wait(
+    num_outstanding: tl.constexpr = 0,
+    tokens=None,
+    _semantic=None,
+) -> tlx.async_token:
+    """Wait until at most ``num_outstanding`` TDM copies are outstanding.
+
+    TLX spelling of upstream ``tdm.async_wait``.
+    """
+    num_outstanding = tl._unwrap_if_constexpr(num_outstanding)
+    if tokens is None:
+        tokens = []
+    handles = [
+        t.handle for t in tokens if t is not None and t.handle is not None
+    ]
+    args = [_semantic.builder.get_int32(int(num_outstanding))] + handles
+    token = _semantic.builder.utlx_async_tdm_wait(args)
+    return tlx.async_token(checked_handle(token, "tdm_async_wait"))
+
+
 # Monkey-patch __getitem__ for indexing support
 @tl.builtin
 def _buffered_tensor_getitem(self, buffer_idx, _semantic=None):
