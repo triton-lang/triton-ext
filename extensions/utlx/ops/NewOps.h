@@ -27,6 +27,20 @@ void createNamedBarrierWait(TritonOpBuilder &, std::vector<mlir::Value> &);
 // AMD ops
 void createReadBarrierPhase(TritonOpBuilder &, std::vector<mlir::Value> &);
 
+// AMD TDM ops (CDNA5 Tensor Data Mover, amdg.*)
+void createAsyncTDMCopyGlobalToLocal(TritonOpBuilder &,
+                                     std::vector<mlir::Value> &);
+void createAsyncTDMFusedCopyGlobalToLocal(TritonOpBuilder &,
+                                          std::vector<mlir::Value> &);
+void createAsyncTDMCopyLocalToGlobal(TritonOpBuilder &,
+                                     std::vector<mlir::Value> &);
+void createAsyncTDMGather(TritonOpBuilder &, std::vector<mlir::Value> &);
+void createAsyncTDMScatter(TritonOpBuilder &, std::vector<mlir::Value> &);
+void createTDMPrefetch(TritonOpBuilder &, std::vector<mlir::Value> &);
+void createAsyncTDMWait(TritonOpBuilder &, std::vector<mlir::Value> &);
+void createUpdateTensorDescriptor(TritonOpBuilder &,
+                                  std::vector<mlir::Value> &);
+
 // Modified ops (wrappers for extended signatures)
 void createFpToFpWithRbits(TritonOpBuilder &, std::vector<mlir::Value> &);
 void createMakeTensorDescWithDescPtr(TritonOpBuilder &,

@@ -86,6 +86,17 @@ def is_hip_cdna4():
         return False
 
 
+def is_hip_cdna5():
+    """gfx1250 (CDNA5): the arch with the TDM (Tensor Data Mover) ops."""
+    if not is_hip():
+        return False
+    try:
+        return triton.runtime.driver.active.get_current_target().arch in (
+            "gfx1250", )
+    except Exception:
+        return False
+
+
 def get_current_target():
     return triton.runtime.driver.active.get_current_target()
 
