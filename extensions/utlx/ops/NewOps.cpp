@@ -6,6 +6,7 @@
 /// is printed and the call is a no-op.
 
 #include "ops/NewOps.h"
+#include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
