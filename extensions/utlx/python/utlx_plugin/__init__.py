@@ -92,6 +92,7 @@ __all__ = [
     "tdm_async_wait",
     # barriers
     "cluster_barrier",
+    "workgroup_barrier",
     "alloc_barriers",
     "alloc_warp_barrier",
     "barrier_expect_bytes",
@@ -153,6 +154,7 @@ from .barrier import (
     cluster_barrier,
     named_barrier_arrive,
     named_barrier_wait,
+    workgroup_barrier,
 )
 from .dynamic_launch import (
     _alloc_clc_responses,

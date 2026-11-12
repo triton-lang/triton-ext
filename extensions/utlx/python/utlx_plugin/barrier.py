@@ -7,17 +7,34 @@ These ops call plugin custom ops registered by uTLXPlugin.cpp:
   - utlx_barrier_expect(mbarrier, expectBytes, pred)
   - utlx_named_barrier_wait(barrier, numThreads)
   - utlx_named_barrier_arrive(barrier, numThreads)
+  - utlx_workgroup_barrier()
 """
 
 import triton.language.core as tl
 
 from . import types as tlx
+from .mem_ops import _detect_amd
 from .utility import is_hip
 
 
 @tl.builtin
 def cluster_barrier(_semantic=None):
     _semantic.builder.create_cluster_barrier()
+
+
+@tl.builtin
+def workgroup_barrier(_semantic=None):
+    """AMD workgroup barrier that fences shared memory only.
+
+    It does not wait for outstanding global loads (on gfx1250
+    ``tl.debug_barrier()`` does), and scheduling barriers keep other
+    instructions from moving across it. Every thread in the workgroup must
+    reach it. It does not wait for outstanding TDM copies; use
+    ``tdm_async_wait`` for those.
+    """
+    if not _detect_amd(_semantic.builder):
+        raise ValueError("workgroup_barrier requires an AMD target")
+    _semantic.builder.utlx_workgroup_barrier([])
 
 
 @tl.builtin

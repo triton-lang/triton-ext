@@ -1104,6 +1104,7 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_named_barrier_wait", utlx::createNamedBarrierWait},
       // New AMD ops (runtime op creation)
       {"utlx_read_barrier_phase", utlx::createReadBarrierPhase},
+      {"utlx_workgroup_barrier", utlx::createWorkgroupBarrier},
       // AMD TDM ops (runtime op creation)
       {"utlx_async_tdm_copy_global_to_local",
        utlx::createAsyncTDMCopyGlobalToLocal},
