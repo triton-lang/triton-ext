@@ -3,10 +3,26 @@
 
 #include "../TritonAppleGPUToMSL/AgpuEmitter.h"
 #include "TritonAppleGPUToMSL/Passes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/Transforms/Passes.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/LinearLayoutConversions.h"
+#include "triton/Tools/LinearLayout.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
+#include <map>
+#include <set>
+
 #include <string>
 
 using namespace mlir;
@@ -47,6 +63,13 @@ public:
 
   void runOnOperation() override {
     ModuleOp mod = getOperation();
+    RewritePatternSet expand(mod.getContext());
+    arith::populateCeilFloorDivExpandOpsPatterns(expand);
+    if (failed(applyPatternsGreedily(mod, std::move(expand)))) {
+      signalPassFailure();
+      return;
+    }
+
     std::string msl;
     llvm::raw_string_ostream ss(msl);
 
@@ -56,6 +79,18 @@ public:
       return;
     }
     ss.flush();
+
+    // Tells the host launcher whether the whole grid must be resident at once,
+    // and which buffers it must make resident.
+    const agpu::LaunchFacts facts = bridge::launchFactsOf(mod);
+    const auto flag = [&](const char *name, bool value) {
+      mod->setAttr(
+          name, IntegerAttr::get(IntegerType::get(mod.getContext(), 1), value));
+    };
+    flag(agpu::kGridResidencyAttr,
+         agpu::residencyFor(facts) == agpu::GridResidency::CoResident);
+    flag(agpu::kExposesAddressesAttr, facts.exposesAddresses);
+    flag(agpu::kReadsAddressesAttr, facts.readsAddresses);
 
     if (mslDumpEnabled())
       llvm::errs() << "// -----// MSL Dump After EmitMSL "

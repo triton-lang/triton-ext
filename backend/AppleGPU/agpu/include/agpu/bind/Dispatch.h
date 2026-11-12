@@ -43,18 +43,6 @@ using OpHandler = std::function<Decision(const OpView &)>;
 struct OpFamily {
   std::vector<std::string_view> names;
   OpHandler body;
-
-  operator OpHandler() const {
-    OpHandler b = body;
-    if (names.empty())
-      return b;
-    return [names = names, body = std::move(b)](const OpView &op) -> Decision {
-      for (std::string_view n : names)
-        if (n == op.name)
-          return body(op);
-      return Decision::notMine();
-    };
-  }
 };
 
 // The families, in the order they are tried.
@@ -74,6 +62,11 @@ public:
 
   void add(std::string who, OpHandler h) {
     add(std::move(who), OpFamily{{}, std::move(h)});
+  }
+
+  Decision run(const OpView &op) const {
+    std::string ignored;
+    return runNamed(op, ignored);
   }
 
   // Run and report which handler answered. One traversal: a second pass would
@@ -104,6 +97,13 @@ public:
   }
 
   std::size_t size() const { return entries_.size(); }
+
+  std::vector<std::string> order() const {
+    std::vector<std::string> out;
+    for (const Entry &e : entries_)
+      out.push_back(e.who);
+    return out;
+  }
 
 private:
   struct Entry {

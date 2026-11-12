@@ -56,6 +56,15 @@ public:
     return l;
   }
 
+  // Null means "no condition" throughout the emitters.
+  Expr *allOf(Expr *a, Expr *b) {
+    if (!a)
+      return b;
+    if (!b)
+      return a;
+    return binary(BinOp::LAnd, a, b);
+  }
+
   Expr *binary(BinOp op, Expr *lhs, Expr *rhs) {
     if (auto *f = foldBinary(op, lhs, rhs))
       return f;
@@ -65,6 +74,7 @@ public:
   }
 
   Expr *add(Expr *a, Expr *b) { return binary(BinOp::Add, a, b); }
+  Expr *mul(Expr *a, Expr *b) { return binary(BinOp::Mul, a, b); }
 
   Expr *chain(BinOp op, const std::vector<Expr *> &parts) {
     if (parts.empty())
@@ -75,25 +85,94 @@ public:
     return e;
   }
 
+  Expr *unary(UnOp op, Expr *e) { return make<Unary>(op, e); }
+  Expr *ternary(Expr *c, Expr *t, Expr *f) { return make<Ternary>(c, t, f); }
   Expr *cast(Type to, Expr *e) { return make<Cast>(std::move(to), e); }
   Expr *cast(Type to, Expr *e, Cast::Style s) {
     return make<Cast>(std::move(to), e, s);
   }
+  Expr *bitcast(Type to, Expr *e) {
+    return make<Cast>(std::move(to), e, Cast::Style::Bits);
+  }
+  Expr *construct(Type to, Expr *e) {
+    return make<Cast>(std::move(to), e, Cast::Style::Functional);
+  }
   Expr *subscript(Expr *b, Expr *i) { return make<Subscript>(b, i); }
   Expr *member(Expr *b, std::string f) { return make<Member>(b, std::move(f)); }
   Expr *deref(Expr *e) { return make<Deref>(e); }
+  Expr *addrOf(Expr *e) {
+    if (e->kind == ExprKind::Deref)
+      return static_cast<Deref *>(e)->operand;
+    return make<AddrOf>(e);
+  }
+
+  Call *call(std::string callee, SmallVec<Expr *, 4> args) {
+    return make<Call>(std::move(callee), std::move(args));
+  }
+
+  // `f<half>(...)`, for a callee whose type parameter appears only in its
+  // return type.
+  Call *call(std::string callee, SmallVec<Str, 2> targs,
+             SmallVec<Expr *, 4> args) {
+    Call *c = call(std::move(callee), std::move(args));
+    c->templateArgs = std::move(targs);
+    return c;
+  }
 
   // ── statements ──────────────────────────────────────────────────────────
 
   Decl *declStmt(Type t, std::string n, Expr *init = nullptr) {
     return make<Decl>(std::move(t), std::move(n), init);
   }
+  ArrayDecl *arrayDecl(Type elem, std::string n, SmallVec<Expr *, 4> init) {
+    auto *d =
+        make<ArrayDecl>(std::move(elem), std::move(n), (int64_t)init.size());
+    d->init = std::move(init);
+    return d;
+  }
+  ArrayDecl *arrayDecl(Type elem, std::string n, int64_t count) {
+    return make<ArrayDecl>(std::move(elem), std::move(n), count);
+  }
   Assign *assign(Expr *target, Expr *value) {
     return make<Assign>(target, value);
+  }
+  Assign *assignOp(BinOp op, Expr *target, Expr *value) {
+    auto *a = make<Assign>(target, value);
+    a->compound = true;
+    a->compoundOp = op;
+    return a;
+  }
+  ExprStmt *exprStmt(Expr *e) { return make<ExprStmt>(e); }
+  Break *breakStmt() { return make<Break>(); }
+  Continue *continueStmt() { return make<Continue>(); }
+  Barrier *barrier(Barrier::Scope s = Barrier::Scope::Threadgroup) {
+    return make<Barrier>(s);
+  }
+  // Must not merge with an adjacent barrier, e.g. the pair around a
+  // double-buffer swap.
+  Barrier *hardBarrier(Barrier::Scope s = Barrier::Scope::Threadgroup) {
+    auto *b = make<Barrier>(s);
+    b->hard = true;
+    return b;
+  }
+  Return *returnStmt(Expr *v = nullptr) {
+    auto *r = make<Return>();
+    r->value = v;
+    return r;
+  }
+  Return *returnStructStmt(SmallVec<Expr *, 4> fields) {
+    auto *r = make<Return>();
+    r->structFields = std::move(fields);
+    return r;
   }
 
   If *ifStmt(Expr *cond, Block thenBody) {
     return make<If>(cond, std::move(thenBody));
+  }
+  If *ifElse(Expr *cond, Block thenBody, Block elseBody) {
+    auto *n = make<If>(cond, std::move(thenBody));
+    n->elseBody = std::move(elseBody);
+    return n;
   }
 
   enum class GuardFold {
@@ -139,7 +218,21 @@ public:
     }
   }
 
+  For *forStmt(Stmt *init, Expr *cond, Stmt *step, Block body) {
+    return make<For>(init, cond, step, std::move(body));
+  }
+  While *whileStmt(Expr *cond, Block body) {
+    return make<While>(cond, std::move(body));
+  }
+  Scope *scope(Block body) { return make<Scope>(std::move(body)); }
+  StateMachine *stateMachine(std::string stateVar, int64_t entry = 0) {
+    auto *m = make<StateMachine>();
+    m->stateVar = std::move(stateVar);
+    m->entry = entry;
+    return m;
+  }
   Function *function() { return make<Function>(); }
+  StructDecl *structDecl() { return make<StructDecl>(); }
 
   std::size_t nodeCount() const { return nodes_.size(); }
 
