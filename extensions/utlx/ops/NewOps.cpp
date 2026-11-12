@@ -263,6 +263,28 @@ void utlx::createReadBarrierPhase(TritonOpBuilder &self,
     operands[0] = op->getResult(0);
 }
 
+/// rocdl.sched.barrier with an empty mask: nothing is scheduled across it.
+static void createSchedBarrierNone(mlir::OpBuilder &builder,
+                                   mlir::Location loc) {
+  llvm::SmallVector<mlir::NamedAttribute> attrs;
+  if (auto mask = mlir::parseAttribute("#rocdl<sched_group_mask none>",
+                                       builder.getContext()))
+    attrs.push_back(builder.getNamedAttr("mask", mask));
+  createRuntimeOp(builder, loc, "rocdl.sched.barrier", {}, {}, attrs);
+}
+
+/// utlx_workgroup_barrier(): TLX's workgroup_barrier. The local barrier orders
+/// shared memory; the scheduling barriers keep the scheduler from moving other
+/// instructions across it.
+void utlx::createWorkgroupBarrier(TritonOpBuilder &self,
+                                  std::vector<mlir::Value> &) {
+  auto &builder = self.getBuilder();
+  auto loc = self.getLastLoc();
+  createSchedBarrierNone(builder, loc);
+  self.create<ttg::BarrierOp>(ttg::AddrSpace::Local);
+  createSchedBarrierNone(builder, loc);
+}
+
 // ---------------------------------------------------------------------------
 // Modified ops
 // ---------------------------------------------------------------------------

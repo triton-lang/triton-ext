@@ -26,6 +26,7 @@ void createNamedBarrierWait(TritonOpBuilder &, std::vector<mlir::Value> &);
 
 // AMD ops
 void createReadBarrierPhase(TritonOpBuilder &, std::vector<mlir::Value> &);
+void createWorkgroupBarrier(TritonOpBuilder &, std::vector<mlir::Value> &);
 
 // AMD TDM ops (CDNA5 Tensor Data Mover, amdg.*)
 void createAsyncTDMCopyGlobalToLocal(TritonOpBuilder &,
