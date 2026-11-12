@@ -77,6 +77,49 @@ template <class Op> struct GenericOpPattern : public OpConversionPattern<Op> {
   }
 };
 
+// AMD headers are not shipped in every Triton wheel. These registered runtime
+// ops still need type conversion: gather/scatter row indices are tensors, and
+// leaving the ops legal with their original unencoded operands prevents the
+// conversion from resolving its source materializations.
+struct TDMRowIndicesPattern : public ConversionPattern {
+  TDMRowIndicesPattern(TypeConverter &converter, StringRef name,
+                       MLIRContext *context)
+      : ConversionPattern(converter, name, 1, context) {}
+
+  LogicalResult
+  matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+                  ConversionPatternRewriter &rewriter) const override {
+    SmallVector<Type> types;
+    if (failed(getTypeConverter()->convertTypes(op->getResultTypes(), types)))
+      return failure();
+    auto *converter = getTypeConverter<TritonGPUTypeConverter>();
+    auto indicesTy = cast<RankedTensorType>(operands[1].getType());
+    // The layout the AMD backend gives these ops when it creates them itself
+    // (getTDMGatherScatterIndexEncoding): one instruction reads up to 256 bits
+    // of indices from SGPRs, so every lane holds the same indices, and each
+    // warp holds runs of consecutive rows that one instruction covers.
+    unsigned rowsPerInstr = 256 / indicesTy.getElementTypeBitWidth();
+    auto parent = BlockedEncodingAttr::get(
+        getContext(), ArrayRef<unsigned>{1, rowsPerInstr},
+        ArrayRef<unsigned>{
+            static_cast<unsigned>(converter->getThreadsPerWarp()), 1},
+        ArrayRef<unsigned>{1, static_cast<unsigned>(converter->getNumWarps())},
+        ArrayRef<unsigned>{0, 1},
+        CGAEncodingAttr::get1CTALayout(getContext(), /*rank=*/2));
+    auto encoding = SliceEncodingAttr::get(getContext(), 0, parent);
+    SmallVector<Value> converted(operands);
+    converted[1] = ConvertLayoutOp::create(
+        rewriter, op->getLoc(), indicesTy.cloneWithEncoding(encoding),
+        operands[1]);
+    OperationState state(op->getLoc(), op->getName());
+    state.addOperands(converted);
+    state.addTypes(types);
+    state.addAttributes(op->getAttrs());
+    rewriter.replaceOp(op, rewriter.create(state)->getResults());
+    return success();
+  }
+};
+
 // --- TLX explicit register-layout ops -------------------------------------
 //
 // tlx.require_layout carries the encoding the kernel asked for in its *result*
@@ -978,6 +1021,16 @@ public:
     FuncArgRenamer renamer;
     populateFunctionTypeConversions(typeConverter, renamer, patterns);
     populateTritonPatterns(typeConverter, patterns, numCTAs);
+
+    if (target.find("hip:") == 0) {
+      for (StringRef name :
+           {"amdg.async_tdm_gather", "amdg.async_tdm_scatter"}) {
+        convTarget.addDynamicallyLegalOp(
+            OperationName(name, context),
+            [&](Operation *op) { return typeConverter.isLegal(op); });
+        patterns.add<TDMRowIndicesPattern>(typeConverter, name, context);
+      }
+    }
     // TODO: can we use
     //    mlir::scf::populateSCFStructurealTypeConversionsAndLegality(...) here?
     populateSCFPatterns(typeConverter, patterns);
