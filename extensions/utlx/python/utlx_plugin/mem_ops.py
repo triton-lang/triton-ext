@@ -843,6 +843,7 @@ def make_tensor_descriptor(
     _semantic=None,
 ) -> tl.tensor_descriptor_base:
     """Create a TMA descriptor on device."""
+    desc_ptr = tl._unwrap_if_constexpr(desc_ptr)
     if desc_ptr is not None and not isinstance(desc_ptr,
                                                tlx.tensor_descriptor_ptr):
         raise TypeError(
