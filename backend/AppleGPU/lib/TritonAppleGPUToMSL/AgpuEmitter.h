@@ -305,6 +305,9 @@ private:
 
   agpu::CoordSource coordSourceOf(RankedTensorType ty);
 
+  agpu::Decision emitRebindOp(const agpu::OpView &o);
+  void registerRebindHandler();
+
   int64_t numWarps() const;
 
   ModuleOp mod_;
