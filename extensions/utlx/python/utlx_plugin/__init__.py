@@ -823,6 +823,7 @@ _patch_gluon_builder()
 PLUGIN_DIR = _compat.PLUGIN_DIR
 PLUGIN_LIBRARY = _compat.PLUGIN_LIBRARY
 _compat.register_plugin(PLUGIN_LIBRARY)
+_compat.install_runtime_flags()
 _compat.install_semantic_helpers()
 _compat.install_codegen_helpers()
 

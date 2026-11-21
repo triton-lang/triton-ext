@@ -11,6 +11,9 @@ unrecognised". This module adds them:
   forwarded to the AMDGPU backend exactly as the fork does, by appending them to
   the flags ``make_amdgcn`` hands each ``llvm.translate_*`` call (Triton 3.8)
   or ``compile_amdgpu`` (Triton 3.9).
+* ``mfma_vgpr_form`` sets ``amdgpu-mfma-vgpr-form`` when not None, and
+  ``disable_packed_fp32_ops`` turns off the ``packed-fp32-ops`` target feature
+  of gfx950 kernels that use matrix instructions, both as in the fork.
 * ``llvm_cl_opts``, ``"name[=value],..."`` (a bare name means true) or
   ``((name, value), ...)``, adds LLVM command-line options the same way, after
   the codegen flags so they override them, as in the fork.
@@ -29,6 +32,7 @@ Triton that already has them.
 
 import contextvars
 import dataclasses
+import re
 
 # Option name -> LLVM flag, as in the fork's _get_codegen_flags.
 _CODEGEN_FLAGS = {
@@ -42,19 +46,29 @@ _CODEGEN_FLAGS = {
     "amdgpu-disable-unclustered-high-rp-reschedule",
 }
 
-# The llvm entry points make_amdgcn passes its flag list to, as the fifth
-# positional argument (after src/path, triple, arch, features), as
-# compile_amdgpu takes it too.
+# As the fork's get_amdgpu_codegen_features matches them.
+_MATRIX_INTRINSIC_RE = re.compile(r"@llvm\.amdgcn\.(?:mfma|smfmac|wmma)\.")
+
+# The llvm entry points make_amdgcn passes its target features and flag list
+# to, as the fourth and fifth positional arguments (after src/path, triple,
+# arch), as compile_amdgpu takes them too.
 _FLAGGED_LLVM_FUNCS = ("translate_to_mir", "dump_sched_dag",
                        "translate_mir_to_asm", "translate_to_asm")
+_FEATURES_ARG = 3
 _FLAGS_ARG = 4
 
 _extra_flags = contextvars.ContextVar("utlx_extra_llvm_flags", default=())
+_extra_features = contextvars.ContextVar("utlx_extra_llvm_features",
+                                         default=())
 
 
 def _with_extras(args, kwargs):
     """``args``/``kwargs`` of a codegen call with the active extras added."""
     args = list(args)
+    features = _extra_features.get()
+    if features and len(args) > _FEATURES_ARG:
+        args[_FEATURES_ARG] = ",".join(f for f in (args[_FEATURES_ARG],
+                                                   *features) if f)
     flags = _extra_flags.get()
     if flags:
         if "flags" in kwargs:
@@ -117,12 +131,17 @@ def install():
         enable_sched_group_barrier_scheduler: bool = False
         sched_group_barrier_mfma_per_dwordx4: int = 4
         sched_group_barrier_required_region_count: int = 0
+        mfma_vgpr_form: bool | None = None
+        disable_packed_fp32_ops: bool = False
         llvm_cl_opts: str | tuple[tuple[str, str], ...] = ""
 
         def __post_init__(self):
             super().__post_init__()
             object.__setattr__(self, "llvm_cl_opts",
                                _parse_llvm_cl_opts(self.llvm_cl_opts))
+            if self.mfma_vgpr_form is not None and type(
+                    self.mfma_vgpr_form) is not bool:
+                raise ValueError("mfma_vgpr_form must be a bool or None")
             if self.sched_group_barrier_mfma_per_dwordx4 <= 0:
                 raise ValueError(
                     "sched_group_barrier_mfma_per_dwordx4 must be positive")
@@ -150,13 +169,23 @@ def install():
     def make_amdgcn(src, metadata, options):
         flags = tuple(flag for name, flag in _CODEGEN_FLAGS.items()
                       if getattr(options, name, False))
+        if options.mfma_vgpr_form is not None:
+            flags += (
+                f"amdgpu-mfma-vgpr-form={str(options.mfma_vgpr_form).lower()}",
+            )
         # Last, so they override the flags above, as in the fork.
         flags += tuple(f"{name}={value}"
                        for name, value in options.llvm_cl_opts)
-        token = _extra_flags.set(flags)
+        features = ()
+        if (options.disable_packed_fp32_ops and options.arch == "gfx950"
+                and _MATRIX_INTRINSIC_RE.search(src)):
+            features = ("-packed-fp32-ops", )
+        flags_token = _extra_flags.set(flags)
+        features_token = _extra_features.set(features)
         try:
             return orig_make_amdgcn(src, metadata, options)
         finally:
-            _extra_flags.reset(token)
+            _extra_features.reset(features_token)
+            _extra_flags.reset(flags_token)
 
     hip.HIPBackend.make_amdgcn = staticmethod(make_amdgcn)
