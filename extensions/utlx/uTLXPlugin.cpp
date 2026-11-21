@@ -982,6 +982,33 @@ static void registerWidenUnalignedBufferLoadsPassFn() {
   utlx::registerWidenUnalignedBufferLoadsPass();
 }
 
+static void addKeepBufferOpLayoutPass(mlir::PassManager *pm,
+                                      const std::vector<std::string> &) {
+  pm->addPass(utlx::createKeepBufferOpLayoutPass());
+}
+
+static void registerKeepBufferOpLayoutPassFn() {
+  utlx::registerKeepBufferOpLayoutPass();
+}
+
+static void addHideBufferOpBasesPass(mlir::PassManager *pm,
+                                     const std::vector<std::string> &) {
+  pm->addPass(utlx::createHideBufferOpBasesPass());
+}
+
+static void registerHideBufferOpBasesPassFn() {
+  utlx::registerHideBufferOpBasesPass();
+}
+
+static void addRestoreBufferOpBasesPass(mlir::PassManager *pm,
+                                        const std::vector<std::string> &) {
+  pm->addPass(utlx::createRestoreBufferOpBasesPass());
+}
+
+static void registerRestoreBufferOpBasesPassFn() {
+  utlx::registerRestoreBufferOpBasesPass();
+}
+
 // --- Ported AMD passes ---
 // NOTE: AMD barrier passes are disabled until triton-tlx-core-changes patch
 // is applied. Uncomment when patched triton is available:
@@ -1052,6 +1079,12 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       {"utlx_widen_unaligned_buffer_loads", TRITON_EXT_VERSION,
        addWidenUnalignedBufferLoadsPass,
        registerWidenUnalignedBufferLoadsPassFn},
+      {"utlx_keep_buffer_op_layout", TRITON_EXT_VERSION,
+       addKeepBufferOpLayoutPass, registerKeepBufferOpLayoutPassFn},
+      {"utlx_hide_buffer_op_bases", TRITON_EXT_VERSION,
+       addHideBufferOpBasesPass, registerHideBufferOpBasesPassFn},
+      {"utlx_restore_buffer_op_bases", TRITON_EXT_VERSION,
+       addRestoreBufferOpBasesPass, registerRestoreBufferOpBasesPassFn},
       // Ported AMD passes (disabled until patched triton is available)
       // {"utlx_amd_lower_barrier_ops", TRITON_EXT_VERSION,
       //  addAMDLowerBarrierOpsPass, registerAMDLowerBarrierOpsPassFn},
@@ -1105,6 +1138,9 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       // New AMD ops (runtime op creation)
       {"utlx_read_barrier_phase", utlx::createReadBarrierPhase},
       {"utlx_workgroup_barrier", utlx::createWorkgroupBarrier},
+      {"utlx_buffer_load", utlx::createBufferLoad},
+      {"utlx_buffer_load_to_local", utlx::createBufferLoadToLocal},
+      {"utlx_buffer_store", utlx::createBufferStore},
       // AMD TDM ops (runtime op creation)
       {"utlx_async_tdm_copy_global_to_local",
        utlx::createAsyncTDMCopyGlobalToLocal},

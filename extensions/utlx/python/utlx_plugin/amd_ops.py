@@ -10,11 +10,13 @@ module provides each one on upstream Triton with the same results:
   ``amd_register_class_anchor``, ``amd_mfma_commit``, ``assert_same_layout``,
   ``amd_sched_barrier``, ``amd_iglp_opt``, ``assume_uniform``) validate their
   arguments as the fork does and return their inputs unchanged.
+* ``buffer_load_to_local`` is the fork's amdg.buffer_load_to_local, with its
+  trusted ``contiguity``, as are ``tlx.buffer_load`` and ``buffer_store``
+  (layout_ops); passes/amd/BufferOps.cpp carries them through the stock
+  pipeline.
 * Ops with an upstream equivalent are rewritten onto it:
   ``amd_scheduled_mfma`` is ``tl.dot``, ``rematerialized_range`` is
-  ``tl.arange``, ``buffer_load_to_local`` is ``async_load`` on ``ptr +
-  offsets`` (the AMD backend's buffer-op conversion turns that back into a
-  buffer load), and ``buffer_atomic_add`` is ``tl.atomic_add`` on
+  ``tl.arange``, and ``buffer_atomic_add`` is ``tl.atomic_add`` on
   ``ptr + offsets``.
 * ``extract_slice`` selects the slice with reshape/permute/split rather than
   ``amdg.extract_slice``, which needs encoded types TTIR does not have yet.
@@ -31,6 +33,7 @@ import builtins
 
 import triton.language as tlang
 import triton.language.core as tl
+from triton._C.libtriton import ir
 from triton.runtime.jit import jit
 
 from . import types as tlx
@@ -62,6 +65,82 @@ def _verify_buffer_ops(ptr, offsets, mask=None, other=None):
         assert mask is not None, "when other is set, mask must also be set"
 
 
+def _native_buffer_ops(semantic, offsets, cache=None, has_result=True):
+    """Whether to emit the amdg buffer ops directly, as the fork does.
+
+    Only for offsets with an explicit layout: the ops keep it, and their
+    trusted ``contiguity`` holds for it. Coalesce does not lay these ops out,
+    so offsets without one take the ``ptr + offsets`` fallback, which it does,
+    with the contiguity as axis-analysis hints (:func:`_trusted_ptrs`).
+    A cache modifier is set on the op's result afterwards
+    (:func:`_set_cache_policy`), which needs Triton 3.9's cache-policy
+    attribute and an op with a result; anything else that sets one keeps the
+    fallback.
+    """
+    b = semantic.builder
+    if (getattr(b.options, "backend_name", None) != "hip"
+            or not hasattr(b, "utlx_buffer_load")
+            or not isinstance(offsets.type, _carrier_type)):
+        return False
+    return not _uw(cache) or (has_result and hasattr(b, "get_cache_policy"))
+
+
+def _trusted_ptrs(semantic, ptr, offsets, contiguity):
+    """``ptr + offsets``, with the fork's trusted ``contiguity`` as hints: runs
+    of that many elements along the minor dim, starting aligned."""
+    ptrs = semantic.add(ptr, offsets, False)
+    contiguity = _uw(contiguity)
+    if contiguity > 1 and ptrs.type.is_block():
+        rank = len(ptrs.type.shape)
+        nbytes = contiguity * ptr.type.element_ty.primitive_bitwidth // 8
+        ctx = ptrs.handle.get_context()
+        ptrs.handle.set_attr(
+            "tt.contiguity", ir.make_attr([1] * (rank - 1) + [contiguity],
+                                          ctx))
+        ptrs.handle.set_attr("tt.divisibility",
+                             ir.make_attr([1] * (rank - 1) + [nbytes], ctx))
+    return ptrs
+
+
+def _set_cache_policy(semantic, handle, cache):
+    """Give the buffer op defining ``handle`` the cache modifier ``cache``."""
+    cache = _uw(cache)
+    if cache:
+        handle.set_attr(
+            "cachePolicy",
+            semantic.builder.get_cache_policy(cache.removeprefix("."),
+                                              "evict_normal"))
+
+
+def _like_offsets(semantic, v, offsets, dtype):
+    """``v`` as a ``dtype`` tensor with the shape and layout of ``offsets``:
+    the buffer ops require mask and other to match the offsets exactly."""
+    from .compiler.semantic import _encoding
+    v = semantic.cast(semantic.to_tensor(_uw(v)), dtype)
+    shape = list(offsets.type.shape)
+    if not v.type.is_block():
+        v = semantic.splat(v, shape)
+    elif list(v.type.shape) != shape:
+        v = semantic.broadcast_impl_shape(v, shape)
+    if _encoding(v) != _encoding(offsets):
+        v = _require(semantic, v, offsets)
+    return v
+
+
+def _buffer_operands(semantic, ptr, offsets, mask, other):
+    """Handles for ``ptr, offsets[, mask[, other]]`` in the order the
+    ``utlx_buffer_*`` ops take them."""
+    mask, other = _uw(mask), _uw(other)
+    handles = [ptr.handle, offsets.handle]
+    if mask is not None:
+        handles.append(_like_offsets(semantic, mask, offsets, tl.int1).handle)
+        if other is not None:
+            handles.append(
+                _like_offsets(semantic, other, offsets,
+                              ptr.type.scalar.element_ty).handle)
+    return handles
+
+
 def _keep_type(handle, like):
     """Wrap ``handle`` like ``like``, keeping a layout carrier a carrier."""
     if isinstance(like.type, _carrier_type):
@@ -83,16 +162,28 @@ def buffer_load_to_local(dest,
                          _semantic=None) -> tlx.async_token:
     """Async copy ``ptr[offsets]`` into ``dest``; returns an async token.
 
-    ``contiguity`` is a trusted vectorization hint in the fork. Here the
-    vector width comes from the backend's own axis analysis instead.
+    On AMD, with laid-out offsets, this is the fork's
+    amdg.buffer_load_to_local, with ``contiguity`` as its trusted vector width.
+    Otherwise it is ``async_load`` on ``ptr + offsets`` with ``contiguity`` as
+    axis-analysis hints.
     """
+    from ._compat import checked_handle
     from .mem_ops import async_load
 
     mask = _uw(mask)
     other = _uw(other)
     _verify_buffer_ops(ptr, offsets, mask, other)
     _check_contiguity(contiguity)
-    ptrs = _semantic.add(ptr, offsets, False)
+    if _native_buffer_ops(_semantic, offsets, cache_modifier):
+        b = _semantic.builder
+        token = b.utlx_buffer_load_to_local(
+            [dest.handle] +
+            _buffer_operands(_semantic, ptr, offsets, mask, other) +
+            [b.get_int32(_uw(contiguity))])
+        token = checked_handle(token, "buffer_load_to_local")
+        _set_cache_policy(_semantic, token, cache_modifier)
+        return tlx.async_token(token)
+    ptrs = _trusted_ptrs(_semantic, ptr, offsets, contiguity)
     return async_load(ptrs,
                       dest,
                       mask=mask,

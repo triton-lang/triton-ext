@@ -51,6 +51,13 @@ void registerWidenUnalignedLoadsPass();
 std::unique_ptr<mlir::Pass> createWidenUnalignedBufferLoadsPass();
 void registerWidenUnalignedBufferLoadsPass();
 
+std::unique_ptr<mlir::Pass> createKeepBufferOpLayoutPass();
+void registerKeepBufferOpLayoutPass();
+std::unique_ptr<mlir::Pass> createHideBufferOpBasesPass();
+void registerHideBufferOpBasesPass();
+std::unique_ptr<mlir::Pass> createRestoreBufferOpBasesPass();
+void registerRestoreBufferOpBasesPass();
+
 std::unique_ptr<mlir::Pass> createAMDLowerBarrierOpsPass();
 void registerAMDLowerBarrierOpsPass();
 

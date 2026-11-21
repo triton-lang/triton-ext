@@ -233,8 +233,16 @@ def inspect_stages_hook(self=None,
             if use_block_pingpong and options.num_stages > 1:
                 amd.passes.ttgpuir.add_block_pingpong(pm, options.num_stages)
 
+            # uTLX: the layout passes are done; put tlx.buffer_* ops back in
+            # the layout their contiguity was promised for.
+            passes.plugin.utlx_keep_buffer_op_layout(pm, [])
             if knobs.amd.use_buffer_ops:
+                # uTLX: stock CanonicalizePointers cannot rewrite the buffer
+                # ops tlx.buffer_load and friends create; keep their bases out
+                # of its reach.
+                passes.plugin.utlx_hide_buffer_op_bases(pm, [])
                 amd.passes.ttgpuir.add_canonicalize_pointers(pm)
+                passes.plugin.utlx_restore_buffer_op_bases(pm, [])
                 passes.common.add_canonicalizer(pm)
                 amd.passes.ttgpuir.add_convert_to_buffer_ops(
                     pm,

@@ -11,7 +11,6 @@ which the plugin's ConvertTritonToTritonGPU turns into ttg.convert_layout.
 
 import triton.language as tlang
 import triton.language.core as tl
-from triton.runtime.jit import jit
 
 from ._compat import triton_at_least
 from .types import _value_layout, layout_encoding
@@ -418,40 +417,74 @@ def _load_keeping_layout(ptr, mask, other, cache, _semantic=None):
     return out
 
 
-@jit
+@tl.builtin
 def buffer_load(base,
                 offsets,
                 mask=None,
                 other=None,
-                cache: tl.constexpr = None,
-                contiguity: tl.constexpr = 1):
-    """Load ``base[offsets]``; the AMD backend lowers this to a buffer load.
+                cache=None,
+                contiguity=1,
+                _semantic=None):
+    """Load ``base[offsets]`` as a buffer load.
 
-    The result has the layout of ``offsets``, if they carry one.
-
-    ``contiguity`` is the fork's trusted vector-width promise. It is accepted
-    and checked but not forwarded: the backend's own axis analysis picks the
-    width here, which can only be narrower, never wrong.
+    The result has the layout of ``offsets``, if they carry one. On AMD, for
+    laid-out offsets, this is the fork's amdg.buffer_load, with
+    ``contiguity`` as its trusted vector width. Otherwise it is a load of
+    ``base + offsets``, with ``contiguity`` as axis-analysis hints.
     """
-    tlang.static_assert(
-        contiguity > 0 and (contiguity & (contiguity - 1)) == 0,
-        "contiguity must be a positive power of two")
-    return _load_keeping_layout(base + offsets, mask, other, cache)
+    from ._compat import checked_handle
+    from .amd_ops import (_buffer_operands, _check_contiguity,
+                          _native_buffer_ops, _set_cache_policy, _trusted_ptrs,
+                          _verify_buffer_ops)
+    _verify_buffer_ops(base, offsets, _uw(mask), _uw(other))
+    _check_contiguity(contiguity)
+    if not _native_buffer_ops(_semantic, offsets, cache):
+        return _load_keeping_layout(_trusted_ptrs(_semantic, base, offsets,
+                                                  contiguity),
+                                    mask,
+                                    other,
+                                    cache,
+                                    _semantic=_semantic)
+    b = _semantic.builder
+    handle = checked_handle(
+        b.utlx_buffer_load(
+            _buffer_operands(_semantic, base, offsets, mask, other) +
+            [b.get_int32(_uw(contiguity))]), "buffer_load")
+    _set_cache_policy(_semantic, handle, cache)
+    element_ty = base.type.scalar.element_ty
+    if isinstance(offsets.type, _carrier_type):
+        return _carrier(handle, element_ty)
+    return tl.tensor(handle, tl.block_type(element_ty, offsets.type.shape))
 
 
-@jit
+@tl.builtin
 def buffer_store(value,
                  base,
                  offsets,
                  mask=None,
-                 cache: tl.constexpr = None,
-                 contiguity: tl.constexpr = 1):
+                 cache=None,
+                 contiguity=1,
+                 _semantic=None):
     """Store ``value`` to ``base[offsets]`` as a buffer store.
 
-    Layouts are stripped from the operands by the store shim, and
-    ``contiguity`` is accepted but not forwarded, as for buffer_load.
+    As :func:`buffer_load`: amdg.buffer_store for laid-out offsets on AMD,
+    otherwise, or with a cache modifier, a store to ``base + offsets``.
     """
-    tlang.static_assert(
-        contiguity > 0 and (contiguity & (contiguity - 1)) == 0,
-        "contiguity must be a positive power of two")
-    tlang.store(base + offsets, value, mask=mask, cache_modifier=cache)
+    from .amd_ops import (_buffer_operands, _check_contiguity, _like_offsets,
+                          _native_buffer_ops, _trusted_ptrs,
+                          _verify_buffer_ops)
+    _verify_buffer_ops(base, offsets, _uw(mask))
+    _check_contiguity(contiguity)
+    if not _native_buffer_ops(_semantic, offsets, cache, has_result=False):
+        return tlang.store(_trusted_ptrs(_semantic, base, offsets, contiguity),
+                           value,
+                           mask=mask,
+                           cache_modifier=cache,
+                           _semantic=_semantic)
+    b = _semantic.builder
+    value = _like_offsets(_semantic, value, offsets,
+                          base.type.scalar.element_ty)
+    b.utlx_buffer_store(
+        [value.handle] +
+        _buffer_operands(_semantic, base, offsets, mask, None) +
+        [b.get_int32(_uw(contiguity))])
