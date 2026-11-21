@@ -111,7 +111,8 @@ def visit_withAsyncTask(self, node):
 
 
 def visit_withWarpPipelineStage(self, node):
-    """Emit the body inline, then the stage-border marker after it.
+    """Emit the body inline, then the stage-border marker after it (none for an
+    intra-wave stage; see ``warp_pipeline_stage``).
 
     The marker is Gluon's: a ``rocdl.sched.barrier`` tagged with
     ``triton.warp_pipeline.border`` (and ``.priority``). The hybrid tlx builder
@@ -134,6 +135,8 @@ def visit_withWarpPipelineStage(self, node):
     stage = _get_tlx().warp_pipeline_stage(*args, **kwargs)
 
     self.visit_compound_statement(node.body)
+    if stage.scope == "intra_wave":
+        return
     priority = -1 if stage.priority is None else stage.priority
     self.builder.create_warp_pipeline_border(stage.label or "cluster",
                                              priority)
