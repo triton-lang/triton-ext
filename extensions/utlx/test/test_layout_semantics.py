@@ -5,6 +5,7 @@ import torch
 import triton
 import triton.language as tl
 import triton.language.extra.tlx as tlx
+from triton.runtime.jit import constexpr_function
 
 from conftest import DEVICE, is_hip
 
@@ -42,3 +43,36 @@ def test_where_mixed_layouts():
     expected[:, :1] = best
     expected += (x == best).float()
     torch.testing.assert_close(y, expected)
+
+
+@constexpr_function
+def _row_slice(parent, rows, cols):
+    """TILE with its columns sliced away, supplying the parent's shape."""
+
+    class _Slice(tlx.slice_layout):
+
+        def to_ir(self, builder, shape=None, element_type=None):
+            return builder.make_slice_encoding_attr(
+                1, self.parent.to_ir(builder, (rows, cols), element_type))
+
+    return _Slice(parent, 1)
+
+
+@triton.jit
+def _expand_sliced(y_ptr, ROWS: tl.constexpr, COLS: tl.constexpr,
+                   LAYOUT: tl.constexpr):
+    rows = tlx.require_layout(
+        tl.arange(0, ROWS).to(tl.float32), _row_slice(LAYOUT, ROWS, COLS))
+    y = tl.broadcast_to(tl.expand_dims(rows, 1), (ROWS, COLS))
+    offs = tl.arange(0, ROWS)[:, None] * COLS + tl.arange(0, COLS)[None, :]
+    tl.store(y_ptr + offs, y)
+
+
+def test_slice_layout_subclass():
+    """tlx.slice_layout is a class kernels can subclass, as in the fork."""
+    y = torch.empty(ROWS, COLS, device=DEVICE)
+    compiled = _expand_sliced[(1, )](y, ROWS, COLS, TILE, num_warps=4)
+    expected = torch.arange(ROWS, device=DEVICE,
+                            dtype=torch.float32)[:, None].expand(ROWS, COLS)
+    torch.testing.assert_close(y, expected)
+    assert "#ttg.slice<{dim = 1" in compiled.asm["ttgir"]

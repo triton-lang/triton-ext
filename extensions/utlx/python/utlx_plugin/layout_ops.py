@@ -126,16 +126,6 @@ class dot_operand_layout_encoding(_register_layout):
                                               self.k_width)
 
 
-class slice_layout_encoding(_register_layout):
-
-    def __init__(self, parent, dim):
-        self.parent = parent
-        self.dim = dim
-
-    def to_ir(self, builder, *_):
-        return builder.get_slice_layout(self.dim, self.parent.to_ir(builder))
-
-
 @tl.builtin
 def amd_mfma_layout(version,
                     instr_shape,
@@ -196,17 +186,46 @@ def dot_operand_layout(op_idx, parent, k_width=None, _semantic=None):
     return _carrier(b.utlx_require_dot_operand_layout(args))
 
 
-@tl.builtin
-def slice_layout(parent, dim, _semantic=None):
-    """Layout of ``parent`` with dimension ``dim`` sliced away."""
-    dim = _uw(dim)
-    parent = _uw(parent)
-    if isinstance(parent, _register_layout):
-        return tl.constexpr(slice_layout_encoding(parent, int(dim)))
-    b = _semantic.builder
-    return _carrier(
-        b.utlx_make_slice_layout([parent.handle,
-                                  b.get_int32(int(dim))]))
+class slice_layout(_register_layout):
+    """Layout of ``parent`` with dimension ``dim`` sliced away.
+
+    A class, as in the fork, so kernels can subclass it and override
+    ``to_ir`` (e.g. to give a shape-dependent parent its shape). Called from
+    a jit function it acts as a builtin: a layout-encoding parent gives a
+    constexpr slice layout, and a layout carrier (the value-typed layouts the
+    ops in this module build) gives a carrier.
+    """
+
+    # Jit calls go through the builtin path, which passes _semantic.
+    __triton_builtin__ = True
+
+    def __new__(cls, parent, dim, _semantic=None):
+        parent = _uw(parent)
+        if _semantic is None:
+            return super().__new__(cls)
+        if not isinstance(parent, layout_encoding):
+            b = _semantic.builder
+            return _carrier(
+                b.utlx_make_slice_layout(
+                    [parent.handle, b.get_int32(int(_uw(dim)))]))
+        self = super().__new__(cls)
+        self.__init__(parent, dim)
+        return tl.constexpr(self)
+
+    def __init__(self, parent, dim, _semantic=None):
+        self.parent = _uw(parent)
+        self.dim = int(_uw(dim))
+        if self.dim < 0:
+            raise ValueError("slice_layout dim must be non-negative")
+
+    def to_ir(self, builder, shape=None, element_type=None):
+        # The parent's shape is not known from the sliced one; a parent whose
+        # encoding depends on it needs a subclass that supplies it.
+        try:
+            parent = self.parent.to_ir(builder, None, element_type)
+        except TypeError:
+            parent = self.parent.to_ir(builder)
+        return builder.make_slice_encoding_attr(self.dim, parent)
 
 
 @tl.builtin
