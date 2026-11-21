@@ -9,7 +9,11 @@ unrecognised". This module adds them:
   ``regclass_priority_trumps_globalness`` and
   ``disable_unclustered_high_rp_reschedule`` are LLVM codegen flags. They are
   forwarded to the AMDGPU backend exactly as the fork does, by appending them to
-  the flags ``make_amdgcn`` hands each ``llvm.translate_*`` call.
+  the flags ``make_amdgcn`` hands each ``llvm.translate_*`` call (Triton 3.8)
+  or ``compile_amdgpu`` (Triton 3.9).
+* ``llvm_cl_opts``, ``"name[=value],..."`` (a bare name means true) or
+  ``((name, value), ...)``, adds LLVM command-line options the same way, after
+  the codegen flags so they override them, as in the fork.
 * ``enable_sched_group_barrier_scheduler`` (with
   ``sched_group_barrier_mfma_per_dwordx4`` and
   ``sched_group_barrier_required_region_count``) selects the fork's TTGIR
@@ -39,12 +43,37 @@ _CODEGEN_FLAGS = {
 }
 
 # The llvm entry points make_amdgcn passes its flag list to, as the fifth
-# positional argument (after src/path, triple, arch, features).
+# positional argument (after src/path, triple, arch, features), as
+# compile_amdgpu takes it too.
 _FLAGGED_LLVM_FUNCS = ("translate_to_mir", "dump_sched_dag",
                        "translate_mir_to_asm", "translate_to_asm")
 _FLAGS_ARG = 4
 
 _extra_flags = contextvars.ContextVar("utlx_extra_llvm_flags", default=())
+
+
+def _with_extras(args, kwargs):
+    """``args``/``kwargs`` of a codegen call with the active extras added."""
+    args = list(args)
+    flags = _extra_flags.get()
+    if flags:
+        if "flags" in kwargs:
+            kwargs["flags"] = [*kwargs["flags"], *flags]
+        elif len(args) > _FLAGS_ARG:
+            args[_FLAGS_ARG] = [*args[_FLAGS_ARG], *flags]
+    return args, kwargs
+
+
+def _parse_llvm_cl_opts(opts):
+    """``llvm_cl_opts`` as ``((name, value), ...)``, as the fork parses it."""
+    if not isinstance(opts, str):
+        return tuple((str(name), str(value)) for name, value in opts)
+    parsed = []
+    for opt in opts.split(","):
+        name, sep, value = opt.partition("=")
+        if name.strip():
+            parsed.append((name.strip(), value.strip() if sep else "true"))
+    return tuple(parsed)
 
 
 class _FlagForwardingLLVM:
@@ -59,14 +88,7 @@ class _FlagForwardingLLVM:
             return fn
 
         def call(*args, **kwargs):
-            extra = _extra_flags.get()
-            if extra:
-                if "flags" in kwargs:
-                    kwargs["flags"] = list(kwargs["flags"]) + list(extra)
-                elif len(args) > _FLAGS_ARG:
-                    args = (*args[:_FLAGS_ARG],
-                            list(args[_FLAGS_ARG]) + list(extra),
-                            *args[_FLAGS_ARG + 1:])
+            args, kwargs = _with_extras(args, kwargs)
             return fn(*args, **kwargs)
 
         return call
@@ -95,9 +117,12 @@ def install():
         enable_sched_group_barrier_scheduler: bool = False
         sched_group_barrier_mfma_per_dwordx4: int = 4
         sched_group_barrier_required_region_count: int = 0
+        llvm_cl_opts: str | tuple[tuple[str, str], ...] = ""
 
         def __post_init__(self):
             super().__post_init__()
+            object.__setattr__(self, "llvm_cl_opts",
+                               _parse_llvm_cl_opts(self.llvm_cl_opts))
             if self.sched_group_barrier_mfma_per_dwordx4 <= 0:
                 raise ValueError(
                     "sched_group_barrier_mfma_per_dwordx4 must be positive")
@@ -111,11 +136,23 @@ def install():
     hip.HIPOptions = HIPOptions
 
     hip.llvm = _FlagForwardingLLVM(hip.llvm)
+    # Triton 3.9's make_amdgcn hands its flags to compile_amdgpu instead.
+    if hasattr(hip, "compile_amdgpu"):
+        orig_compile_amdgpu = hip.compile_amdgpu
+
+        def compile_amdgpu(*args, **kwargs):
+            args, kwargs = _with_extras(args, kwargs)
+            return orig_compile_amdgpu(*args, **kwargs)
+
+        hip.compile_amdgpu = compile_amdgpu
     orig_make_amdgcn = hip.HIPBackend.make_amdgcn
 
     def make_amdgcn(src, metadata, options):
         flags = tuple(flag for name, flag in _CODEGEN_FLAGS.items()
                       if getattr(options, name, False))
+        # Last, so they override the flags above, as in the fork.
+        flags += tuple(f"{name}={value}"
+                       for name, value in options.llvm_cl_opts)
         token = _extra_flags.set(flags)
         try:
             return orig_make_amdgcn(src, metadata, options)
