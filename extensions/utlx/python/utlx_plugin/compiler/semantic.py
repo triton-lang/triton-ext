@@ -42,6 +42,14 @@ def _has_layout(v):
     return isinstance(getattr(v, "type", None), _carrier_type)
 
 
+def _encoding(v):
+    """The ``#...`` encoding of ``v``'s IR type, or None if it carries none."""
+    if not _has_layout(v):
+        return None
+    ir_ty = str(v.type.to_ir(None))
+    return ir_ty[ir_ty.index("#"):] if "#" in ir_ty else None
+
+
 def _promote(handle, type):
     """Re-type a frontend ``block_type`` from the encoding its IR value carries.
 
@@ -181,6 +189,12 @@ class UTLXSemantic(_BaseSemantic[_TensorTy], Generic[_TensorTy]):
         lhs, rhs = super().binary_op_type_checking_impl(
             _promote_value(lhs), _promote_value(rhs), *args, **kwargs)
         lhs_c, rhs_c = _has_layout(lhs), _has_layout(rhs)
+        if lhs_c and rhs_c:
+            # Two explicit layouts that disagree: the op needs one, take lhs's.
+            if (_encoding(lhs) != _encoding(rhs)
+                    and list(lhs.type.shape) == list(rhs.type.shape)):
+                rhs = _require(self, rhs, lhs)
+            return lhs, rhs
         if lhs_c == rhs_c:
             return lhs, rhs
         enc, plain = (lhs, rhs) if lhs_c else (rhs, lhs)
@@ -194,17 +208,27 @@ class UTLXSemantic(_BaseSemantic[_TensorTy], Generic[_TensorTy]):
     # -- select -------------------------------------------------------------
 
     def where(self, condition, x, y):
-        """``arith.select`` requires condition, both arms and result to agree."""
+        """``arith.select`` requires condition, both arms and result to agree.
+
+        The arms' layout wins: any operand without it, or with a different one
+        (e.g. a condition broadcast from a reduction while an arm comes from a
+        split), is converted to it. Block operands are broadcast to the common
+        shape first, so a carrier that is itself broadcast (``idx[:, None]``)
+        still reaches a plain condition of the full shape.
+        """
         condition, x, y = (_promote_value(condition), _promote_value(x),
                            _promote_value(y))
+        if any(map(_has_layout, (condition, x, y))):
+            condition, x, y = self._broadcast_blocks(condition, x, y)
         carrier = next((v for v in (x, y, condition) if _has_layout(v)), None)
         if carrier is not None:
             shape = list(carrier.type.shape)
+            enc = _encoding(carrier)
 
             def fix(v):
                 ty = getattr(v, "type", None)
-                if (isinstance(ty, tl.block_type) and not _has_layout(v)
-                        and list(ty.shape) == shape):
+                if (isinstance(ty, tl.block_type) and list(ty.shape) == shape
+                        and _encoding(v) != enc):
                     return _require(self, v, carrier)
                 return v
 
@@ -214,6 +238,19 @@ class UTLXSemantic(_BaseSemantic[_TensorTy], Generic[_TensorTy]):
                 condition = self.splat(condition, shape)
             condition, x, y = fix(condition), fix(x), fix(y)
         return super().where(condition, x, y)
+
+    def _broadcast_blocks(self, *vals):
+        """``vals`` with every block-typed one broadcast to their common shape;
+        scalars are left for the base class to splat."""
+        blocks = [
+            i for i, v in enumerate(vals)
+            if isinstance(getattr(v, "type", None), tl.block_type)
+        ]
+        out = list(vals)
+        for _ in range(2):  # the second pass carries the final shape back
+            for i, j in zip(blocks, blocks[1:]):
+                out[i], out[j] = self.broadcast_impl_value(out[i], out[j])
+        return out
 
     # -- pointer ops --------------------------------------------------------
 
