@@ -174,8 +174,10 @@ class MetalBackend(BaseBackend):
 
     def get_codegen_implementation(self, options):
 
+        # M and N pad up to whole 8x8 fragments; K is walked in fragment
+        # steps and is not padded.
         def min_dot_size(lhs_type, rhs_type):
-            return (8, 8, 8)
+            return (1, 1, 8)
 
         return {"min_dot_size": min_dot_size}
 
