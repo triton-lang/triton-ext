@@ -60,6 +60,7 @@ static NSHashTable *exposedBuffers(void) {
   return table;
 }
 
+#ifndef AGPU_TORCH_RECORDS_CB_ERRORS
 // Torch counts a failed command buffer as finished and raises only what
 // kernels write to its error buffer, so a failure is written there.
 static void reportFailure(at::mps::MPSStream *stream) {
@@ -86,6 +87,18 @@ static void reportFailure(at::mps::MPSStream *stream) {
       __atomic_fetch_add(&msgs->count, 1, __ATOMIC_RELEASE);
     }
   }];
+}
+#endif
+
+// A torch that records failed command buffers raises them itself, and one
+// that commits every few kernels only does so when asked.
+static void afterDispatch(at::mps::MPSStream *stream) {
+#ifndef AGPU_TORCH_RECORDS_CB_ERRORS
+  reportFailure(stream);
+#endif
+#ifdef AGPU_TORCH_COMMITS_IF_NEEDED
+  stream->commitIfNeeded();
+#endif
 }
 
 static bool kwargFlag(PyObject *kwargs, const char *name) {
@@ -356,7 +369,7 @@ static void encodeDispatch(MetalKernelObject *self, const LaunchGeometry &geom,
         MTLSize threadsPerGroup = MTLSizeMake(geom.gx, geom.gy, geom.gz);
         [enc dispatchThreadgroups:threadgroups
             threadsPerThreadgroup:threadsPerGroup];
-        reportFailure(stream);
+        afterDispatch(stream);
       }
     });
   }
