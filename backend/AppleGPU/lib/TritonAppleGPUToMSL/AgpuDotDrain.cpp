@@ -218,6 +218,15 @@ agpu::Decision AgpuEmitter::resolveDrainSteps(const DotOperands &ops,
     agpu::MathFn fn;
     if (agpu::epilogueUnaryFnOf({name.data(), name.size()}, fn))
       agpu_.helpers.require(fn);
+    // A step evaluates at f32 or, past a rounding, at its own type.
+    agpu::EpilogueBinOp bin;
+    agpu::MathFn2 mm;
+    if (agpu::epilogueBinOpOf({name.data(), name.size()}, bin) &&
+        agpu::epilogueMinMaxOf(bin, mm)) {
+      agpu_.helpers.require(mm, agpu::f32());
+      if (const std::optional<agpu::ElemType> e = heldTypeFor(op->getResult(0)))
+        agpu_.helpers.require(mm, *e);
+    }
   };
 
   for (const DrainStepFact &sf : ops.shape.cSteps) {

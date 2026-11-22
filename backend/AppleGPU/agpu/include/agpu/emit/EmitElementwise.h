@@ -53,11 +53,26 @@ inline msl::Expr *eitherIsNan(msl::Context &c, msl::Expr *a, msl::Expr *b) {
 
 // ── float comparison ──────────────────────────────────────────────────────
 
+inline msl::Expr *keyedOperand(msl::Context &c, CompareBy by, msl::Expr *x) {
+  switch (by) {
+  case CompareBy::F32Key:
+    return c.call(msl::builtin::helper::F32Key, {x});
+  case CompareBy::Bf16Key:
+    return c.call(msl::builtin::helper::Bf16Key, {x});
+  case CompareBy::Value:
+    break;
+  }
+  return x;
+}
+
 // Operands are names: the guarded forms mention each operand twice (operator
 // and isnan). Bind a computed value before calling.
 inline msl::Expr *fcmpExpr(msl::Context &c, FCmp pred, const msl::Str &a,
-                           const msl::Str &b) {
-  const FCmpPlan p = planFCmp(pred);
+                           const msl::Str &b, CompareBy by = CompareBy::Value) {
+  const FCmpPlan p = planFCmp(pred, by);
+  const auto side = [&](const msl::Str &x) {
+    return keyedOperand(c, by, c.var(x));
+  };
   switch (p.kind) {
   case FCmpPlan::Kind::Constant:
     return c.litBool(p.constantValue);
@@ -68,7 +83,7 @@ inline msl::Expr *fcmpExpr(msl::Context &c, FCmp pred, const msl::Str &a,
   }
 
   case FCmpPlan::Kind::Relation: {
-    msl::Expr *cmp = c.binary(p.op, c.var(a), c.var(b));
+    msl::Expr *cmp = c.binary(p.op, side(a), side(b));
     switch (p.guard) {
     case NanGuard::None:
       return cmp;
@@ -104,9 +119,30 @@ inline msl::Expr *mathCall(msl::Context &c, const char *name, ElemType elem,
 
 // The NaN arm is `a + b`: it yields a NaN of the right type without naming
 // one per float width.
+inline const char *keyedMinMaxName(MathFn2 fn, CompareBy by) {
+  namespace hn = msl::builtin::helper;
+  const bool max = fn == MathFn2::Max;
+  switch (by) {
+  case CompareBy::F32Key:
+    return max ? hn::F32Max : hn::F32Min;
+  case CompareBy::Bf16Key:
+    return max ? hn::Bf16Max : hn::Bf16Min;
+  case CompareBy::Value:
+    break;
+  }
+  return nullptr;
+}
+
+inline msl::Expr *minMaxPick(msl::Context &c, MathFn2 fn, ElemType elem,
+                             msl::Expr *a, msl::Expr *b) {
+  if (const char *keyed = keyedMinMaxName(fn, compareByFor(elem)))
+    return c.call(keyed, {a, b});
+  return mathCall(c, mathNameOf(fn), elem, {a, b});
+}
+
 inline msl::Expr *minMaxExprOf(msl::Context &c, MathFn2 fn, ElemType elem,
                                msl::Expr *a, msl::Expr *b, bool propagateNan) {
-  msl::Expr *call = mathCall(c, mathNameOf(fn), elem, {a, b});
+  msl::Expr *call = minMaxPick(c, fn, elem, a, b);
   if (!minMaxPropagatesNan(fn, elem, propagateNan))
     return call;
   return c.ternary(eitherIsNan(c, a, b), c.binary(msl::BinOp::Add, a, b), call);

@@ -131,9 +131,9 @@ int main() {
 
     msl::Context c;
     const std::string prop =
-        render(minMaxExpr(c, mi->fn, f32(), "a", "b", mi->propagateNan));
+        render(minMaxExpr(c, mi->fn, f16(), "a", "b", mi->propagateNan));
     const std::string plain =
-        render(minMaxExpr(c, mn->fn, f32(), "a", "b", mn->propagateNan));
+        render(minMaxExpr(c, mn->fn, f16(), "a", "b", mn->propagateNan));
     CHECK(prop != plain);
     CHECK(prop.find("isnan") != std::string::npos);
     CHECK_EQ(plain, std::string("metal::min(a, b)"));

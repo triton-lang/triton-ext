@@ -428,6 +428,39 @@ inline FCmpPlan planFCmp(FCmp p) {
   return r;
 }
 
+// The f32 ALU compares a subnormal as zero; half's are normal once widened.
+enum class CompareBy { Value, F32Key, Bf16Key };
+
+inline CompareBy compareByFor(ElemType elem) {
+  if (elem.kind != ElemType::Kind::Float)
+    return CompareBy::Value;
+  if (elem.floatKind == FloatKind::Brain)
+    return CompareBy::Bf16Key;
+  return elem.bits >= 32 ? CompareBy::F32Key : CompareBy::Value;
+}
+
+inline bool fcmpOrdered(FCmp p) {
+  switch (p) {
+  case FCmp::OEq:
+  case FCmp::OGt:
+  case FCmp::OGe:
+  case FCmp::OLt:
+  case FCmp::OLe:
+  case FCmp::ONe:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// A key orders NaN like a number, so every relation needs its NaN term.
+inline FCmpPlan planFCmp(FCmp p, CompareBy by) {
+  FCmpPlan r = planFCmp(p);
+  if (by != CompareBy::Value && r.kind == FCmpPlan::Kind::Relation)
+    r.guard = fcmpOrdered(p) ? NanGuard::MaskOut : NanGuard::OrIn;
+  return r;
+}
+
 // Whether an operation applies to an element type at all.
 inline Decision checkEw(EwOp op, ElemType elem) {
   const EwSpelling *s = spellingRow(op);

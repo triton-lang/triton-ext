@@ -411,5 +411,56 @@ int main() {
     CHECK_LACKS(soft, "ulong");
   }
 
+  CASE("an f32 or bf16 relation pulls in its key; half and NaN tests do not");
+  {
+    HelperSet hs;
+    hs.require(FCmp::OGt, compareByFor(f32()));
+    hs.require(FCmp::ULt, compareByFor(bf16()));
+    CHECK(hs.has(Helper::F32Key));
+    CHECK(hs.has(Helper::Bf16Key));
+
+    HelperSet other;
+    other.require(FCmp::OGt, compareByFor(f16()));
+    other.require(FCmp::Uno, compareByFor(f32()));
+    other.require(FCmp::True, compareByFor(bf16()));
+    CHECK(!other.any());
+  }
+
+  CASE("a key is the magnitude, negated under the sign bit");
+  {
+    const std::string f = helperSource(Helper::F32Key);
+    CHECK_HAS(f, "as_type<uint>(x)");
+    CHECK_HAS(f, "0x7fffffff");
+    CHECK_HAS(f, "0x80000000");
+    CHECK_HAS(f, "-m");
+
+    const std::string b = helperSource(Helper::Bf16Key);
+    CHECK_HAS(b, "as_type<ushort>(x)");
+    CHECK_HAS(b, "0x7fff");
+    CHECK_HAS(b, "0x8000");
+  }
+
+  CASE("a keyed min or max brings its key, ahead of it in the prelude");
+  {
+    HelperSet hs;
+    hs.require(MathFn2::Max, f32());
+    hs.require(MathFn2::Min, bf16());
+    CHECK(hs.has(Helper::F32Max) && hs.has(Helper::F32Key));
+    CHECK(hs.has(Helper::Bf16Min) && hs.has(Helper::Bf16Key));
+    CHECK(!hs.has(Helper::F32Min));
+    CHECK((unsigned)Helper::F32Key < (unsigned)Helper::F32Max);
+    CHECK((unsigned)Helper::Bf16Key < (unsigned)Helper::Bf16Min);
+
+    HelperSet half;
+    half.require(MathFn2::Max, f16());
+    CHECK(!half.any());
+
+    const std::string mx = helperSource(Helper::F32Max);
+    CHECK_HAS(mx, "metal::isnan(b) ? a : metal::isnan(a) ? b :");
+    CHECK_HAS(mx, "__agpu_f32_key(a) >= __agpu_f32_key(b) ? a : b");
+    CHECK_HAS(helperSource(Helper::Bf16Min),
+              "__agpu_bf16_key(a) <= __agpu_bf16_key(b) ? a : b");
+  }
+
   return ::agpu_test::report("Prelude");
 }

@@ -556,7 +556,7 @@ int main() {
     const std::string out = render(body);
     CHECK_EQ(countOf(out, "* alpha"), 2);
     CHECK_EQ(countOf(out, "rptr["), 2);
-    CHECK_EQ(countOf(out, "metal::max("), 2);
+    CHECK_EQ(countOf(out, "__agpu_f32_max("), 2);
     CHECK_HAS(out, "* ldr");
     CHECK_EQ(countOf(out, "simdgroup_store(acc0,"), 1);
   }
@@ -629,7 +629,7 @@ int main() {
     const std::string out = render(body);
     // `metal::max(half, 0.0f)` matches neither overload.
     CHECK_EQ(countOf(out, ", 0.0f)"), 0);
-    CHECK_EQ(countOf(out, "metal::max("), 2);
+    CHECK_EQ(countOf(out, "__agpu_f32_max("), 2);
   }
 
   CASE("a NaN-propagating relu folds with the guarded spelling");
@@ -647,8 +647,8 @@ int main() {
     relu.operand.splat = c.litF(0.0);
     emitAccumDeviceStores(c, body, slots, t, {relu}, nm);
     const std::string out = render(body);
-    // A bare metal::max drops a NaN accumulator, hence the guarded ternary.
-    CHECK_EQ(countOf(out, "metal::max("), 2);
+    // A bare max drops a NaN accumulator, hence the guarded ternary.
+    CHECK_EQ(countOf(out, "__agpu_f32_max("), 2);
     CHECK_EQ(countOf(out, "metal::isnan("), 4);
     CHECK_EQ(countOf(out, "?"), 2);
   }

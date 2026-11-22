@@ -70,6 +70,21 @@ inline bool epilogueBinOpOf(std::string_view op, EpilogueBinOp &out) {
   return false;
 }
 
+inline bool epilogueMinMaxOf(EpilogueBinOp b, MathFn2 &out) {
+  switch (b) {
+  case EpilogueBinOp::Max:
+  case EpilogueBinOp::MaxPropagate:
+    out = MathFn2::Max;
+    return true;
+  case EpilogueBinOp::Min:
+  case EpilogueBinOp::MinPropagate:
+    out = MathFn2::Min;
+    return true;
+  default:
+    return false;
+  }
+}
+
 inline constexpr std::size_t epilogueBinaryCount() {
   return sizeof(kEpilogueBinary) / sizeof(kEpilogueBinary[0]);
 }

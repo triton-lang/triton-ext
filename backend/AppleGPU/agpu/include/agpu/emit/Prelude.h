@@ -140,11 +140,23 @@ public:
   void require(MathFn2 fn, ElemType elem) {
     if (fn == MathFn2::Divide && divideNeedsHelper(elem))
       requireDivide();
+    if (fn == MathFn2::Min || fn == MathFn2::Max)
+      requireMinMax(fn == MathFn2::Max, compareByFor(elem));
   }
 
   void require(EwOp op, ElemType elem) {
     if (op == EwOp::DivF && divideNeedsHelper(elem))
       requireDivide();
+  }
+
+  void requireKeyedFold() {
+    add(Helper::F32Key);
+    add(Helper::F32Unkey);
+  }
+
+  void require(FCmp pred, CompareBy by) {
+    if (planFCmp(pred, by).kind == FCmpPlan::Kind::Relation)
+      requireKey(by);
   }
 
   void require(const ConvertPlan &p) {
@@ -162,6 +174,21 @@ private:
   void requireDivide() {
     add(Helper::DivF);
     add(Helper::SoftDivF);
+  }
+
+  void requireKey(CompareBy by) {
+    if (by == CompareBy::F32Key)
+      add(Helper::F32Key);
+    else if (by == CompareBy::Bf16Key)
+      add(Helper::Bf16Key);
+  }
+
+  void requireMinMax(bool max, CompareBy by) {
+    requireKey(by);
+    if (by == CompareBy::F32Key)
+      add(max ? Helper::F32Max : Helper::F32Min);
+    else if (by == CompareBy::Bf16Key)
+      add(max ? Helper::Bf16Max : Helper::Bf16Min);
   }
 
   EnumBitset<Helper, std::uint64_t> bits_;
@@ -918,6 +945,62 @@ inline msl::Function *guardedDiv(msl::Context &c) {
   return fn;
 }
 
+// Magnitude bits, negated under the sign: both zeros meet at 0.
+inline msl::Function *floatKey(msl::Context &c, const char *name, msl::Type in,
+                               msl::Type bits, int64_t sign) {
+  using B = msl::BinOp;
+  const msl::Type u32 = msl::Type::scalar(msl::Scalar::U32);
+  const msl::Type i32 = msl::Type::scalar(msl::Scalar::I32);
+
+  msl::Function *fn = helperFn(c, name, i32);
+  fn->params.push_back({std::move(in), "x", {}});
+  fn->body.push_back(
+      c.declStmt(u32, "u", c.cast(u32, c.bitcast(bits, c.var("x")))));
+  fn->body.push_back(c.declStmt(
+      i32, "m", c.cast(i32, c.binary(B::And, c.var("u"), c.litHex(sign - 1)))));
+  fn->body.push_back(c.returnStmt(
+      c.ternary(c.binary(B::Ne, c.binary(B::And, c.var("u"), c.litHex(sign)),
+                         c.lit(0, u32)),
+                c.unary(msl::UnOp::Neg, c.var("m")), c.var("m"))));
+  return fn;
+}
+
+inline msl::Function *f32Unkey(msl::Context &c) {
+  using B = msl::BinOp;
+  const msl::Type f32 = msl::Type::scalar(msl::Scalar::F32);
+  const msl::Type u32 = msl::Type::scalar(msl::Scalar::U32);
+  const msl::Type i32 = msl::Type::scalar(msl::Scalar::I32);
+  msl::Function *fn = helperFn(c, hn::F32Unkey, f32);
+  fn->params.push_back({i32, "k", {}});
+  msl::Expr *neg = c.binary(B::Lt, c.var("k"), c.lit(0));
+  fn->body.push_back(
+      c.declStmt(u32, "m",
+                 c.cast(u32, c.ternary(neg, c.unary(msl::UnOp::Neg, c.var("k")),
+                                       c.var("k")))));
+  fn->body.push_back(c.returnStmt(c.bitcast(
+      f32, c.ternary(neg, c.binary(B::Or, c.var("m"), c.litHex(0x80000000)),
+                     c.var("m")))));
+  return fn;
+}
+
+// Returns the non-NaN operand, as metal::min/max do.
+inline msl::Function *keyedMinMax(msl::Context &c, const char *name,
+                                  const msl::Type &t, const char *key,
+                                  bool max) {
+  msl::Function *fn = helperFn(c, name, t);
+  fn->params.push_back({t, "a", {}});
+  fn->params.push_back({t, "b", {}});
+  msl::Expr *a = c.var("a");
+  msl::Expr *b = c.var("b");
+  msl::Expr *keepA = c.binary(max ? msl::BinOp::Ge : msl::BinOp::Le,
+                              c.call(key, {a}), c.call(key, {b}));
+  fn->body.push_back(
+      c.returnStmt(c.ternary(c.call(msl::builtin::math::Isnan, {b}), a,
+                             c.ternary(c.call(msl::builtin::math::Isnan, {a}),
+                                       b, c.ternary(keepA, a, b)))));
+  return fn;
+}
+
 inline std::string helperSource(Helper h) {
   switch (h) {
   case Helper::AtomicRmwF32: {
@@ -1489,6 +1572,36 @@ inline std::string helperSource(Helper h) {
   case Helper::DivF: {
     msl::Context c;
     return renderHelper(guardedDiv(c));
+  }
+  case Helper::F32Key: {
+    msl::Context c;
+    const msl::Type f32 = msl::Type::scalar(msl::Scalar::F32);
+    const msl::Type u32 = msl::Type::scalar(msl::Scalar::U32);
+    return renderHelper(floatKey(c, hn::F32Key, f32, u32, 0x80000000));
+  }
+  case Helper::Bf16Key: {
+    msl::Context c;
+    const msl::Type bf16 = msl::Type::scalar(msl::Scalar::BF16);
+    const msl::Type u16 = msl::Type::scalar(msl::Scalar::U16);
+    return renderHelper(floatKey(c, hn::Bf16Key, bf16, u16, 0x8000));
+  }
+  case Helper::F32Unkey: {
+    msl::Context c;
+    return renderHelper(f32Unkey(c));
+  }
+  case Helper::F32Min:
+  case Helper::F32Max: {
+    msl::Context c;
+    return renderHelper(keyedMinMax(c, helperName(h),
+                                    msl::Type::scalar(msl::Scalar::F32),
+                                    hn::F32Key, h == Helper::F32Max));
+  }
+  case Helper::Bf16Min:
+  case Helper::Bf16Max: {
+    msl::Context c;
+    return renderHelper(keyedMinMax(c, helperName(h),
+                                    msl::Type::scalar(msl::Scalar::BF16),
+                                    hn::Bf16Key, h == Helper::Bf16Max));
   }
   case Helper::Count:
     break;

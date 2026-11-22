@@ -244,6 +244,9 @@ agpu::Decision AgpuEmitter::emitReduceOp(triton::ReduceOp red) {
         !s.ok())
       return s;
 
+  if (plan.laneFoldsKeys(plan.scratch.warpSize))
+    agpu_.helpers.requireKeyedFold();
+
   const agpu::Result<agpu::ReduceResults> reduced =
       agpu::emitReduce(agpu_.context(), *cur_, plan, numWarps(), srcNames, nm,
                        [&](am::Block &body, const agpu::CombineNames &a,

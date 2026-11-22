@@ -228,6 +228,25 @@ int main() {
     CHECK_EQ(countOf(render(body), "simd_shuffle_xor"), 5);
   }
 
+  CASE("an f32 whole-warp max folds keys; f16 and integers fold values");
+  {
+    const auto folded = [&](Combiner fn, ElemType e) {
+      msl::Context c;
+      msl::Block body;
+      ReductionPlan p = onePlan(1, 0b11111);
+      p.combiner = fn;
+      p.elems = {e};
+      emitReduce(c, body, p, kNumWarps, sources(1, 1), nm, adder(c));
+      return render(body);
+    };
+    const std::string f = folded(Combiner::MaxF, f32());
+    CHECK_HAS(f, "__agpu_f32_unkey(simd_max(metal::isnan(");
+    CHECK_HAS(f, "? -2147483647 : __agpu_f32_key(");
+    CHECK_HAS(folded(Combiner::MinF, f32()), "? 2147483647 :");
+    CHECK_LACKS(folded(Combiner::MaxF, f16()), "__agpu_f32_key");
+    CHECK_LACKS(folded(Combiner::MaxS, i32()), "__agpu_f32_key");
+  }
+
   CASE("a lane-local reduction emits no shuffle");
   {
     msl::Context c;

@@ -128,6 +128,13 @@ struct ReductionPlan {
     return simdReduceFn(combiner, elemAt(0));
   }
 
+  // simd_min/max flush f32 subnormals; their integer forms fold keys exactly.
+  bool laneFoldsKeys(int64_t warpSize) const {
+    return laneIntrinsic(warpSize) &&
+           (combiner == Combiner::MinF || combiner == Combiner::MaxF) &&
+           compareByFor(elemAt(0)) == CompareBy::F32Key;
+  }
+
   ElemType elemAt(int k) const {
     return k < (int)elems.size() ? elems[(std::size_t)k] : f32();
   }

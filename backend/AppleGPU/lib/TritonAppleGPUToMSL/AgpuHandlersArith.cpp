@@ -451,9 +451,14 @@ agpu::Decision AgpuEmitter::emitCompareFOp(const agpu::OpView &o) {
   const Operand &a = ready[0];
   const Operand &b = ready[1];
 
+  const agpu::ElemType operand =
+      elemOf(o.operands[0]) ? *elemOf(o.operands[0]) : ready.elem;
+  const agpu::CompareBy by = agpu::compareByFor(operand);
+  agpu_.helpers.require(pred, by);
+
   return emitPerRegister(o, ready.regs, agpu::i1(), 'c', [&](int64_t r) {
     RegValue v;
-    v.value = agpu::fcmpExpr(agpu_.context(), pred, a.at(r), b.at(r));
+    v.value = agpu::fcmpExpr(agpu_.context(), pred, a.at(r), b.at(r), by);
     return v;
   });
 }

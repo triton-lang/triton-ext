@@ -128,6 +128,28 @@ int main() {
              std::string("!(metal::isnan(a) || metal::isnan(b))"));
   }
 
+  CASE("f32, f64 and bf16 compare keys; half compares values");
+  {
+    CHECK(compareByFor(f32()) == CompareBy::F32Key);
+    CHECK(compareByFor(f64()) == CompareBy::F32Key);
+    CHECK(compareByFor(bf16()) == CompareBy::Bf16Key);
+    CHECK(compareByFor(f16()) == CompareBy::Value);
+    CHECK(compareByFor(i32()) == CompareBy::Value);
+  }
+
+  CASE("a keyed relation guards NaN by its predicate's order");
+  {
+    msl::Context c;
+    CHECK_EQ(render(fcmpExpr(c, FCmp::OGt, "a", "b", CompareBy::F32Key)),
+             std::string("!(metal::isnan(a) || metal::isnan(b)) && "
+                         "__agpu_f32_key(a) > __agpu_f32_key(b)"));
+    CHECK_EQ(render(fcmpExpr(c, FCmp::UNe, "a", "b", CompareBy::Bf16Key)),
+             std::string("metal::isnan(a) || metal::isnan(b) || "
+                         "__agpu_bf16_key(a) != __agpu_bf16_key(b)"));
+    CHECK_EQ(render(fcmpExpr(c, FCmp::Uno, "a", "b", CompareBy::F32Key)),
+             std::string("metal::isnan(a) || metal::isnan(b)"));
+  }
+
   CASE("the constant predicates emit a bare constant");
   {
     msl::Context c;
@@ -157,12 +179,14 @@ int main() {
           render(fcmpExpr(c, FCmp::UNe, "a", "b")));
   }
 
-  CASE("min and max are plain calls when NaN need not propagate");
+  CASE("f32 min and max call the keyed helpers; half calls metal's");
   {
     msl::Context c;
     CHECK_EQ(render(minMaxExpr(c, MathFn2::Min, f32(), "a", "b", false)),
-             std::string("metal::min(a, b)"));
+             std::string("__agpu_f32_min(a, b)"));
     CHECK_EQ(render(minMaxExpr(c, MathFn2::Max, f32(), "a", "b", false)),
+             std::string("__agpu_f32_max(a, b)"));
+    CHECK_EQ(render(minMaxExpr(c, MathFn2::Max, f16(), "a", "b", false)),
              std::string("metal::max(a, b)"));
   }
 
@@ -171,7 +195,7 @@ int main() {
     // metal::min is IEEE minNum: it returns the other operand when one is NaN.
     // `a + b` produces a NaN of the right width with no per-type constant.
     msl::Context c;
-    CHECK_EQ(render(minMaxExpr(c, MathFn2::Min, f32(), "a", "b", true)),
+    CHECK_EQ(render(minMaxExpr(c, MathFn2::Min, f16(), "a", "b", true)),
              std::string("(metal::isnan(a) || metal::isnan(b)) ? a + b : "
                          "metal::min(a, b)"));
   }
@@ -215,7 +239,7 @@ int main() {
     msl::Context c;
     CHECK_EQ(render(minMaxExprOf(c, MathFn2::Max, bf16(), c.var("a"),
                                  c.var("b"), false)),
-             std::string("(bfloat)metal::max((float)a, (float)b)"));
+             std::string("__agpu_bf16_max(a, b)"));
     CHECK_EQ(
         render(mathExpr(c, MathFn3::Clamp, bf16(), c.var("v"), c.var("lo"),
                         c.var("hi"))),
