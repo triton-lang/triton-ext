@@ -181,8 +181,8 @@ that `llvm.intr.assume` and `ub.poison` are both handled: the first becomes a
   caller gave, rounded once to f32.
 - `float8` (e4m3, e5m2) - kernels compile and run when fp8 crosses the boundary
   as uint8 storage plus `triton.reinterpret`, which is what Triton's own fp8
-  tests do. A native `torch.float8_*` device tensor is not possible: torch MPS
-  has no fp8 dtype.
+  tests do. Torch 2.15 and later can also pass a native `torch.float8_e4m3fn`
+  MPS tensor. e5m2 has no MPS dtype, so it needs the uint8 route.
 - `int64`/`uint64` atomics - Metal has no 64-bit device atomic, so these
   decline; see `kAtomicRules` in `agpu/include/agpu/plan/AtomicPlan.h`.
 - acquire/release atomics - Metal device atomics are relaxed-only, so an ordered
