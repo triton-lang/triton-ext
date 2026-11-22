@@ -87,18 +87,19 @@ inline Decision emitLaneSteps(msl::Context &c, msl::Block &body,
                               const CombineFn &combine) {
   const int nOp = (int)accs.size();
   if (const char *fn = plan.laneIntrinsic(plan.scratch.warpSize)) {
-    msl::Expr *acc = c.var(accs[0]);
+    // One node per use: value numbering would rename a shared target as a read.
+    const auto acc = [&] { return c.var(accs[0]); };
     if (!plan.laneFoldsKeys(plan.scratch.warpSize)) {
-      body.push_back(c.assign(acc, c.call(fn, {acc})));
+      body.push_back(c.assign(acc(), c.call(fn, {acc()})));
       return Decision::emitted();
     }
     // A NaN lane's key decodes to NaN and loses unless every lane is NaN.
     const bool max = plan.combiner == Combiner::MaxF;
-    msl::Expr *key = c.ternary(c.call(msl::builtin::math::Isnan, {acc}),
+    msl::Expr *key = c.ternary(c.call(msl::builtin::math::Isnan, {acc()}),
                                c.lit(max ? -0x7fffffff : 0x7fffffff),
-                               c.call(msl::builtin::helper::F32Key, {acc}));
+                               c.call(msl::builtin::helper::F32Key, {acc()}));
     body.push_back(c.assign(
-        acc, c.call(msl::builtin::helper::F32Unkey, {c.call(fn, {key})})));
+        acc(), c.call(msl::builtin::helper::F32Unkey, {c.call(fn, {key})})));
     return Decision::emitted();
   }
   for (std::size_t si = 0; si < plan.laneSteps.size(); ++si) {

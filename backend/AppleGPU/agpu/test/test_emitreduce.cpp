@@ -1,6 +1,7 @@
 // Reduction emission: plan -> local fold -> lane shuffles -> cross-warp.
 #include "agpu/emit/EmitReduce.h"
 #include "agpu/msl/Printer.h"
+#include "agpu/msl/ValueNumber.h"
 #include "fixtures.h"
 #include "harness.h"
 #include "render.h"
@@ -245,6 +246,20 @@ int main() {
     CHECK_HAS(folded(Combiner::MinF, f32()), "? 2147483647 :");
     CHECK_LACKS(folded(Combiner::MaxF, f16()), "__agpu_f32_key");
     CHECK_LACKS(folded(Combiner::MaxS, i32()), "__agpu_f32_key");
+  }
+
+  CASE("a whole-warp fold leaves its source register intact");
+  {
+    for (Combiner fn : {Combiner::AddF, Combiner::MaxF}) {
+      msl::Context c;
+      msl::Block body{c.declStmt(msl::Context::f32(), "v0_0", c.var("x"))};
+      ReductionPlan p = onePlan(1, 0b11111);
+      p.combiner = fn;
+      p.elems = {f32()};
+      emitReduce(c, body, p, kNumWarps, sources(1, 1), nm, adder(c));
+      msl::reuseEqualValues(body);
+      CHECK_LACKS(render(body), "\nv0_0 = ");
+    }
   }
 
   CASE("a lane-local reduction emits no shuffle");
