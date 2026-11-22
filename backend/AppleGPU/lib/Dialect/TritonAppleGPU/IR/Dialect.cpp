@@ -110,16 +110,20 @@ struct AppleGPUInferLayoutInterface
   LogicalResult
   inferReshapeOpEncoding(ArrayRef<int64_t> srcShape, Attribute srcEnc,
                          ArrayRef<int64_t> dstShape, Attribute &dstEnc,
+#ifdef AGPU_TRITON_RESHAPE_REORDERS
                          bool allowReorder,
+#endif
                          std::optional<Location> loc) const override {
     if (!isa<ttg::DistributedEncodingTrait>(srcEnc))
       return emitOptionalError(loc,
                                "Failed MemDescReshapeOp encoding inference");
+#ifdef AGPU_TRITON_RESHAPE_REORDERS
     // A reorderable reshape keeps the layout already on its result when that
     // costs nothing, which is what leaves most reshapes blocked.
     if (allowReorder && dstEnc &&
         !ttg::isExpensiveView(srcShape, srcEnc, dstShape, dstEnc))
       return success();
+#endif
     auto ctx = srcEnc.getContext();
     auto i32Type = IntegerType::get(ctx, 32, IntegerType::Unsigned);
     auto srcTy = RankedTensorType::get(srcShape, i32Type, srcEnc);

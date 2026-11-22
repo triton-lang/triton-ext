@@ -24,6 +24,15 @@ std::optional<int64_t> elemThroughShapeOp(Value res, RankedTensorType srcTy,
   return elemThroughRebind(srcTy, resTy, reg);
 }
 
+// A Triton without the flag never lets a reshape reorder.
+bool reshapeMayReorder([[maybe_unused]] triton::ReshapeOp rs) {
+#ifdef AGPU_TRITON_RESHAPE_REORDERS
+  return rs.getAllowReorder();
+#else
+  return false;
+#endif
+}
+
 } // namespace
 
 // A reshape that may reorder elements, between layouts that each hold every
@@ -32,7 +41,7 @@ std::optional<int64_t> elemThroughShapeOp(Value res, RankedTensorType srcTy,
 // emission pass must agree on this.
 bool AgpuEmitter::reshapeKeepsRegisters(Operation *op) {
   auto rs = dyn_cast<triton::ReshapeOp>(op);
-  if (!rs || !rs.getAllowReorder())
+  if (!rs || !reshapeMayReorder(rs))
     return false;
   const auto srcTy = cast<RankedTensorType>(rs.getSrc().getType());
   const auto resTy = cast<RankedTensorType>(rs.getType());

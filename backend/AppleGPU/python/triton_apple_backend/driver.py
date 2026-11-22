@@ -8,6 +8,7 @@ import os as _os
 import re as _re
 import struct as _struct
 import time as _time
+from triton.backends import driver as _tt_driver
 from triton.backends.driver import DriverBase, decompose_descriptor, expand_signature
 from triton.runtime.errors import OutOfResources
 from triton.tools.tensor_descriptor import TensorDescriptor
@@ -178,6 +179,15 @@ def _is_pointer_type(ty):
     return isinstance(ty, str) and ty.startswith('*')
 
 
+def _expand_decomposed(signature):
+    """expand_signature with every descriptor decomposed. A Triton without
+    TensorDescABI takes the TMA metadata and descriptor type instead."""
+    abi = getattr(_tt_driver, "TensorDescABI", None)
+    if abi is None:
+        return expand_signature(signature, None, None)
+    return expand_signature(signature, abi.DECOMPOSED)
+
+
 def _compute_scalar_layout(scalar_types):
     """Returns (total_size, field_offsets), field_offsets[i] the byte offset
     for scalar i in the packed buffer."""
@@ -301,7 +311,7 @@ class MetalLauncher:
         non_constexpr_sig = [
             ty for ty in self.signature.values() if ty != 'constexpr'
         ]
-        expanded = expand_signature(non_constexpr_sig, None, None)
+        expanded = _expand_decomposed(non_constexpr_sig)
 
         # Scalars pack into one device buffer, so IR param order is
         # [pointers, packed_scalar_buf, system_values]. Tuple args flatten

@@ -124,6 +124,11 @@ if(NOT _AGPU_BROADCAST_VERIFY_AT EQUAL -1)
     target_compile_definitions(TritonAppleGPUBackend PRIVATE
         AGPU_TRITON_VERIFIES_BROADCAST)
 endif()
+string(FIND "${_AGPU_TT_DIALECT_H}" "allowReorder" _AGPU_RESHAPE_REORDER_AT)
+if(NOT _AGPU_RESHAPE_REORDER_AT EQUAL -1)
+    target_compile_definitions(TritonAppleGPUBackend PRIVATE
+        AGPU_TRITON_RESHAPE_REORDERS)
+endif()
 
 set_source_files_properties(lib/Dialect/TritonAppleGPU/IR/Dialect.cpp
     PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter")
