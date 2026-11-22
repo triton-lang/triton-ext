@@ -133,20 +133,24 @@ agpu::MaskBound AgpuEmitter::maskBoundOf(Value mask, Value laidOut) {
 }
 
 PtrOffset AgpuEmitter::offsetSum(agpu::ValueId basePtr, int64_t reg,
-                                 const am::Str &added) {
+                                 const am::Str &added, bool addedWide) {
+  const am::Type wide = am::Type::scalar(am::Scalar::I64);
   const auto prior = body_.offsetOf.find({basePtr, reg});
   if (prior == body_.offsetOf.end())
-    return PtrOffset{added, am::Context::i32(), false};
+    return PtrOffset{added, addedWide ? wide : am::Context::i32(), false};
 
+  // An `int` sum would wrap an i64 offset past 2^31.
+  const am::Type ty =
+      addedWide || prior->second.type == wide ? wide : am::Context::i32();
   const am::Str name = "off" + std::to_string(basePtr) + "_" +
                        std::to_string(reg) + "_" +
                        std::to_string(body_.tempSeq++);
   cur_->push_back(agpu_.context().declStmt(
-      am::Context::i32(), name,
+      ty, name,
       agpu_.context().binary(am::BinOp::Add,
                              agpu_.context().var(prior->second.name),
                              agpu_.context().var(added))));
-  return PtrOffset{name, am::Context::i32(), true};
+  return PtrOffset{name, ty, true};
 }
 
 agpu::MoveFacts AgpuEmitter::moveFactsOf(Value ptr, Value laidOut,
@@ -318,6 +322,9 @@ agpu::Decision AgpuEmitter::emitAddPtrOp(const agpu::OpView &o) {
   if (!ready.ok())
     return ready.why;
 
+  const agpu::ElemType *offsetElem = elemOf(o.operands[1]);
+  const bool offsetWide = offsetElem && offsetElem->bits == 64;
+
   agpu::ValueNames names;
   for (int64_t r = 0; r < ready.regs; ++r) {
     names.push_back(ready.ops[0].at(r));
@@ -325,7 +332,7 @@ agpu::Decision AgpuEmitter::emitAddPtrOp(const agpu::OpView &o) {
     // Offset accumulates along the chain: a 2-D address is
     // addptr(addptr(p, row), col).
     body_.offsetOf[std::pair<agpu::ValueId, int64_t>{o.results[0], r}] =
-        offsetSum(o.operands[0], r, ready.ops[1].at(r));
+        offsetSum(o.operands[0], r, ready.ops[1].at(r), offsetWide);
   }
   body_.sym.bindRegs(o.results[0], std::move(names));
 

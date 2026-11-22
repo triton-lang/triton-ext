@@ -640,7 +640,7 @@ private:
 
   // Sums every step of a chained addptr (row + col, etc).
   PtrOffset offsetSum(agpu::ValueId basePtr, int64_t reg,
-                      const agpu::msl::Str &added);
+                      const agpu::msl::Str &added, bool addedWide);
 
   void inheritOffset(agpu::ValueId from, int64_t fromReg, agpu::ValueId to,
                      int64_t toReg);
