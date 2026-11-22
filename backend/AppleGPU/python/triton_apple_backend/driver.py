@@ -24,6 +24,19 @@ from triton_apple_backend.tables import SCALAR_PACK_INFO as _SCALAR_PACK_INFO
 from triton_apple_backend.tables import TY_TO_CPP as _TY_TO_CPP
 
 
+class _TorchDeviceInterface:
+    """torch.mps with the `current_device` Triton asks for; MPS has one."""
+
+    def __init__(self, mps):
+        self._mps = mps
+
+    def __getattr__(self, name):
+        return getattr(self._mps, name)
+
+    def current_device(self):
+        return 0
+
+
 class _TorchRuntime:
     """Zero-copy dispatch of MPS tensors on torch's own MPS stream, through
     metal_torch (linked against libtorch)."""
@@ -33,6 +46,7 @@ class _TorchRuntime:
         from triton_apple_backend import metal_torch
         self.torch = torch
         self.metal = metal_torch
+        self._device_interface = _TorchDeviceInterface(torch.mps)
 
     def is_available(self):
         return self.torch.backends.mps.is_available()
@@ -55,7 +69,7 @@ class _TorchRuntime:
         return np.frombuffer(buf, dtype=np.uint32)
 
     def device_interface(self):
-        return self.torch.mps
+        return self._device_interface
 
     def active_device(self):
         return self.torch.device("mps", 0)
