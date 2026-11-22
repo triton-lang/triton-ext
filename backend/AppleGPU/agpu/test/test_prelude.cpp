@@ -455,6 +455,25 @@ int main() {
     CHECK_HAS(body, "__builtin_expect(");
   }
 
+  CASE("a soft multiply exists for f32 and bf16 and rounds once");
+  {
+    CHECK(softMulHelperFor(f32()) == Helper::SoftMulF32);
+    CHECK(softMulHelperFor(bf16()) == Helper::SoftMulBf16);
+    CHECK(!softMulHelperFor(f16()));
+    CHECK(!softMulHelperFor(i32()));
+
+    const std::string f = helperSource(Helper::SoftMulF32);
+    CHECK_HAS(f, "(ulong)sa * (ulong)sb");
+    CHECK_HAS(f, "metal::clz(p)");
+    CHECK_HAS(f, "(ulong)1u << (sh - 1)");
+    CHECK_HAS(f, "0x7f800000u");
+    CHECK_LACKS(f, " half ");
+
+    const std::string b = helperSource(Helper::SoftMulBf16);
+    CHECK_HAS(b, "as_type<ushort>(a)");
+    CHECK_HAS(b, "0x7f80u");
+  }
+
   CASE("a keyed min or max brings its key, ahead of it in the prelude");
   {
     HelperSet hs;

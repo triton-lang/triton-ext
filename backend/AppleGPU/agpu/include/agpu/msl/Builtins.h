@@ -23,6 +23,7 @@ inline constexpr const char *Sign = "metal::sign";
 inline constexpr const char *Mulhi = "metal::mulhi";
 inline constexpr const char *Min3 = "metal::min3";
 inline constexpr const char *Expect = "__builtin_expect";
+inline constexpr const char *Clz = "metal::clz";
 
 // `round` rounds half away from zero; `rint` rounds half to even. Distinct
 // MLIR ops: math.round and math.roundeven.
@@ -171,6 +172,8 @@ inline constexpr const char *Fma = "__agpu_fma";
 inline constexpr const char *SoftDivF = "__agpu_soft_div";
 inline constexpr const char *DivF = "__agpu_div";
 inline constexpr const char *SqrtF = "__agpu_sqrt";
+inline constexpr const char *SoftMulF32 = "__agpu_soft_mul";
+inline constexpr const char *SoftMulBf16 = "__agpu_bf16_soft_mul";
 inline constexpr const char *F32Key = "__agpu_f32_key";
 inline constexpr const char *Bf16Key = "__agpu_bf16_key";
 inline constexpr const char *F32Unkey = "__agpu_f32_unkey";

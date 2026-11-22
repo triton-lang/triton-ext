@@ -105,6 +105,16 @@ inline bool mathHelper(MathFn fn, Helper &out) {
   }
 }
 
+inline std::optional<Helper> softMulHelperFor(ElemType elem) {
+  if (elem.kind != ElemType::Kind::Float)
+    return std::nullopt;
+  if (elem.floatKind == FloatKind::Brain)
+    return Helper::SoftMulBf16;
+  if (elem.bits == 32)
+    return Helper::SoftMulF32;
+  return std::nullopt;
+}
+
 class HelperSet {
 public:
   void add(Helper h) { bits_.add(h); }
@@ -968,6 +978,123 @@ inline msl::Function *floatKey(msl::Context &c, const char *name, msl::Type in,
   return fn;
 }
 
+// Rounds the exact 48-bit significand product once, to `mant` bits.
+inline msl::Function *softMul(msl::Context &c, const char *name,
+                              const msl::Type &t, int mant) {
+  using B = msl::BinOp;
+  const bool brain = mant == 7;
+  const msl::Type u16 = msl::Type::scalar(msl::Scalar::U16);
+  const msl::Type u32 = msl::Type::scalar(msl::Scalar::U32);
+  const msl::Type i32 = msl::Type::scalar(msl::Scalar::I32);
+  const msl::Type u64 = msl::Type::scalar(msl::Scalar::U64);
+
+  msl::Function *fn = helperFn(c, name, t);
+  fn->params.push_back({t, "a", {}});
+  fn->params.push_back({t, "b", {}});
+
+  const auto v = [&](const std::string &n) { return c.var(n); };
+  const auto bin = [&](B op, msl::Expr *x, msl::Expr *y) {
+    return c.binary(op, x, y);
+  };
+  const auto hex = [&](int64_t x) { return c.litHex(x); };
+  const auto u = [&](int64_t x) { return c.lit(x, u32); };
+  const auto i = [&](int64_t x) { return c.lit(x, i32); };
+  const auto bitsOf = [&](const char *x) -> msl::Expr * {
+    if (brain)
+      return bin(B::Shl, c.cast(u32, c.bitcast(u16, v(x))), u(16));
+    return c.bitcast(u32, v(x));
+  };
+  const auto pack = [&](msl::Expr *bits) -> msl::Expr * {
+    if (brain)
+      return c.bitcast(
+          t, c.cast(u16, bin(B::Or, bin(B::Shr, v("sg"), u(16)), bits)));
+    return c.bitcast(t, bin(B::Or, v("sg"), bits));
+  };
+  const int64_t inf = (int64_t)0xff << mant;
+  const int64_t qnan = inf | ((int64_t)1 << (mant - 1));
+  msl::Block &body = fn->body;
+
+  body.push_back(c.declStmt(u32, "ua", bitsOf("a")));
+  body.push_back(c.declStmt(u32, "ub", bitsOf("b")));
+  body.push_back(c.declStmt(
+      u32, "sg", bin(B::And, bin(B::Xor, v("ua"), v("ub")), hex(0x80000000))));
+  for (const char *x : {"a", "b"}) {
+    const std::string s(x);
+    body.push_back(c.declStmt(
+        u32, "e" + s, bin(B::And, bin(B::Shr, v("u" + s), u(23)), hex(0xff))));
+    body.push_back(
+        c.declStmt(u32, "m" + s, bin(B::And, v("u" + s), hex(0x7fffff))));
+  }
+  const auto isZero = [&](const char *x) {
+    const std::string s(x);
+    return bin(B::Eq, bin(B::Or, v("e" + s), v("m" + s)), u(0));
+  };
+  const auto isNan = [&](const char *x) {
+    const std::string s(x);
+    return bin(B::LAnd, bin(B::Eq, v("e" + s), u(255)),
+               bin(B::Ne, v("m" + s), u(0)));
+  };
+
+  body.push_back(c.ifStmt(
+      bin(B::LOr, bin(B::Eq, v("ea"), u(255)), bin(B::Eq, v("eb"), u(255))),
+      {c.ifStmt(bin(B::LOr, isNan("a"), isNan("b")),
+                {c.returnStmt(pack(hex(qnan)))}),
+       c.ifStmt(bin(B::LOr, isZero("a"), isZero("b")),
+                {c.returnStmt(pack(hex(qnan)))}),
+       c.returnStmt(pack(hex(inf)))}));
+  body.push_back(c.ifStmt(bin(B::LOr, isZero("a"), isZero("b")),
+                          {c.returnStmt(pack(u(0)))}));
+
+  for (const char *x : {"a", "b"}) {
+    const std::string s(x);
+    msl::Expr *normal = bin(B::Ne, v("e" + s), u(0));
+    body.push_back(c.declStmt(
+        i32, "x" + s, c.ternary(normal, c.cast(i32, v("e" + s)), i(1))));
+    body.push_back(c.declStmt(
+        u32, "s" + s,
+        c.ternary(normal, bin(B::Or, v("m" + s), hex(0x800000)), v("m" + s))));
+  }
+  body.push_back(c.declStmt(
+      u64, "p", bin(B::Mul, c.cast(u64, v("sa")), c.cast(u64, v("sb")))));
+  body.push_back(
+      c.declStmt(i32, "k", bin(B::Sub, bin(B::Add, v("xa"), v("xb")), i(300))));
+  body.push_back(c.declStmt(
+      i32, "lo",
+      c.call(msl::builtin::math::Max,
+             {bin(B::Add,
+                  bin(B::Sub, i(63),
+                      c.cast(i32, c.call(msl::builtin::math::Clz, {v("p")}))),
+                  v("k")),
+              i(-126)})));
+  body.push_back(
+      c.ifStmt(bin(B::Gt, v("lo"), i(127)), {c.returnStmt(pack(hex(inf)))}));
+  body.push_back(c.declStmt(
+      i32, "sh", bin(B::Sub, bin(B::Sub, v("lo"), i(mant)), v("k"))));
+  body.push_back(
+      c.ifStmt(bin(B::Gt, v("sh"), i(63)), {c.returnStmt(pack(u(0)))}));
+  body.push_back(c.declStmt(u64, "q", bin(B::Shr, v("p"), v("sh"))));
+  body.push_back(c.ifStmt(
+      bin(B::Gt, v("sh"), i(0)),
+      {c.declStmt(u64, "rem",
+                  bin(B::Sub, v("p"), bin(B::Shl, v("q"), v("sh")))),
+       c.declStmt(u64, "tie",
+                  bin(B::Shl, c.cast(u64, u(1)), bin(B::Sub, v("sh"), i(1)))),
+       c.ifStmt(bin(B::LOr, bin(B::Gt, v("rem"), v("tie")),
+                    bin(B::LAnd, bin(B::Eq, v("rem"), v("tie")),
+                        bin(B::Ne, bin(B::And, v("q"), c.lit(1, u64)),
+                            c.lit(0, u64)))),
+                {c.assign(v("q"), bin(B::Add, v("q"), c.lit(1, u64)))})}));
+  body.push_back(c.declStmt(
+      u32, "bits",
+      bin(B::Add,
+          c.cast(u32, bin(B::Shl, bin(B::Add, v("lo"), i(126)), i(mant))),
+          c.cast(u32, v("q")))));
+  body.push_back(c.ifStmt(bin(B::Ge, v("bits"), hex(inf)),
+                          {c.returnStmt(pack(hex(inf)))}));
+  body.push_back(c.returnStmt(pack(v("bits"))));
+  return fn;
+}
+
 inline msl::Function *guardedSqrt(msl::Context &c) {
   using B = msl::BinOp;
   const msl::Type f32 = msl::Type::scalar(msl::Scalar::F32);
@@ -1625,6 +1752,16 @@ inline std::string helperSource(Helper h) {
   case Helper::SqrtF: {
     msl::Context c;
     return renderHelper(guardedSqrt(c));
+  }
+  case Helper::SoftMulF32: {
+    msl::Context c;
+    return renderHelper(
+        softMul(c, hn::SoftMulF32, msl::Type::scalar(msl::Scalar::F32), 23));
+  }
+  case Helper::SoftMulBf16: {
+    msl::Context c;
+    return renderHelper(
+        softMul(c, hn::SoftMulBf16, msl::Type::scalar(msl::Scalar::BF16), 7));
   }
   case Helper::F32Unkey: {
     msl::Context c;

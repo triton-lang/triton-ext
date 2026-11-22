@@ -10,6 +10,25 @@ namespace mlir::triton::applegpu::bridge {
 
 namespace am = agpu::msl;
 
+namespace {
+
+bool isSubnormalConstant(Value v) {
+  while (v)
+    if (auto sp = v.getDefiningOp<SplatOp>())
+      v = sp.getSrc();
+    else
+      break;
+  FloatAttr f;
+  if (v && matchPattern(v, m_Constant(&f)))
+    return f.getValue().isDenormal();
+  DenseFPElementsAttr d;
+  if (v && matchPattern(v, m_Constant(&d)) && d.isSplat())
+    return d.getSplatValue<APFloat>().isDenormal();
+  return false;
+}
+
+} // namespace
+
 static constexpr std::string_view kLibdeviceFmaAsm = "agpu.fma.ftz";
 static constexpr llvm::StringLiteral kReflectFtzAttr = "applegpu.reflect_ftz";
 
@@ -502,6 +521,21 @@ agpu::Decision AgpuEmitter::emitElementwiseOp(const agpu::OpView &o) {
   const agpu::ElemType operand =
       elemOf(o.operands[0]) ? *elemOf(o.operands[0]) : ready.elem;
   agpu_.helpers.require(ew, operand);
+
+  // The hardware product with a subnormal constant is zero for every input.
+  if (const std::optional<agpu::Helper> soft = agpu::softMulHelperFor(operand);
+      ew == agpu::EwOp::Mul && soft &&
+      (isSubnormalConstant(mlirValueOf(o.operands[0])) ||
+       isSubnormalConstant(mlirValueOf(o.operands[1])))) {
+    agpu_.helpers.add(*soft);
+    return emitPerRegister(o, ready.regs, operand, 'e', [&](int64_t r) {
+      RegValue v;
+      v.value =
+          mc.call(agpu::helperName(*soft), {mc.var(a.at(r)), mc.var(b.at(r))});
+      return v;
+    });
+  }
+
   agpu::EwTypes t = agpu::typesFor(ew, operand);
   t.result = agpu::evalWidthFor(t.result);
 
