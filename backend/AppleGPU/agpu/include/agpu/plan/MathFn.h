@@ -108,7 +108,7 @@ inline constexpr MathSpelling kMathSpellings[] = {
     {MathFn::Log2, spell(msl::builtin::accuracy::Log2, Accuracy::Exact), true},
     {MathFn::Log10, spell(msl::builtin::accuracy::Log10, Accuracy::Exact),
      true},
-    {MathFn::Sqrt, spell(msl::builtin::accuracy::Sqrt, Accuracy::Exact), true},
+    {MathFn::Sqrt, msl::builtin::helper::SqrtF, true},
     {MathFn::Rsqrt, spell(msl::builtin::accuracy::Rsqrt, Accuracy::Tolerant),
      true},
     {MathFn::Sin, spell(msl::builtin::accuracy::Sin, Accuracy::Exact), true},

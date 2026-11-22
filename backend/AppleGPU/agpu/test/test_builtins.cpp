@@ -168,7 +168,7 @@ int main() {
   {
     for (const MathFn fn :
          {MathFn::Sin, MathFn::Cos, MathFn::Tanh, MathFn::Exp10, MathFn::Log,
-          MathFn::Log2, MathFn::Log10, MathFn::Sqrt})
+          MathFn::Log2, MathFn::Log10})
       CHECK(has(mathNameOf(fn), "precise::"));
 
     for (const MathFn2 fn : {MathFn2::Fmod, MathFn2::Pow, MathFn2::Atan2})

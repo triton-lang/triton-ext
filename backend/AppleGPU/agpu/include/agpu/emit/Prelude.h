@@ -97,6 +97,9 @@ inline bool mathHelper(MathFn fn, Helper &out) {
   case MathFn::Cbrt:
     out = Helper::Cbrt;
     return true;
+  case MathFn::Sqrt:
+    out = Helper::SqrtF;
+    return true;
   default:
     return false;
   }
@@ -965,6 +968,40 @@ inline msl::Function *floatKey(msl::Context &c, const char *name, msl::Type in,
   return fn;
 }
 
+inline msl::Function *guardedSqrt(msl::Context &c) {
+  using B = msl::BinOp;
+  const msl::Type f32 = msl::Type::scalar(msl::Scalar::F32);
+  const msl::Type u32 = msl::Type::scalar(msl::Scalar::U32);
+  const auto hex = [&](int64_t x) { return c.litHex(x); };
+  const auto hwSqrt = [&](msl::Expr *e) {
+    return c.call(msl::builtin::accuracy::Sqrt.precise, {e});
+  };
+
+  msl::Function *fn = helperFn(c, hn::SqrtF, f32);
+  fn->params.push_back({f32, "x", {}});
+  fn->body.push_back(c.declStmt(u32, "u", c.bitcast(u32, c.var("x"))));
+  fn->body.push_back(
+      c.declStmt(u32, "m", c.binary(B::And, c.var("u"), hex(0x007fffff))));
+  msl::Expr *subnormal =
+      c.binary(B::LAnd,
+               c.binary(B::Eq, c.binary(B::And, c.var("u"), hex(0x7f800000)),
+                        c.lit(0, u32)),
+               c.binary(B::Ne, c.var("m"), c.lit(0, u32)));
+  msl::Block soft;
+  soft.push_back(
+      c.ifStmt(c.binary(B::Ne, c.binary(B::Shr, c.var("u"), c.lit(31, u32)),
+                        c.lit(0, u32)),
+               {c.returnStmt(c.bitcast(f32, hex(0x7fc00000)))}));
+  soft.push_back(c.returnStmt(c.binary(
+      B::Mul, hwSqrt(c.cast(f32, c.binary(B::Shl, c.var("m"), c.lit(1, u32)))),
+      c.bitcast(f32, hex(0x1a000000)))));
+  fn->body.push_back(
+      c.ifStmt(c.call(msl::builtin::math::Expect, {subnormal, c.lit(0)}),
+               std::move(soft)));
+  fn->body.push_back(c.returnStmt(hwSqrt(c.var("x"))));
+  return fn;
+}
+
 inline msl::Function *f32Unkey(msl::Context &c) {
   using B = msl::BinOp;
   const msl::Type f32 = msl::Type::scalar(msl::Scalar::F32);
@@ -1584,6 +1621,10 @@ inline std::string helperSource(Helper h) {
     const msl::Type bf16 = msl::Type::scalar(msl::Scalar::BF16);
     const msl::Type u16 = msl::Type::scalar(msl::Scalar::U16);
     return renderHelper(floatKey(c, hn::Bf16Key, bf16, u16, 0x8000));
+  }
+  case Helper::SqrtF: {
+    msl::Context c;
+    return renderHelper(guardedSqrt(c));
   }
   case Helper::F32Unkey: {
     msl::Context c;

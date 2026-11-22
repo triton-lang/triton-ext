@@ -92,8 +92,7 @@ inline Decision emitLaneSteps(msl::Context &c, msl::Block &body,
       body.push_back(c.assign(acc, c.call(fn, {acc})));
       return Decision::emitted();
     }
-    // A NaN lane's key lies past both infinities and decodes to NaN, so it
-    // wins only when every lane is NaN.
+    // A NaN lane's key decodes to NaN and loses unless every lane is NaN.
     const bool max = plan.combiner == Combiner::MaxF;
     msl::Expr *key = c.ternary(c.call(msl::builtin::math::Isnan, {acc}),
                                c.lit(max ? -0x7fffffff : 0x7fffffff),

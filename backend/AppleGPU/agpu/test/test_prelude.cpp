@@ -440,6 +440,21 @@ int main() {
     CHECK_HAS(b, "0x8000");
   }
 
+  CASE("sqrt is the precise one, with a soft path for subnormals");
+  {
+    HelperSet hs;
+    hs.require(MathFn::Sqrt);
+    CHECK(hs.has(Helper::SqrtF));
+
+    const std::string body = helperSource(Helper::SqrtF);
+    // metal::sqrt(12.25) answers 3.5000002, one ulp above the exact root.
+    CHECK_HAS(body, "metal::precise::sqrt(x)");
+    CHECK_HAS(body, "metal::precise::sqrt((float)(m << 1u))");
+    CHECK_HAS(body, "0x1a000000");
+    CHECK_HAS(body, "0x7fc00000");
+    CHECK_HAS(body, "__builtin_expect(");
+  }
+
   CASE("a keyed min or max brings its key, ahead of it in the prelude");
   {
     HelperSet hs;

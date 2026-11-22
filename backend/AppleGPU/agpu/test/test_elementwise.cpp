@@ -266,7 +266,7 @@ int main() {
     for (MathFn fn :
          {MathFn::Exp10, MathFn::Log, MathFn::Log2, MathFn::Log10, MathFn::Sin,
           MathFn::Cos, MathFn::Tanh, MathFn::Tan, MathFn::Asin, MathFn::Acos,
-          MathFn::Atan, MathFn::Sinh, MathFn::Cosh, MathFn::Sqrt})
+          MathFn::Atan, MathFn::Sinh, MathFn::Cosh})
       CHECK(std::string(mathNameOf(fn)).find("precise::") != std::string::npos);
 
     for (MathFn fn : {MathFn::Round, MathFn::RoundEven, MathFn::Trunc})

@@ -170,6 +170,7 @@ inline constexpr const char *SoftFma = "__agpu_soft_fma";
 inline constexpr const char *Fma = "__agpu_fma";
 inline constexpr const char *SoftDivF = "__agpu_soft_div";
 inline constexpr const char *DivF = "__agpu_div";
+inline constexpr const char *SqrtF = "__agpu_sqrt";
 inline constexpr const char *F32Key = "__agpu_f32_key";
 inline constexpr const char *Bf16Key = "__agpu_bf16_key";
 inline constexpr const char *F32Unkey = "__agpu_f32_unkey";
