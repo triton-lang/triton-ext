@@ -453,8 +453,42 @@ inline bool fcmpOrdered(FCmp p) {
   }
 }
 
+// A value compared with itself only asks whether it is NaN.
+inline FCmpPlan planFCmpSelf(FCmp p) {
+  FCmpPlan r;
+  switch (p) {
+  case FCmp::OEq:
+  case FCmp::OGe:
+  case FCmp::OLe:
+  case FCmp::Ord:
+    r.kind = FCmpPlan::Kind::NanTest;
+    r.wantNan = false;
+    return r;
+  case FCmp::UGt:
+  case FCmp::ULt:
+  case FCmp::UNe:
+  case FCmp::Uno:
+    r.kind = FCmpPlan::Kind::NanTest;
+    r.wantNan = true;
+    return r;
+  case FCmp::UEq:
+  case FCmp::UGe:
+  case FCmp::ULe:
+  case FCmp::True:
+    r.kind = FCmpPlan::Kind::Constant;
+    r.constantValue = true;
+    return r;
+  default:
+    r.kind = FCmpPlan::Kind::Constant;
+    r.constantValue = false;
+    return r;
+  }
+}
+
 // A key orders NaN like a number, so every relation needs its NaN term.
-inline FCmpPlan planFCmp(FCmp p, CompareBy by) {
+inline FCmpPlan planFCmp(FCmp p, CompareBy by, bool self = false) {
+  if (self)
+    return planFCmpSelf(p);
   FCmpPlan r = planFCmp(p);
   if (by != CompareBy::Value && r.kind == FCmpPlan::Kind::Relation)
     r.guard = fcmpOrdered(p) ? NanGuard::MaskOut : NanGuard::OrIn;

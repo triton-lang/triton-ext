@@ -473,7 +473,7 @@ agpu::Decision AgpuEmitter::emitCompareFOp(const agpu::OpView &o) {
   const agpu::ElemType operand =
       elemOf(o.operands[0]) ? *elemOf(o.operands[0]) : ready.elem;
   const agpu::CompareBy by = agpu::compareByFor(operand);
-  agpu_.helpers.require(pred, by);
+  agpu_.helpers.require(pred, by, o.operands[0] == o.operands[1]);
 
   return emitPerRegister(o, ready.regs, agpu::i1(), 'c', [&](int64_t r) {
     RegValue v;

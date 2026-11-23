@@ -150,6 +150,33 @@ int main() {
              std::string("metal::isnan(a) || metal::isnan(b)"));
   }
 
+  CASE("a value compared with itself is a NaN test or a constant");
+  {
+    const std::pair<FCmp, const char *> want[] = {
+        {FCmp::OEq, "!metal::isnan(x)"},
+        {FCmp::OGe, "!metal::isnan(x)"},
+        {FCmp::OLe, "!metal::isnan(x)"},
+        {FCmp::Ord, "!metal::isnan(x)"},
+        {FCmp::UGt, "metal::isnan(x)"},
+        {FCmp::ULt, "metal::isnan(x)"},
+        {FCmp::UNe, "metal::isnan(x)"},
+        {FCmp::Uno, "metal::isnan(x)"},
+        {FCmp::UEq, "true"},
+        {FCmp::UGe, "true"},
+        {FCmp::ULe, "true"},
+        {FCmp::True, "true"},
+        {FCmp::OGt, "false"},
+        {FCmp::OLt, "false"},
+        {FCmp::ONe, "false"},
+        {FCmp::False, "false"},
+    };
+    for (CompareBy by : {CompareBy::F32Key, CompareBy::Value})
+      for (auto [pred, text] : want) {
+        msl::Context c;
+        CHECK_EQ(render(fcmpExpr(c, pred, "x", "x", by)), std::string(text));
+      }
+  }
+
   CASE("the constant predicates emit a bare constant");
   {
     msl::Context c;

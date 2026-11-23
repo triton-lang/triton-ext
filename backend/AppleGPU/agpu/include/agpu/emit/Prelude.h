@@ -167,8 +167,8 @@ public:
     add(Helper::F32Unkey);
   }
 
-  void require(FCmp pred, CompareBy by) {
-    if (planFCmp(pred, by).kind == FCmpPlan::Kind::Relation)
+  void require(FCmp pred, CompareBy by, bool self = false) {
+    if (planFCmp(pred, by, self).kind == FCmpPlan::Kind::Relation)
       requireKey(by);
   }
 

@@ -69,7 +69,8 @@ inline msl::Expr *keyedOperand(msl::Context &c, CompareBy by, msl::Expr *x) {
 // and isnan). Bind a computed value before calling.
 inline msl::Expr *fcmpExpr(msl::Context &c, FCmp pred, const msl::Str &a,
                            const msl::Str &b, CompareBy by = CompareBy::Value) {
-  const FCmpPlan p = planFCmp(pred, by);
+  const bool self = a == b;
+  const FCmpPlan p = planFCmp(pred, by, self);
   const auto side = [&](const msl::Str &x) {
     return keyedOperand(c, by, c.var(x));
   };
@@ -78,7 +79,8 @@ inline msl::Expr *fcmpExpr(msl::Context &c, FCmp pred, const msl::Str &a,
     return c.litBool(p.constantValue);
 
   case FCmpPlan::Kind::NanTest: {
-    msl::Expr *any = eitherIsNan(c, c.var(a), c.var(b));
+    msl::Expr *any =
+        self ? isNanExpr(c, c.var(a)) : eitherIsNan(c, c.var(a), c.var(b));
     return p.wantNan ? any : c.unary(msl::UnOp::LNot, any);
   }
 
