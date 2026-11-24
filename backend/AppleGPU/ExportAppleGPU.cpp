@@ -1,27 +1,103 @@
-// Exports the Apple GPU passes through the Triton plugin API.
+// Exports the Apple GPU passes and dialect through the Triton plugin API.
 
+#include "Dialect/TritonAppleGPU/IR/Dialect.h"
 #include "TritonAppleGPUToMSL/Passes.h"
+#include "TritonAppleGPUTransforms/Passes.h"
 #include "triton/Tools/PluginUtils.h"
 
 #include <iterator>
 
+static void addAccelerateMatmul(mlir::PassManager *pm,
+                                const std::vector<std::string> &) {
+  pm->addPass(mlir::triton::applegpu::createAccelerateAppleMatmulPass());
+}
+static void addStoreShuffleLayout(mlir::PassManager *pm,
+                                  const std::vector<std::string> &) {
+  pm->addPass(mlir::triton::applegpu::createStoreShuffleLayoutPass());
+}
+static void addMaskSelectArmLoads(mlir::PassManager *pm,
+                                  const std::vector<std::string> &) {
+  pm->addPass(mlir::triton::applegpu::createMaskSelectArmLoadsPass());
+}
+static void addAtomicLaneLayout(mlir::PassManager *pm,
+                                const std::vector<std::string> &) {
+  pm->addPass(mlir::triton::applegpu::createAtomicLaneLayoutPass());
+}
+static void addReduceThroughLayoutChange(mlir::PassManager *pm,
+                                         const std::vector<std::string> &) {
+  pm->addPass(mlir::triton::applegpu::createReduceThroughLayoutChangePass());
+}
+static void addPrefetchLoads(mlir::PassManager *pm,
+                             const std::vector<std::string> &args) {
+  pm->addPass(mlir::triton::applegpu::createPrefetchLoadsPass(
+      args.empty() ? 1 : std::stoi(args[0])));
+}
 static void addEmitMSL(mlir::PassManager *pm,
                        const std::vector<std::string> &args) {
   pm->addPass(mlir::triton::applegpu::createEmitMSLPass(
       args.empty() ? std::string() : args[0]));
 }
 
+static void registerAccelerateMatmul() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return mlir::triton::applegpu::createAccelerateAppleMatmulPass();
+  });
+}
+static void registerStoreShuffleLayout() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return mlir::triton::applegpu::createStoreShuffleLayoutPass();
+  });
+}
+static void registerMaskSelectArmLoads() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return mlir::triton::applegpu::createMaskSelectArmLoadsPass();
+  });
+}
+static void registerAtomicLaneLayout() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return mlir::triton::applegpu::createAtomicLaneLayoutPass();
+  });
+}
+static void registerReduceThroughLayoutChange() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return mlir::triton::applegpu::createReduceThroughLayoutChangePass();
+  });
+}
+static void registerPrefetchLoads() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return mlir::triton::applegpu::createPrefetchLoadsPass(1);
+  });
+}
 static void registerEmitMSL() {
   ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
     return mlir::triton::applegpu::createEmitMSLPass();
   });
 }
 
+static void insertAppleGPUDialect(mlir::DialectRegistry *registry) {
+  registry->insert<mlir::triton::applegpu::TritonAppleGPUDialect>();
+}
+
 using namespace mlir::triton;
 
 TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
   static plugin::PassInfo passes[] = {
+      {"accelerate_matmul", "0.1.0", addAccelerateMatmul,
+       registerAccelerateMatmul},
+      {"store_shuffle_layout", "0.1.0", addStoreShuffleLayout,
+       registerStoreShuffleLayout},
+      {"mask_select_arm_loads", "0.1.0", addMaskSelectArmLoads,
+       registerMaskSelectArmLoads},
+      {"atomic_lane_layout", "0.1.0", addAtomicLaneLayout,
+       registerAtomicLaneLayout},
+      {"reduce_through_layout_change", "0.1.0", addReduceThroughLayoutChange,
+       registerReduceThroughLayoutChange},
+      {"prefetch_loads", "0.1.0", addPrefetchLoads, registerPrefetchLoads},
       {"emit_msl", "0.1.0", addEmitMSL, registerEmitMSL},
+  };
+
+  static plugin::DialectInfo dialects[] = {
+      {"TritonAppleGPU", "0.1.0", insertAppleGPUDialect},
   };
 
   static plugin::PluginInfo info = {
@@ -30,8 +106,8 @@ TRITON_PLUGIN_API plugin::PluginInfo *tritonGetPluginInfo() {
       "0.1.0",
       passes,
       std::size(passes),
-      nullptr,
-      0, // numDialects
+      dialects,
+      std::size(dialects),
       nullptr,
       0, // numOps
       TRITON_VERSION,

@@ -1,0 +1,3 @@
+# Executed by site.py at interpreter startup. A Triton older than `extend_with`
+# can only see the plugin if TRITON_PLUGIN_PATHS is already set by then.
+import _applegpu_autoregister
