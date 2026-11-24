@@ -120,6 +120,31 @@ struct TDMRowIndicesPattern : public ConversionPattern {
   }
 };
 
+// The amdg buffer ops the plugin creates at TTIR level (utlx_buffer_load and
+// friends), matched by name for the same reason as TDMRowIndicesPattern. The
+// frontend only creates them for offsets with a layout and gives mask, other
+// and a stored value that layout too, so this is a safety net: operands and
+// results only need their types converted.
+struct BufferOpTypesPattern : public ConversionPattern {
+  BufferOpTypesPattern(TypeConverter &converter, StringRef name,
+                       MLIRContext *context)
+      : ConversionPattern(converter, name, 1, context) {}
+
+  LogicalResult
+  matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+                  ConversionPatternRewriter &rewriter) const override {
+    SmallVector<Type> types;
+    if (failed(getTypeConverter()->convertTypes(op->getResultTypes(), types)))
+      return failure();
+    OperationState state(op->getLoc(), op->getName());
+    state.addOperands(operands);
+    state.addTypes(types);
+    state.addAttributes(op->getAttrs());
+    rewriter.replaceOp(op, rewriter.create(state)->getResults());
+    return success();
+  }
+};
+
 // --- TLX explicit register-layout ops -------------------------------------
 //
 // tlx.require_layout carries the encoding the kernel asked for in its *result*
@@ -1029,6 +1054,13 @@ public:
             OperationName(name, context),
             [&](Operation *op) { return typeConverter.isLegal(op); });
         patterns.add<TDMRowIndicesPattern>(typeConverter, name, context);
+      }
+      for (StringRef name : {"amdg.buffer_load", "amdg.buffer_load_to_local",
+                             "amdg.buffer_store"}) {
+        convTarget.addDynamicallyLegalOp(
+            OperationName(name, context),
+            [&](Operation *op) { return typeConverter.isLegal(op); });
+        patterns.add<BufferOpTypesPattern>(typeConverter, name, context);
       }
     }
     // TODO: can we use

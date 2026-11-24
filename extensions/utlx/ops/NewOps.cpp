@@ -285,6 +285,95 @@ void utlx::createWorkgroupBarrier(TritonOpBuilder &self,
   createSchedBarrierNone(builder, loc);
 }
 
+static std::optional<int64_t> extractConstInt(mlir::Value v);
+
+/// The amdg buffer ops take their optional operands as AttrSizedOperandSegments
+/// and a trusted `contiguity` vector-width attribute. `segments` gives each
+/// operand group's size in declaration order; `args` holds the present
+/// operands in that order.
+///
+/// Stock TritonAMDGPUCanonicalizePointers cannot rewrite these ops; the
+/// utlx-hide-buffer-op-bases / utlx-restore-buffer-op-bases passes around it
+/// take care of that.
+static mlir::Operation *
+createBufferOp(TritonOpBuilder &self, llvm::StringRef opName,
+               mlir::TypeRange resultTypes, mlir::ValueRange args,
+               llvm::ArrayRef<int32_t> segments, mlir::Value contiguityVal) {
+  auto contiguity = extractConstInt(contiguityVal);
+  if (!contiguity || *contiguity < 1)
+    return nullptr;
+  auto &builder = self.getBuilder();
+  llvm::SmallVector<mlir::NamedAttribute> attrs = {
+      builder.getNamedAttr("operandSegmentSizes",
+                           builder.getDenseI32ArrayAttr(segments)),
+      builder.getNamedAttr("contiguity",
+                           builder.getI32IntegerAttr(*contiguity)),
+  };
+  // The contiguity holds for the offsets' layout only; record it for
+  // utlx-keep-buffer-op-layout. All tensor operands share that layout.
+  if (*contiguity > 1)
+    for (mlir::Value arg : args)
+      if (auto tensorTy = mlir::dyn_cast<mlir::RankedTensorType>(arg.getType()))
+        if (tensorTy.getEncoding()) {
+          attrs.push_back(builder.getNamedAttr("utlx.buffer_layout",
+                                               tensorTy.getEncoding()));
+          break;
+        }
+  return createRuntimeOp(builder, self.getLastLoc(), opName, resultTypes, args,
+                         attrs);
+}
+
+/// utlx_buffer_load(result_slot, ptr, offsets, [mask, [other,]] contiguity)
+/// -> tensor with the shape and encoding of `offsets`.
+void utlx::createBufferLoad(TritonOpBuilder &self,
+                            std::vector<mlir::Value> &operands) {
+  if (operands.size() < 4 || operands.size() > 6)
+    return;
+  int32_t numOpt = operands.size() - 4;
+  mlir::Value ptr = operands[1], offsets = operands[2];
+  auto ptrTy = mlir::dyn_cast<mlir::triton::PointerType>(ptr.getType());
+  auto offsetsTy = mlir::dyn_cast<mlir::RankedTensorType>(offsets.getType());
+  if (!ptrTy || !offsetsTy)
+    return;
+  auto resultTy = mlir::RankedTensorType::get(
+      offsetsTy.getShape(), ptrTy.getPointeeType(), offsetsTy.getEncoding());
+  llvm::SmallVector<mlir::Value> args(operands.begin() + 1, operands.end() - 1);
+  // ptr, offsets, stride, mask, other
+  auto *op = createBufferOp(self, "amdg.buffer_load", {resultTy}, args,
+                            {1, 1, 0, numOpt > 0, numOpt > 1}, operands.back());
+  if (op)
+    operands[0] = op->getResult(0);
+}
+
+/// utlx_buffer_load_to_local(result_slot, dest, ptr, offsets,
+///                           [mask, [other,]] contiguity) -> async token
+void utlx::createBufferLoadToLocal(TritonOpBuilder &self,
+                                   std::vector<mlir::Value> &operands) {
+  if (operands.size() < 5 || operands.size() > 7)
+    return;
+  int32_t numOpt = operands.size() - 5;
+  llvm::SmallVector<mlir::Value> args(operands.begin() + 1, operands.end() - 1);
+  auto token = self.getBuilder().getType<ttg::AsyncTokenType>();
+  // dest, ptr, offsets, mask, other, stride
+  auto *op =
+      createBufferOp(self, "amdg.buffer_load_to_local", {token}, args,
+                     {1, 1, 1, numOpt > 0, numOpt > 1, 0}, operands.back());
+  if (op)
+    operands[0] = op->getResult(0);
+}
+
+/// utlx_buffer_store(value, ptr, offsets, [mask,] contiguity)
+void utlx::createBufferStore(TritonOpBuilder &self,
+                             std::vector<mlir::Value> &operands) {
+  if (operands.size() < 5 || operands.size() > 6)
+    return;
+  int32_t numOpt = operands.size() - 5;
+  llvm::SmallVector<mlir::Value> args(operands.begin() + 1, operands.end() - 1);
+  // value, ptr, offsets, stride, mask
+  createBufferOp(self, "amdg.buffer_store", {}, args, {1, 1, 1, 0, numOpt},
+                 operands.back());
+}
+
 // ---------------------------------------------------------------------------
 // Modified ops
 // ---------------------------------------------------------------------------

@@ -56,6 +56,15 @@ def register_plugin(library):
     from triton._C.libtriton import ir, passes
 
     if hasattr(passes.plugin, "extend_with"):
+        # Triton loads plugins with RTLD_GLOBAL, which puts libtriton's LLVM
+        # symbols in the global scope. ROCm libraries PyTorch loads afterwards
+        # then bind to them and register LLVM options a second time ("LLVM
+        # ERROR: Option 'default' already exists!"); loaded first, they keep
+        # their own.
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            pass
         passes.plugin.extend_with(str(library))  # adds passes
         ir.extend_dialects_with(str(library))  # adds dialects
         ir.builder.extend_with(str(library))  # adds ops
@@ -70,6 +79,26 @@ def register_plugin(library):
             f"utlx_plugin.pth that normally sets it did not run: unset "
             f"UTLX_NO_AUTOREGISTER, or set {PLUGIN_PATHS_ENV}={library}, or "
             f"import utlx_plugin before triton.")
+
+
+def install_runtime_flags():
+    """Define the fork's runtime flags that TLX kernels read, as off.
+
+    They gate instrumentation upstream does not have (compile-cache
+    statistics, overflow and FP sanitizers); kernels read them before their
+    cached fast launch.
+    """
+    import triton
+    import triton.runtime.jit as jit
+
+    if not hasattr(jit, "_CACHE_STATS_ON"):
+        jit._CACHE_STATS_ON = False
+    for group, name in (("runtime", "sanitize_overflow"),
+                        ("compilation", "fpsan_homomorphic_casts")):
+        knobs = getattr(triton.knobs, group)
+        if not hasattr(knobs, name):
+            # On the class: knobs.scope() resets instance dicts.
+            setattr(type(knobs), name, False)
 
 
 def install_semantic_helpers():

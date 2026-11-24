@@ -368,6 +368,11 @@ def make_linear_encoding_attr(self, reg_bases, lane_bases, warp_bases, shape):
                                               [int(d) for d in shape])
 
 
+def make_slice_encoding_attr(self, dim, parent):
+    """The fork's slice-layout factory: upstream spells it get_slice_layout."""
+    return self.get_slice_layout(int(dim), parent)
+
+
 #: Installed onto TLXOpBuilder. The remaining fork factories
 #: (make_dot_operand_encoding_attr, make_nv_mma_encoding_attr,
 #: make_dummy_register_layout_attr, make_dummy_tmem_layout_attr) are TLX-dialect
@@ -383,4 +388,5 @@ FACTORIES = {
     "make_tensor_memory_scales_encoding_attr":
     make_tensor_memory_scales_encoding_attr,
     "make_linear_encoding_attr": make_linear_encoding_attr,
+    "make_slice_encoding_attr": make_slice_encoding_attr,
 }
